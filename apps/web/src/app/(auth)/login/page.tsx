@@ -29,7 +29,10 @@ export default function LoginPage() {
           </div>
 
           <div className="shrink-0">
-            <h1 className="max-w-md text-[24px] font-extrabold leading-tight tracking-tight text-white xl:text-[28px]">
+            <h1
+              className="max-w-[30rem] font-extrabold leading-[1.15] tracking-tight text-white"
+              style={{ fontSize: 'clamp(22px, 2.15vw, 34px)' }}
+            >
               Pengelolaan Akademik Kampus Modern &amp; Terintegrasi PDDIKTI
             </h1>
             <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3">
@@ -43,17 +46,14 @@ export default function LoginPage() {
 
       {/* ── Panel kanan: form login (light) ── */}
       <main className="relative flex w-full flex-col bg-white lg:w-[46%]">
-        <div className="flex items-center justify-between px-6 py-6 sm:px-10">
-          <Link href="/" aria-label="SICA" className="lg:hidden">
+        {/* Brand hanya di layar kecil (panel kiri disembunyikan) */}
+        <div className="px-6 pt-6 sm:px-10 lg:hidden">
+          <Link href="/" aria-label="SICA">
             <SicaBrand height={32} />
           </Link>
-          <div className="ml-auto flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-500">
-            <ShieldCheck className="h-3.5 w-3.5 text-velzon-success" />
-            Sistem Resmi Bersertifikasi ISO 27001
-          </div>
         </div>
 
-        <div className="flex flex-1 items-center justify-center px-6 pb-8 sm:px-10">
+        <div className="flex flex-1 items-center justify-center px-6 py-8 sm:px-10">
           <div className="w-full max-w-md">
             <LoginForm tenantSlug="demo" />
           </div>

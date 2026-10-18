@@ -258,3 +258,10 @@ Menindaklanjuti permintaan user (nilai jual = daftar semua modul per peran + ben
 - **🐛 BUG GLOBAL diperbaiki:** `globals.css` punya aturan `h1..h6 { color: var(--sica-text-heading) }` (gelap) yang MENIMPA pewarisan `text-white` → judul di panel gelap login tadinya tak terbaca. Solusi: set warna teks eksplisit (`text-white`) pada heading gelap (class menang atas selector elemen).
 - **🐛 BUG layout collapse diperbaiki:** showcase lama pakai `absolute` di kontainer `flex-1` tanpa tinggi → tinggi 0 → mockup terpotong & kartu menabrak logo, berantakan saat zoom 100%. Solusi: kartu dasar di **flow normal** (memberi tinggi intrinsik), kartu melayang absolut RELATIF ke kartu tsb; panel kiri `flex` + `min-h-0` + `items-center` sehingga menyusut aman. **Terukur (browser):** tinggi wrapper = tinggi kartu dasar (389px, tak collapse); overflow ponsel 32px < padding 40px; overflow IPK 24px < padding 48px → tak ter-clip; `h1` computed `rgb(255,255,255)`.
 - **Kualitas:** `tsc` 0 error; `next lint --max-warnings 0` bersih; `vitest` 76/76 lulus.
+
+### 5.20 QA Login — Font Inter, heading fluid, hapus pill ISO (2026-10-19)
+User menandai heading/badge login "beda" antara zoom 80% vs 100% dan minta pill kanan-atas dihapus.
+- **Akar font:** `globals.css` menyebut `'Inter'` tapi font TIDAK pernah dimuat → fallback system (Segoe UI), bentuk huruf beda dari referensi. **Fix:** muat Inter (400–800) via `<link>` Google Fonts di `app/layout.tsx` (graceful fallback bila offline). Terverifikasi `document.fonts.check('700 24px Inter') === true`.
+- **Akar proporsi zoom:** heading/badge memakai px tetap → relatif kecil di layar besar (100%) vs 80%. **Fix:** heading `font-size: clamp(22px, 2.15vw, 34px)` sehingga tumbuh mengikuti lebar viewport (konsisten relatif panel). Weight 800 (extrabold) sesuai referensi.
+- **Hapus gambar 3:** pill "Sistem Resmi Bersertifikasi ISO 27001" di kanan-atas panel form DIHAPUS; brand mobile tetap ada (`lg:hidden`).
+- **Verifikasi browser:** `pillGone:true`, `h1` family `Inter,…` weight 800, `interLoaded:true`. `tsc` 0, `lint` bersih.
