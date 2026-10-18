@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint --max-warnings 0",
     "lint:fix": "next lint --fix",
     "test": "vitest run",
-    "test:unit": "vitest run --reporter=verbose"
+    "test:unit": "vitest run --reporter=verbose",
+    "seed:dev": "tsx src/scripts/dev-seed.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

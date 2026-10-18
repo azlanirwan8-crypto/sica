@@ -20,6 +20,18 @@ Untuk mempermudah pengujian otentikasi lintas role (RBAC) pada Web Portal dan Mo
 | **Dosen / DPA** | `0412088501` | `dosen@sica.ac.id` | **Dr. Eng. Ir. Hendra Gunawan, S.T., M.T.** | Dosen Teknik Informatika / DPA Utama |
 | **Mahasiswa Aktif** | `220601001` | `mahasiswa@sica.ac.id` | **Ahmad Rizky Pratama** | Mahasiswa S1 Teknik Informatika (Sem 5) |
 
+### 1.1 Seed dev yang SUDAH runnable (minimal, Supabase dev) — 2026-10-18
+Skrip nyata: `apps/web/src/scripts/dev-seed.ts` → `pnpm --filter @sica/web seed:dev` (idempoten).
+Hash sandi memakai **Scrypt peppered** (bukan Argon2id — `argon2` native belum terpasang; adapter siap tukar). Akun & kredensial aktual saat ini (tenant slug **`demo`**):
+
+| Role | Identifier (NIM/NIDN/Email) | Password dev |
+| :--- | :--- | :--- |
+| tenant_admin | `admin@demo.sica.test` / `ADMIN01` | `AdminPass!23` |
+| dosen | `dosen@demo.sica.test` / `NIDN9001` | `LecturerPass!23` |
+| mahasiswa | `mhs@demo.sica.test` / `2201010045` | `StudentPass!23` |
+
+> Tabel §1/§2+ (2 fakultas, 10 dosen, periode, Argon2id) = **spesifikasi target**, belum di-seed penuh. Seed dev kini mengaktifkan 9 modul **core** untuk tenant `demo` agar UI/entitlement tidak kosong. Terverifikasi login HTTP 200 (JWT RS256 nyata), 401 salah sandi, 422 tenant asing.
+
 ---
 
 ## 2. Profil Perguruan Tinggi (Tenant Profile)

@@ -214,3 +214,17 @@ Menuntaskan lifecycle refresh token (SEBELUMNYA stub → kini nyata & teruji liv
 - **Bukti e2e live Supabase (seed→assert→cleanup):** **8/8 PASS** — rotasi ok, token baru≠lama, pakai ulang token lama→ditolak, family tercabut→token rotasi ikut mati, logout→refresh berikutnya ditolak. (Skrip sementara, tak di-commit; seed dibersihkan.)
 - **Build:** `tsc` web 0 error; `vitest` 76/76.
 - **Sisa:** pertukaran Argon2id (native `argon2` belum terpasang) & notifikasi user saat reuse-detection.
+
+### 5.16 MILESTONE — Berjalan LOKAL ↔ Supabase + Seed Dev (2026-10-18)
+Aplikasi kini bisa dijalankan dan diuji login sungguhan secara lokal:
+- **Perbaikan kunci dev `.env`:** ternyata `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY` lama tidak valid (decoder error) & `JWT_PUBLIC_KEY_JWK` kosong. Ditulis **tripel COCOK** (PEM priv/pub multiline + JWK sepadan) — divalidasi sign↔verify=true & JWK.n==modulus. `PASSWORD_HASH_PEPPER` dipertahankan.
+- **Fix skrip `dev`:** `next dev --turbopack` → `next dev` (Next 15.0.0 menolak `--turbopack`). Server Ready ~6s di `localhost:3000`.
+- **Seed dev:** `apps/web/src/scripts/dev-seed.ts` (`pnpm --filter @sica/web seed:dev`) — idempoten; tenant `demo` + 3 akun (hash Scrypt peppered = sama dgn app) + aktivasi 9 modul core via `withTenantContext`.
+- **Verifikasi HTTP end-to-end:**
+  - Login via **NIM** `2201010045` → **200**, akses token **RS256 nyata** (klaim sub/tid/sid/role=mahasiswa, iss=sica, aud=sica-web) + cookie `sica_access_token` (HttpOnly Path=/) & `sica_refresh_token` (`rt_<tid>.…`, HttpOnly Path=/api/v1/auth).
+  - Login via **email** admin → 200, `role: tenant_admin`.
+  - Password salah (≥8) → **401**; tenant asing → **422 INVALID_TENANT**.
+  - `/health/ready` → `db` **ok** (via pooler), redis/storage degradable ok → status `ok`.
+- **Kredensial dev (lihat SEED_DATA):** admin@demo.sica.test/AdminPass!23 · dosen@demo.sica.test/LecturerPass!23 · mhs@demo.sica.test/StudentPass!23 (tenant slug `demo`).
+- **Build:** `tsc` web 0 error; `vitest` 76/76.
+- **Catatan:** `.env` (rahasia) gitignored; tidak ikut commit. Backup sementara di-exclude lokal & dihapus.
