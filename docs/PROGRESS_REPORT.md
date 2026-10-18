@@ -97,7 +97,7 @@ Legenda status: `Spes` = sudah dispesifikasi di `/docs`; `Logic` = aturan bisnis
 | ID | Temuan | Sev. | Guardrail | Status |
 |---|---|---|---|---|
 | AUD-01 | Route handler seluruhnya mock; `withTenantContext`/RLS tidak dipanggil runtime sehingga §3.2 tidak ditegakkan | **Kritis** | §3.2 RLS | Terbukti; **Open** (butuh integrasi DB) |
-| AUD-02 | `middleware.ts` hanya cek keberadaan cookie, tidak memverifikasi tanda tangan JWT → bypass rute terlindungi | **Kritis** | §3.2, SECURITY | **Partial** — verifikator RS256 (`jwt.service.ts`) aktif di `extractRequestContext` (API, Node runtime). **Sisa:** Edge middleware perlu WebCrypto/JWK (tak bisa pakai Node crypto). |
+| AUD-02 | `middleware.ts` hanya cek keberadaan cookie, tidak memverifikasi tanda tangan JWT → bypass rute terlindungi | **Kritis** | §3.2, SECURITY | **FIXED** — verifikasi tanda tangan kini di kedua jalur: API/Node (`extractRequestContext` → `jwt.service.ts`) dan **Edge** (`middleware.ts` → `edge-auth.ts`/`jwt-edge.ts`, WebCrypto RS256 + JWK, fail-secure). Butuh `JWT_PUBLIC_KEY_JWK` di-set. |
 | AUD-03 | Login mock: tanpa Argon2id, tanpa sign JWT RS256, tanpa query `users` | **Kritis** | §3.3, SECURITY | **Partial** — token kini RS256 nyata + fail-secure. **Sisa:** lookup user & cek hash Argon2id dari DB (butuh `pnpm install`+PostgreSQL+`argon2`). |
 | AUD-04 | `academic-calculation.test.ts` & `api-security-guards.test.ts` meng-import API fiktif → **tidak pernah ter-kompilasi**; klaim "Coverage 95%+" palsu | Tinggi | §3.1, TESTING | **FIXED** — direalign ke API nyata, 16/16 lulus |
 | AUD-05 | Fallback HMAC hard-coded `sica_attendance_secure_salt_2026` → QR dapat dipalsukan | Tinggi | §3.2 | **FIXED** — generate & scan kini fail-secure (500 bila secret unset) |
@@ -146,3 +146,11 @@ Roadmap §4.4 "Implement route handlers" — dikerjakan credential-free (jalan t
 - **Murni** `apps/web/src/modules/health/services/health.service.ts` — `runProbes(timeoutMs)` + `aggregateHealth` (ok/degraded/down) + `readinessHttpStatus`.
 - **Bukti:** `tsc --noEmit` **0 error**; `vitest run` **52/52 lulus** (7 file; naik dari 46 karena `tests/unit/health.test.ts`).
 - **Sisa:** integrasi probe Load Balancer/Cloudflare + probe replica/queue nyata (butuh infra §4.5).
+
+### 5.9 Slice Edge Middleware JWT (AUD-02 CLOSED, 2026-10-18)
+Menutup jalur Edge dari temuan AUD-02 — cookie tak lagi dipercaya buta:
+- **Helper murni** `apps/web/src/lib/edge-auth.ts` — `parseJwkPublicKey` (RSA JWK) + `verifyAccessToken` (fail-secure: `missing_token`/`unconfigured`/`invalid`).
+- **`middleware.ts`** kini `async` dan memverifikasi tanda tangan RS256 via WebCrypto (`jwt-edge.ts`) untuk rute terproteksi `/dashboard` & `/academic`; token cacat/kedaluwarsa/unconfigured → redirect `/login` + bersihkan cookie basi. Header `x-tenant-id`/`x-user-id` diset dari klaim `tid`/`sub` (otoritatif, bukan subdomain).
+- **Env** baru `JWT_PUBLIC_KEY_JWK` (JWK publik utk Edge; sepasang dengan `JWT_PUBLIC_KEY`) — ditambahkan ke `config/env.ts`, `.env.example`, ENV_CONTRACT.
+- **Bukti:** `tsc --noEmit` **0 error**; `vitest run` **59/59 lulus** (8 file; +`tests/unit/edge-auth.test.ts` 7 test).
+- **Catatan operasional:** aktifkan `JWT_PUBLIC_KEY_JWK`/`JWT_ISSUER`/`JWT_AUDIENCE` di Vercel (Preview & Production). Tanpa kunci, middleware bersifat fail-secure (menolak rute terproteksi) — sesuai desain.

@@ -52,9 +52,9 @@ Fokus utama fase ini adalah membangun pondasi monorepo pnpm, skema database Post
   - *Target file:* `apps/web/src/app/globals.css`, `apps/web/src/styles/velzon-theme.css`, `apps/web/tailwind.config.ts`, `apps/web/src/lib/utils.ts`
 - [x] Pasang komponen UI dasar: `Button`, `Input`, `Card`, Lucide Icons, dan Sonner Toast Provider.
   - *Target file:* `apps/web/src/components/ui/button.tsx`, `apps/web/src/components/ui/input.tsx`, `apps/web/src/components/ui/card.tsx`, `apps/web/src/components/ui/toaster.tsx`
-- [~] Buat middleware Next.js untuk ekstraksi subdomain tenant, validasi JWT cookie, dan proteksi rute.
-  - *Target file:* `apps/web/src/middleware.ts`
-  - **Gap audit (AUD-02):** hanya memeriksa *keberadaan* cookie, **belum memverifikasi tanda tangan JWT (RS256)** → rute terlindungi bisa dilewati cookie palsu.
+- [x] Buat middleware Next.js untuk ekstraksi subdomain tenant, **verifikasi tanda tangan JWT RS256 (Edge/WebCrypto)**, dan proteksi rute (fail-secure).
+  - *Target file:* `apps/web/src/middleware.ts` → `apps/web/src/lib/edge-auth.ts` → `apps/web/src/lib/jwt-edge.ts`
+  - **AUD-02: CLOSED** — cookie tak lagi dipercaya buta; rute terproteksi `/dashboard` & `/academic` menolak token cacat/kedaluwarsa/unconfigured (redirect login + bersihkan cookie). Header `x-tenant-id`/`x-user-id` di-set dari klaim `tid`/`sub`. Butuh `JWT_PUBLIC_KEY_JWK` (+`JWT_ISSUER`/`JWT_AUDIENCE`) di-set.
 - [~] Bangun API Route Handlers otentikasi backend:
   - [~] `POST /api/v1/auth/login` (*Target file:* `apps/web/src/app/api/v1/auth/login/route.ts`) — **DIPERBAIKI (Foundation Auth):** kini men-*sign* **JWT RS256 nyata** (fail-secure 500 bila `JWT_PRIVATE_KEY` unset). **Sisa AUD-03:** lookup user & verifikasi hash dari DB masih stub; sesi tak dipersist ke `sessions`.
   - [x] `POST /api/v1/auth/mfa/verify` (*Target file:* `apps/web/src/app/api/v1/auth/mfa/verify/route.ts`)
@@ -66,7 +66,7 @@ Fokus utama fase ini adalah membangun pondasi monorepo pnpm, skema database Post
   - `apps/web/src/modules/auth/services/token.service.ts` (opaque token + SHA-256 hash + family id + `safeEqualHex`).
   - `apps/web/src/lib/api-response.ts::extractRequestContext` kini **memverifikasi JWT** (fail-closed) — menutup AUD-02 pada jalur API.
   - Env baru `JWT_ISSUER`/`JWT_AUDIENCE` (config/env.ts, ENV_CONTRACT, SECURITY §2.4).
-- [~] **Auth — sisa integrasi:** Argon2id aktif; lookup `users`/`tenant_memberships` + cek hash + persist `sessions`/`refresh_tokens`; revocation set `sid` (butuh `pnpm install` + PostgreSQL + Redis). **Verifikator JWT Edge/JWK — SELESAI & teruji:** `apps/web/src/lib/jwt-edge.ts` (`verifyJwtEdge` via WebCrypto RS256) + unit test `tests/unit/jwt-edge.test.ts`. **Sisa:** rangkai `verifyJwtEdge` ke `middleware.ts` (butuh `JWT_PUBLIC_KEY_JWK` di env) + provider tenant untuk guard API.
+- [~] **Auth — sisa integrasi:** Argon2id aktif; lookup `users`/`tenant_memberships` + cek hash + persist `sessions`/`refresh_tokens`; revocation set `sid` (butuh `pnpm install` + PostgreSQL + Redis). **Verifikator JWT Edge/JWK — SELESAI & teruji:** `apps/web/src/lib/jwt-edge.ts` (`verifyJwtEdge` WebCrypto RS256) + helper `apps/web/src/lib/edge-auth.ts` (`verifyAccessToken`/`parseJwkPublicKey`) dirangkai ke `middleware.ts` + unit test `tests/unit/{jwt-edge,edge-auth}.test.ts`. **Sisa:** provider tenant untuk guard API + aktifkan `JWT_PUBLIC_KEY_JWK` di environment.
 - [x] Bangun halaman Landing Page & Login Portal berbasis Velzon Card layout dengan interaksi Sonner Toast.
   - *Target file:* `apps/web/src/app/page.tsx`, `apps/web/src/app/(auth)/login/page.tsx`, `apps/web/src/modules/auth/components/login-form.tsx`
 - [x] Bangun layout dashboard web responsif (Sidebar, Header dengan Profile Avatar, Multi-Tenant Switcher).

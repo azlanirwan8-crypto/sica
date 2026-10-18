@@ -65,7 +65,7 @@ Login (email/NIM + password [+ MFA])
 **Impersonation (dukungan tenant):** tidak ada "login sebagai mahasiswa". Yang ada adalah `platform_support_grants`: operator mengajukan dengan ticket-id + alasan + TTL (mis. 30 menit) + MFA, tenant dapat melihat & mencabut, seluruh aksinya tercatat sebagai *dua* identitas (siapa yang bertindak & siapa yang ditiru).
 
 ### 2.4 Status Implementasi Primitif Autentikasi (audit 2026-10-18)
-Dielaborasi & diimplementasi (terverifikasi `tsc` + `vitest`, 30 test lulus):
+Dielaborasi & diimplementasi (terverifikasi `tsc` 0 error + `vitest` 59 test lulus):
 | Komponen | Lokasi | Status |
 |---|---|---|
 | JWT **RS256** sign/verify (Node `crypto`, tanpa dep) | `apps/web/src/modules/auth/services/jwt.service.ts` | ✅ nyata; validasi sig + exp/nbf/iss/aud + tololansi clock |
@@ -74,7 +74,7 @@ Dielaborasi & diimplementasi (terverifikasi `tsc` + `vitest`, 30 test lulus):
 | Refresh token opaque + SHA-256 hash + family/reuse | `token.service.ts` | ✅ primitif nyata (generate/hash/safeEqual/family); persistensi `refresh_tokens` butuh DB |
 | Login issuer token | `app/api/v1/auth/login/route.ts` | 🟡 sign JWT **nyata** bila `JWT_PRIVATE_KEY` ada (else 500 fail-secure); **lookup user & cek hash dari DB masih stub** (AUD-03) |
 | Sesi revocation (cek `sid` di Redis) | — | ❌ belum; butuh Redis + `sessions` (bagian task integrasi) |
-| Verifikasi di Edge middleware | `middleware.ts` | ❌ masih cek keberadaan cookie; perlu verifikator WebCrypto/JWK khusus Edge (Node `crypto` tak tersedia di Edge) |
+| Verifikasi di Edge middleware | `middleware.ts` → `edge-auth.ts` → `jwt-edge.ts` | ✅ **fail-secure** — verifikasi tanda tangan RS256 (WebCrypto + JWK, `JWT_PUBLIC_KEY_JWK`) sebelum izinkan `/dashboard`/`/academic`; token cacat/kedaluwarsa/unconfigured → tolak (AUD-02 CLOSED). Klaim `tid`/`sub` → header `x-tenant-id`/`x-user-id` |
 
 Env baru: `JWT_ISSUER` (def. `sica`), `JWT_AUDIENCE` (def. `sica-web`) — didaftarkan di `config/env.ts` & ENV_CONTRACT.
 **Decisions (AUD-11):** algoritma akses token distandarkan **RS256** (bukan EdDSA) agar konsisten ENV_CONTRACT + key PEM yang sudah di-kontrak-kan.

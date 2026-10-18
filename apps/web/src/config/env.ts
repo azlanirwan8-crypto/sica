@@ -20,7 +20,11 @@ const ServerEnvSchema = z.object({
   }),
 
   // 3. Cryptography & JWT RS256 Authentication
-  JWT_PUBLIC_KEY: z.string().min(64).describe('Public Key PEM untuk verifikasi token'),
+  JWT_PUBLIC_KEY: z.string().min(64).describe('Public Key PEM untuk verifikasi token (Node runtime)'),
+  JWT_PUBLIC_KEY_JWK: z
+    .string()
+    .min(20)
+    .describe('Public Key berformat JWK (JSON) untuk verifikasi di Edge middleware (WebCrypto)'),
   JWT_PRIVATE_KEY: z.string().min(64).describe('Private Key PEM untuk signing token'),
   JWT_ISSUER: z.string().default('sica').describe('Claim iss token'),
   JWT_AUDIENCE: z.string().default('sica-web').describe('Claim aud token'),

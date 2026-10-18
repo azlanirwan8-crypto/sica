@@ -57,7 +57,8 @@ const ServerEnvSchema = z.object({
   // ==========================================
   // 3. Cryptography & JWT RS256 Authentication
   // ==========================================
-  JWT_PUBLIC_KEY: z.string().min(64).describe('Public Key PEM untuk verifikasi token'),
+  JWT_PUBLIC_KEY: z.string().min(64).describe('Public Key PEM untuk verifikasi token (Node runtime)'),
+  JWT_PUBLIC_KEY_JWK: z.string().min(20).describe('Public Key JWK (JSON) untuk verifikasi di Edge middleware (WebCrypto)'),
   JWT_PRIVATE_KEY: z.string().min(64).describe('Private Key PEM untuk signing token'),
   JWT_ACCESS_TOKEN_TTL_SEC: z.coerce.number().int().min(60).max(86400).default(900), // 15 menit
   JWT_REFRESH_TOKEN_TTL_SEC: z.coerce.number().int().min(86400).default(604800), // 7 hari
@@ -180,7 +181,8 @@ class AppEnv {
 | **Database** | `DIRECT_DATABASE_URL` | Ya | PostgreSQL direct connection (port 5432) untuk DDL |
 | **Cache** | `REDIS_URL` | Ya | Connection string Redis 7 untuk BullMQ & Lock |
 | **Auth** | `JWT_PRIVATE_KEY` | Ya | RS256 Private Key format PEM (hanya ada di server) |
-| **Auth** | `JWT_PUBLIC_KEY` | Ya | RS256 Public Key format PEM (verifikasi token) |
+| **Auth** | `JWT_PUBLIC_KEY` | Ya | RS256 Public Key format PEM (verifikasi token, Node runtime) |
+| **Auth** | `JWT_PUBLIC_KEY_JWK` | Ya | RS256 Public Key format JWK (JSON) — verifikasi di **Edge middleware** (WebCrypto). Satu kunci dengan `JWT_PUBLIC_KEY`, hanya berbeda encoding |
 | **Auth** | `JWT_ISSUER` | Ya | Claim `iss` access/refresh token (default `sica`) |
 | **Auth** | `JWT_AUDIENCE` | Ya | Claim `aud` audience token (default `sica-web`) |
 | **Payment** | `MIDTRANS_SERVER_KEY`| Ya | Secret key server Midtrans untuk pembuatan invoice |
