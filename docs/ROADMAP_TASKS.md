@@ -224,7 +224,7 @@ Fokus fase terakhir adalah mencapai batas minimal 80% code coverage, audit keama
 - [ ] Setup PgBouncer (transaction mode) + router `db.$primary()`/`db.$replica()` di `packages/database/src/client.ts`.
 - [ ] Bangun Redis Cluster/Sentinel + modul seat-reservation Lua + BullMQ queues (`krs.enroll`, `attendance.flush`) + worker concurrency/limiter.
 - [ ] Provision PostgreSQL Primary+Replica (streaming replikasi) + Patroni auto-failover + WAL-G PITR.
-- [ ] Implement `/api/v1/health` & `/health/ready` route handlers + integrasi probe LB.
+- [x] Implement `/api/v1/health` & `/health/ready` route handlers + integrasi probe LB. (handler dibuat: liveness selalu 200; readiness probe DB(required)/Redis/storage(degradable) via `aggregateHealth`; `readinessHttpStatus` → 503 saat down. Sisa: integrasi probe LB/Cloudflare saat infra ready.)
 - [ ] Konfigurasi Cloudflare (WAF rules, rate-limit OW-window per tenant, Under Attack mode, cache/asset).
 - [ ] Load test k6 **skenario OW-war 2.000–3.000 RPS tulis** → validasi tak ada row-lock, p95 & queue-depth dalam SLI. (*Target file:* `tests/load/krs-concurrency.js`)
 

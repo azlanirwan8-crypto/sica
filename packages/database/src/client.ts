@@ -3,8 +3,11 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { sql } from 'drizzle-orm';
 import * as schema from './schema';
 
+// Re-export `sql` agar konsumen (apps/web) tak perlu bergantung langsung ke `drizzle-orm`.
+export { sql };
+
 const connectionString =
-  process.env.DATABASE_URL ??
+  process.env['DATABASE_URL'] ??
   'postgresql://sica_user:sica_password@localhost:6432/sica_db?sslmode=disable';
 
 // Pool koneksi utama via PgBouncer untuk operasional runtime aplikasi

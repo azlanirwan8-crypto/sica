@@ -138,3 +138,11 @@ Menggunakan `pnpm` bundled (`.tools/node`, node v20.18) dengan PATH node diatur 
 - **`vitest run` = 46/46 lulus.** AUD-07 (dependensi belum ter-install) → **CLOSED**.
 - Peringatan non-fatal: peer `next@15.0.0` vs `react@19.3.1` (unmet peer) — dipantau; kandidat upgrade ke next 15.x stabil / react 19.0.0-rc bila perlu.
 - **Langkah berikutnya:** sambungkan **Supabase** (Postgres managed) sbg DB dev + **Vercel** utk deploy. Butuh: connection string Supabase (pooled + direct/non-pooled). ⚠️ Catatan: migrasi kita membuat ROLE (`sica_app`,`sica_owner`) — Supabase tidak mengizinkan `CREATE ROLE` non-superuser → perlu tilikan (lihat ROADMAP §4.5).
+
+### 5.8 Slice Health Check (terverifikasi, 2026-10-18)
+Roadmap §4.4 "Implement route handlers" — dikerjakan credential-free (jalan tanpa DB/cloud):
+- **Liveness** `apps/web/src/app/api/v1/health/route.ts` — runtime `nodejs`, `force-dynamic`, selalu `200 {status:'ok',version,uptimeSec}` (bukan probe dependensi).
+- **Readiness** `apps/web/src/app/api/v1/health/ready/route.ts` — probe `db` (**required**, `SELECT 1` via `@sica/database`), `redis` & `storage` (**degradable**, cek env). HTTP 503 hanya saat required/down; degraded → 200.
+- **Murni** `apps/web/src/modules/health/services/health.service.ts` — `runProbes(timeoutMs)` + `aggregateHealth` (ok/degraded/down) + `readinessHttpStatus`.
+- **Bukti:** `tsc --noEmit` **0 error**; `vitest run` **52/52 lulus** (7 file; naik dari 46 karena `tests/unit/health.test.ts`).
+- **Sisa:** integrasi probe Load Balancer/Cloudflare + probe replica/queue nyata (butuh infra §4.5).
