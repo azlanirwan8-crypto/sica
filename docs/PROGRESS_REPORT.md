@@ -130,3 +130,11 @@ Kerjakan tanpa DB/cloud (murni + `tsc`/`vitest`), sesuai rekomendasi jalur-2:
 - **Verifikator JWT Edge** `apps/web/src/lib/jwt-edge.ts` (`verifyJwtEdge` WebCrypto RS256/JWK) — menutup jalur AUD-02 Edge; wiring `middleware.ts` menyusul (butuh `JWT_PUBLIC_KEY_JWK`).
 - **Migrasi SQL** `0004_entitlement_modules.sql` (katalog+dependensi+RLS `tenant_modules`) — ditulis, belum dieksekusi (butuh PostgreSQL).
 - **Bukti:** `tsc` web **0 error non-dependensi**; `vitest` **46/46 lulus** (6 file). Contracts & database package `tsc` bersih.
+
+### 5.7 Build Terblokir → TERBUKA (2026-10-18, `pnpm install` sukses)
+Menggunakan `pnpm` bundled (`.tools/node`, node v20.18) dengan PATH node diatur + jaringan aktif:
+- `pnpm install` **berhasil** (+500 paket). Perbaikan `.gitignore` (`.tools/`, `*.tsbuildinfo`) mencegah toolchain ikut ter-commit.
+- **`apps/web` `tsc --noEmit` = 0 error** (semua error TS2307/2322/2339 akibat UI deps hilang kini lenyap).
+- **`vitest run` = 46/46 lulus.** AUD-07 (dependensi belum ter-install) → **CLOSED**.
+- Peringatan non-fatal: peer `next@15.0.0` vs `react@19.3.1` (unmet peer) — dipantau; kandidat upgrade ke next 15.x stabil / react 19.0.0-rc bila perlu.
+- **Langkah berikutnya:** sambungkan **Supabase** (Postgres managed) sbg DB dev + **Vercel** utk deploy. Butuh: connection string Supabase (pooled + direct/non-pooled). ⚠️ Catatan: migrasi kita membuat ROLE (`sica_app`,`sica_owner`) — Supabase tidak mengizinkan `CREATE ROLE` non-superuser → perlu tilikan (lihat ROADMAP §4.5).

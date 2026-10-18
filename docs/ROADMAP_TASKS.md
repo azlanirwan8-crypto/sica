@@ -227,3 +227,14 @@ Fokus fase terakhir adalah mencapai batas minimal 80% code coverage, audit keama
 - [ ] Implement `/api/v1/health` & `/health/ready` route handlers + integrasi probe LB.
 - [ ] Konfigurasi Cloudflare (WAF rules, rate-limit OW-window per tenant, Under Attack mode, cache/asset).
 - [ ] Load test k6 **skenario OW-war 2.000–3.000 RPS tulis** → validasi tak ada row-lock, p95 & queue-depth dalam SLI. (*Target file:* `tests/load/krs-concurrency.js`)
+
+### 4.5 Integrasi Supabase + Vercel (Dev → Deploy) — pasca `pnpm install`
+> Status lingkungan dev: **`pnpm install` ✅ sukses; `apps/web` `tsc` = 0 error; `vitest` 46/46 lulus** (AUD-07 CLOSED). Keputusan stack dev user: **Supabase (Postgres) + Vercel**.
+- [x] Pulihkan toolchain build: jalankan `pnpm install` memakai pnpm bundled (`.tools/node`), `.tools/` & `*.tsbuildinfo` di-gitignore.
+- [ ] **Provision Supabase project** (Postgres 15/16). Ambil 2 URL: *session pooler* (direct, utk migrasi DDL) & *transaction pooler* (`pgbouncer=true`, utk runtime Vercel/serverless).
+- [ ] **Adaptasi migrasi untuk Supabase (PENTING):** Supabase tidak mengizinkan `CREATE ROLE` non-superuser → ROLE `sica_app`/`sica_owner`/`sica_readonly`/`sica_platform` (0001) harus dibuat via **Supabase Dashboard/SQL editor sebagai superuser**, atau ubah strategi (pakai role `postgres` + `SET app.current_tenant`, tanpa NOBYPASSRLS role terpisah). Dokumentasikan di MIGRATION_SOP.
+- [ ] Isi `apps/web/.env` lokal: `DIRECT_DATABASE_URL` (session), `DATABASE_URL` (transaction+pgbouncer), `REDIS_URL` (Upstash), `JWT_PUBLIC_KEY`/`JWT_PRIVATE_KEY`/`JWT_ISSUER`/`JWT_AUDIENCE`, `PASSWORD_HASH_PEPPER`, `ATTENDANCE_HMAC_SECRET`.
+- [ ] Jalankan `pnpm --filter @sica/database db:migrate` terhadap Supabase (0001→0004) + verifikasi query RLS §8 mengembalikan 0 baris tanpa tenant context.
+- [ ] **Vercel:** `vercel link`, set Environment Variables (Production/Preview/Development) = env contract; pastikan `DATABASE_URL` pakai transaction pooler (serverless tidak boleh koneksi session langsung). Deploy preview → cek `/api/v1/health`.
+- [ ] Aktifkan `argon2` (deps dev sudah ada) → ganti `ScryptPasswordHasher` jadi default `Argon2idPasswordHasher`; rangkai login ke `users`/`tenant_memberships` Supabase; persist `sessions`/`refresh_tokens`.
+- [ ] (Opsional) Vercel Cron untuk job BullMQ/feeder, atau worker di luar Vercel (karena long-running) — selaraskan ADR-9/ADR-10.
