@@ -154,3 +154,13 @@ Menutup jalur Edge dari temuan AUD-02 — cookie tak lagi dipercaya buta:
 - **Env** baru `JWT_PUBLIC_KEY_JWK` (JWK publik utk Edge; sepasang dengan `JWT_PUBLIC_KEY`) — ditambahkan ke `config/env.ts`, `.env.example`, ENV_CONTRACT.
 - **Bukti:** `tsc --noEmit` **0 error**; `vitest run` **59/59 lulus** (8 file; +`tests/unit/edge-auth.test.ts` 7 test).
 - **Catatan operasional:** aktifkan `JWT_PUBLIC_KEY_JWK`/`JWT_ISSUER`/`JWT_AUDIENCE` di Vercel (Preview & Production). Tanpa kunci, middleware bersifat fail-secure (menolak rute terproteksi) — sesuai desain.
+
+### 5.10 Slice Entitlement Enforcement + Endpoint (2026-10-18)
+Melanjutkan §5.6 — provider DB + orkestrasi + endpoint, teruji credential-free lewat repo in-memory:
+- **Repository** `apps/web/src/modules/entitlement/entitlement.repository.ts` — interface `EntitlementRepository`; `InMemoryEntitlementRepository` (test/dev) + `createDrizzleEntitlementRepository` (runtime, `withTenantContext`+RLS, join katalog global); `createTenantModuleCheck(repo)` menghasilkan `ModuleCheck` utk guard `withModule`.
+- **Service** `entitlement.service.ts` — `activateModule`/`deactivateModule` memakai resolver graf → hasil terdiskriminasi (`DEPENDENCY_UNMET`/`IN_USE`), cascade `force` transitif. **Test** `tests/unit/entitlement-service.test.ts` (6).
+- **Otorisasi** `guards.ts::isAdminRole` — operasi aktivasi hanya utk peran admin (dari klaim `role`, bukan input klien).
+- **Endpoint** `GET /api/v1/tenant/modules`, `POST .../modules/[code]/activate` (201 / 422 `MODULE_DEPENDENCY_UNMET`), `POST .../modules/[code]/deactivate` (200+`cascaded` / 409 `MODULE_IN_USE`). Zod: `ModuleCodeSchema`/`Activate`/`Deactivate`; Next 15 async `params`.
+- **Refactor ORM:** operator Drizzle (`eq/and/or/inArray/isNull/gt`) di-re-export dari `@sica/database` agar `apps/web` tak bergantung langsung `drizzle-orm` (pnpm isolated). `client.ts` juga re-export `sql`.
+- **Bukti:** `tsc --noEmit` **0 error**; `vitest` **65/65 lulus** (9 file). `@sica/database` bersih (hanya error `@sica/logger` pre-existing tak terkait).
+- **Sisa:** pasang guard `withModule` ke seluruh route domain + tulis event audit; cache Redis 60s; eksekusi migrasi `0004` saat DB ready (§4.5).
