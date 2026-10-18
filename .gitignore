@@ -53,3 +53,10 @@ Thumbs.db
 build/
 ios/Flutter/Generated.xcconfig
 android/local.properties
+
+# Next.js auto-generated
+next-env.d.ts
+
+# local dev server logs
+*.devserver.log
+.devserver.log
