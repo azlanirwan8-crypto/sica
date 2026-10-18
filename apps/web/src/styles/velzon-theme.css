@@ -1,0 +1,155 @@
+/**
+ * SICA Velzon Theme System
+ * Tokens, Typography, Elevasi, dan Utility Classes sesuai UI_UX_DESIGN.md & 03-ui-conventions.mdc
+ */
+
+:root {
+  /* Brand & Status Colors */
+  --sica-color-primary: #3577f1;
+  --sica-color-primary-hover: #2960c9;
+  --sica-color-primary-light: rgba(53, 119, 241, 0.1);
+  --sica-color-secondary: #405189;
+  --sica-color-secondary-hover: #344270;
+  --sica-color-success: #0ab39c;
+  --sica-color-success-light: rgba(10, 179, 156, 0.1);
+  --sica-color-info: #299cdb;
+  --sica-color-info-light: rgba(41, 156, 219, 0.1);
+  --sica-color-warning: #f7b84b;
+  --sica-color-warning-light: rgba(247, 184, 75, 0.12);
+  --sica-color-danger: #f06548;
+  --sica-color-danger-light: rgba(240, 101, 72, 0.1);
+
+  /* Light Surface (Default) */
+  --sica-surface-canvas: #f3f3f9;
+  --sica-surface-card: #ffffff;
+  --sica-surface-header: #ffffff;
+  --sica-surface-sidebar: #405189;
+  --sica-surface-input: #ffffff;
+  --sica-surface-hover: #f8f9fa;
+
+  /* Typography / Kontras WCAG AA (>= 4.5:1) */
+  --sica-text-heading: #212529;
+  --sica-text-body: #495057;
+  --sica-text-muted: #74788d;
+  --sica-text-sidebar: #abb9e8;
+  --sica-text-sidebar-hover: #ffffff;
+  --sica-text-white: #ffffff;
+
+  /* Borders & Dividers */
+  --sica-border-color: #e9ebec;
+  --sica-border-focus: #3577f1;
+
+  /* 8pt Grid Spacing Tokens */
+  --sica-space-1: 4px;
+  --sica-space-2: 8px;
+  --sica-space-3: 12px;
+  --sica-space-4: 16px;
+  --sica-space-5: 20px;
+  --sica-space-6: 24px;
+  --sica-space-8: 32px;
+  --sica-space-10: 40px;
+  --sica-space-12: 48px;
+
+  /* Radii */
+  --sica-radius-sm: 4px;
+  --sica-radius-md: 8px;
+  --sica-radius-lg: 12px;
+  --sica-radius-xl: 16px;
+  --sica-radius-full: 9999px;
+
+  /* Shadows (Velzon Enterprise Elevation) */
+  --sica-shadow-sm: 0 1px 2px 0 rgba(56, 65, 74, 0.05);
+  --sica-shadow-card: 0 1px 2px rgba(56, 65, 74, 0.15);
+  --sica-shadow-dropdown: 0 5px 10px rgba(30, 32, 37, 0.12);
+  --sica-shadow-modal: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+
+  /* Transitions */
+  --sica-transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --sica-transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme='dark'] {
+  /* Dark Surface (Enterprise Night) */
+  --sica-surface-canvas: #14171a;
+  --sica-surface-card: #1e2227;
+  --sica-surface-header: #1e2227;
+  --sica-surface-sidebar: #171a1e;
+  --sica-surface-input: #212529;
+  --sica-surface-hover: #262b32;
+
+  /* Typography Dark Mode WCAG AA */
+  --sica-text-heading: #f3f6f9;
+  --sica-text-body: #ced4da;
+  --sica-text-muted: #878a99;
+  --sica-text-sidebar: #878a99;
+  --sica-text-sidebar-hover: #ffffff;
+
+  /* Borders Dark Mode */
+  --sica-border-color: #292e35;
+  --sica-border-focus: #3577f1;
+
+  /* Shadows Dark Mode */
+  --sica-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --sica-shadow-card: 0 2px 4px rgba(0, 0, 0, 0.4);
+  --sica-shadow-dropdown: 0 8px 16px rgba(0, 0, 0, 0.5);
+  --sica-shadow-modal: 0 16px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* Base Component Utilities */
+.velzon-card {
+  background-color: var(--sica-surface-card);
+  border: 1px solid var(--sica-border-color);
+  border-radius: var(--sica-radius-md);
+  box-shadow: var(--sica-shadow-card);
+  transition: box-shadow var(--sica-transition-normal), transform var(--sica-transition-normal);
+}
+
+.velzon-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sica-space-2);
+  background-color: var(--sica-color-primary);
+  color: var(--sica-text-white);
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: var(--sica-radius-md);
+  border: none;
+  cursor: pointer;
+  transition: background-color var(--sica-transition-fast), transform 100ms;
+}
+
+.velzon-btn-primary:hover:not(:disabled) {
+  background-color: var(--sica-color-primary-hover);
+}
+
+.velzon-btn-primary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.velzon-btn-primary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.velzon-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--sica-text-heading);
+  background-color: var(--sica-surface-input);
+  border: 1px solid var(--sica-border-color);
+  border-radius: var(--sica-radius-md);
+  outline: none;
+  transition: border-color var(--sica-transition-fast), box-shadow var(--sica-transition-fast);
+}
+
+.velzon-input:focus {
+  border-color: var(--sica-border-focus);
+  box-shadow: 0 0 0 3px rgba(53, 119, 241, 0.15);
+}
+
+.velzon-input::placeholder {
+  color: var(--sica-text-muted);
+}

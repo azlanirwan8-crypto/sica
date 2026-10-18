@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SICA Academic Cloud — Live UI Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../apps/web/src/styles/velzon-theme.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--sica-surface-canvas);
+      color: var(--sica-text-body);
+      min-height: 100vh;
+    }
+    .preview-bar {
+      background: #212529;
+      color: #fff;
+      padding: 10px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .preview-tabs {
+      display: flex;
+      gap: 8px;
+    }
+    .preview-tab-btn {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: transparent;
+      color: #ced4da;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 150ms;
+    }
+    .preview-tab-btn.active {
+      background: var(--sica-color-primary);
+      color: #fff;
+      border-color: var(--sica-color-primary);
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+</head>
+<body>
+
+  <!-- Top Preview Bar -->
+  <div class="preview-bar">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span style="font-weight: 700; color: #fff; font-size: 15px;">SICA Enterprise</span>
+      <span style="font-size: 12px; background: rgba(53,119,241,0.2); color: #3577f1; padding: 2px 8px; border-radius: 4px;">Standalone Local Preview</span>
+    </div>
+    <div class="preview-tabs">
+      <button class="preview-tab-btn active" onclick="switchTab('dashboard')">📊 Tampilan Dashboard</button>
+      <button class="preview-tab-btn" onclick="switchTab('login')">🔐 Tampilan Login Portal</button>
+    </div>
+  </div>
+
+  <!-- TAB 1: DASHBOARD VIEW -->
+  <div id="tab-dashboard" class="tab-content active">
+    <div style="display: flex; min-height: calc(100vh - 46px);">
+      <!-- Sidebar -->
+      <aside style="width: 260px; background: var(--sica-surface-sidebar); color: var(--sica-text-sidebar); padding: 20px 12px; display: flex; flexDirection: column; gap: 6px;">
+        <div style="display: flex; align-items: center; gap: 10px; padding: 12px; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--sica-color-primary); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: bold;">S</div>
+          <span style="font-size: 16px; font-weight: 700; color: #fff;">SICA Cloud</span>
+        </div>
+        <div style="font-size: 11px; text-transform: uppercase; color: rgba(255,255,255,0.4); padding: 6px 12px; font-weight: 600;">Menu Utama</div>
+        <a href="#dash" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; background: rgba(255,255,255,0.12); color: #fff; font-size: 14px; font-weight: 600; text-decoration: none;">📊 Dashboard</a>
+        <a href="#krs" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; color: var(--sica-text-sidebar); font-size: 14px; text-decoration: none;">📝 KRS Online</a>
+        <a href="#khs" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; color: var(--sica-text-sidebar); font-size: 14px; text-decoration: none;">📜 KHS / Nilai</a>
+        <a href="#jadwal" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; color: var(--sica-text-sidebar); font-size: 14px; text-decoration: none;">📅 Jadwal Kuliah</a>
+        <a href="#presensi" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; color: var(--sica-text-sidebar); font-size: 14px; text-decoration: none;">📱 Presensi QR</a>
+        <a href="#keuangan" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; color: var(--sica-text-sidebar); font-size: 14px; text-decoration: none;">💳 Keuangan & UKT</a>
+      </aside>
+
+      <!-- Main Content Area -->
+      <div style="flex: 1; display: flex; flex-direction: column;">
+        <!-- Header -->
+        <header style="height: 64px; background: var(--sica-surface-header); border-bottom: 1px solid var(--sica-border-color); display: flex; justify-content: space-between; align-items: center; padding: 0 24px;">
+          <div style="padding: 6px 12px; background: var(--sica-color-primary-light); color: var(--sica-color-primary); border-radius: 6px; font-size: 13px; font-weight: 600;">
+            🟢 Universitas Padjadjaran (Tenant: unpad)
+          </div>
+          <div style="display: flex; align-items: center; gap: 14px;">
+            <div style="text-align: right;">
+              <div style="font-size: 13px; font-weight: 600; color: var(--sica-text-heading);">Budi Santoso</div>
+              <div style="font-size: 11px; color: var(--sica-text-muted);">Mahasiswa (NIM: 2208561012)</div>
+            </div>
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--sica-color-secondary); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600;">B</div>
+          </div>
+        </header>
+
+        <!-- Dashboard Body -->
+        <main style="padding: 24px; max-width: 1300px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;">
+          <!-- Welcome Card -->
+          <div class="velzon-card" style="padding: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <h1 style="font-size: 20px; font-weight: 700; color: var(--sica-text-heading); margin-bottom: 4px;">Selamat datang kembali, Budi Santoso 👋</h1>
+              <p style="font-size: 13px; color: var(--sica-text-muted);">Program Studi S1 Teknik Informatika · Semester Ganjil 2026/2027</p>
+            </div>
+            <span style="padding: 6px 14px; background: var(--sica-color-primary-light); color: var(--sica-color-primary); border-radius: 20px; font-size: 12px; font-weight: 600;">Tahun Akademik Aktif</span>
+          </div>
+
+          <!-- 4 Stat Cards Grid -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;">
+            <div class="velzon-card" style="padding: 18px;">
+              <div style="font-size: 12px; color: var(--sica-text-muted); margin-bottom: 6px;">Indeks Prestasi Kumulatif</div>
+              <div style="font-size: 26px; font-weight: 700; color: var(--sica-text-heading); margin-bottom: 4px;">3.82</div>
+              <div style="font-size: 12px; color: var(--sica-color-success); font-weight: 500;">+0.05 dari semester lalu</div>
+            </div>
+            <div class="velzon-card" style="padding: 18px;">
+              <div style="font-size: 12px; color: var(--sica-text-muted); margin-bottom: 6px;">Total SKS Lulus</div>
+              <div style="font-size: 26px; font-weight: 700; color: var(--sica-text-heading); margin-bottom: 4px;">84 / 144</div>
+              <div style="font-size: 12px; color: var(--sica-color-info); font-weight: 500;">Batas SKS Semester: 24 SKS</div>
+            </div>
+            <div class="velzon-card" style="padding: 18px;">
+              <div style="font-size: 12px; color: var(--sica-text-muted); margin-bottom: 6px;">Presensi Kehadiran</div>
+              <div style="font-size: 26px; font-weight: 700; color: var(--sica-text-heading); margin-bottom: 4px;">95.8%</div>
+              <div style="font-size: 12px; color: var(--sica-color-success); font-weight: 500;">Memenuhi syarat ujian</div>
+            </div>
+            <div class="velzon-card" style="padding: 18px;">
+              <div style="font-size: 12px; color: var(--sica-text-muted); margin-bottom: 6px;">Status Tagihan UKT</div>
+              <div style="font-size: 26px; font-weight: 700; color: var(--sica-color-success); margin-bottom: 4px;">LUNAS</div>
+              <div style="font-size: 12px; color: var(--sica-text-muted); font-weight: 500;">Semester Ganjil 2026/2027</div>
+            </div>
+          </div>
+
+          <!-- Split: Jadwal & Quick Actions -->
+          <div style="display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px;">
+            <!-- Jadwal Hari Ini -->
+            <div class="velzon-card" style="padding: 20px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 16px;">
+                <h3 style="font-size: 15px; font-weight: 600; color: var(--sica-text-heading);">Jadwal Kuliah Hari Ini</h3>
+                <span style="font-size: 12px; color: var(--sica-color-primary); cursor: pointer;">Lihat Semua</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="padding: 12px; background: var(--sica-surface-canvas); border-radius: 8px; border: 1px solid var(--sica-border-color); display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <div style="font-size: 11px; color: var(--sica-color-primary); font-weight: 600;">08:00 - 09:40 WIB · Ruang Teori 302</div>
+                    <div style="font-size: 13px; font-weight: 600; color: var(--sica-text-heading);">IF3201 — Rekayasa Perangkat Lunak</div>
+                    <div style="font-size: 11px; color: var(--sica-text-muted);">Dr. Ir. Hendra Gunawan, M.T.</div>
+                  </div>
+                  <span style="padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--sica-color-success); background: var(--sica-color-success-light);">SELESAI</span>
+                </div>
+                <div style="padding: 12px; background: var(--sica-surface-canvas); border-radius: 8px; border: 1px solid var(--sica-border-color); display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <div style="font-size: 11px; color: var(--sica-color-primary); font-weight: 600;">10:00 - 12:30 WIB · Lab Komputasi A</div>
+                    <div style="font-size: 13px; font-weight: 600; color: var(--sica-text-heading);">IF3204 — Basis Data Terdistribusi & Multi-Tenant</div>
+                    <div style="font-size: 11px; color: var(--sica-text-muted);">Prof. Siti Nurhaliza, Ph.D.</div>
+                  </div>
+                  <span style="padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--sica-color-primary); background: var(--sica-color-primary-light);">BERLANGSUNG</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="velzon-card" style="padding: 20px;">
+              <h3 style="font-size: 15px; font-weight: 600; color: var(--sica-text-heading); margin-bottom: 16px;">Aksi Cepat</h3>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div style="padding: 14px; background: var(--sica-surface-canvas); border-radius: 8px; border: 1px solid var(--sica-border-color); text-align: center; cursor: pointer;">
+                  <div style="font-size: 20px; margin-bottom: 4px;">📝</div>
+                  <div style="font-size: 12px; font-weight: 600; color: var(--sica-text-heading);">KRS Online</div>
+                </div>
+                <div style="padding: 14px; background: var(--sica-surface-canvas); border-radius: 8px; border: 1px solid var(--sica-border-color); text-align: center; cursor: pointer;">
+                  <div style="font-size: 20px; margin-bottom: 4px;">📜</div>
+                  <div style="font-size: 12px; font-weight: 600; color: var(--sica-text-heading);">KHS / Nilai</div>
+                </div>
+                <div style="padding: 14px; background: var(--sica-surface-canvas); border-radius: 8px; border: 1px solid var(--sica-border-color); text-align: center; cursor: pointer;">
+                  <div style="font-size: 20px; margin-bottom: 4px;">📱</div>
+                  <div style="font-size: 12px; font-weight: 600; color: var(--sica-text-heading);">Presensi QR</div>
+                </div>
+                <div style="padding: 14px; background: var(--sica-surface-canvas); border-radius: 8px; border: 1px solid var(--sica-border-color); text-align: center; cursor: pointer;">
+                  <div style="font-size: 20px; margin-bottom: 4px;">💳</div>
+                  <div style="font-size: 12px; font-weight: 600; color: var(--sica-text-heading);">Tagihan UKT</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: LOGIN PORTAL VIEW -->
+  <div id="tab-login" class="tab-content" style="min-height: calc(100vh - 46px); display: flex; align-items: center; justify-content: center; padding: 24px;">
+    <div class="velzon-card" style="width: 100%; max-width: 440px; padding: 36px 32px; box-shadow: var(--sica-shadow-modal); margin: 0 auto;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <div style="display: inline-flex; align-items: center; justify-content: center; width: 54px; height: 54px; border-radius: 12px; background: var(--sica-color-primary-light); color: var(--sica-color-primary); font-size: 26px; font-weight: 700; margin-bottom: 12px;">S</div>
+        <h2 style="font-size: 20px; font-weight: 700; color: var(--sica-text-heading); margin-bottom: 4px;">Masuk ke Portal Akademik</h2>
+        <p style="font-size: 13px; color: var(--sica-text-muted);">Silakan masukkan kredensial akun institusi Anda</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <div>
+          <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px; color: var(--sica-text-heading);">Kode Subdomain Kampus</label>
+          <input type="text" class="velzon-input" value="unpad" placeholder="contoh: unpad atau ui">
+        </div>
+        <div>
+          <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px; color: var(--sica-text-heading);">NIM / NIDN / Email</label>
+          <input type="text" class="velzon-input" value="2208561012" placeholder="Masukkan identitas Anda">
+        </div>
+        <div>
+          <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px; color: var(--sica-text-heading);">Kata Sandi</label>
+          <input type="password" class="velzon-input" value="••••••••••••" placeholder="Minimal 8 karakter">
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+          <label style="display: flex; align-items: center; gap: 6px; color: var(--sica-text-muted); cursor: pointer;">
+            <input type="checkbox" checked> Ingat Sesi Saya
+          </label>
+          <a href="#" style="color: var(--sica-color-primary);">Lupa kata sandi?</a>
+        </div>
+        <button class="velzon-btn-primary" onclick="alert('Ini adalah preview statis. Untuk full interactive mode jalankan run-dev.bat!')" style="margin-top: 6px;">Masuk Sekarang</button>
+      </div>
+
+      <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--sica-border-color); text-align: center; font-size: 11px; color: var(--sica-text-muted);">
+        © 2026 SICA Academic Cloud. Solusi SaaS Kampus All-in-One.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.preview-tab-btn').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + tab).classList.add('active');
+      event.target.classList.add('active');
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+name: SICA CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & Typecheck (Strict No-Any)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 & pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ESLint (Strict zero warnings)
+        run: pnpm turbo run lint
+
+      - name: Run TypeScript Typecheck
+        run: pnpm turbo run typecheck
+
+  security-sast:
+    name: Security SAST & Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep SAST Scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: .semgrep.yml
+
+  automated-tests:
+    name: Automated Unit & Integration Tests (80%+ Coverage)
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js & pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Vitest Suite with Coverage Report
+        run: pnpm --filter @sica/web test --coverage
+
+      - name: Setup Flutter 3.24
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: Run Flutter Unit Tests
+        run: |
+          cd apps/mobile
+          flutter pub get
+          flutter test --coverage
+
+  deploy-web:
+    name: Deploy Web App to Vercel
+    runs-on: ubuntu-latest
+    needs: [automated-tests, security-sast]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Vercel Production
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+
+  deploy-mobile-staging:
+    name: Build & Distribute Mobile APK (Firebase)
+    runs-on: ubuntu-latest
+    needs: [automated-tests]
+    if: github.ref == 'refs/heads/staging'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+
+      - name: Build Android APK
+        run: |
+          cd apps/mobile
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload to Firebase App Distribution
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          groups: testers-internal
+          file: apps/mobile/build/app/outputs/flutter-apk/app-release.apk

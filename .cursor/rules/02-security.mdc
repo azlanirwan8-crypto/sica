@@ -1,0 +1,175 @@
+# 02-security.mdc — Aturan Keamanan & Isolasi Tenant SICA
+
+## 📂 Globs
+- `**/api/**/*` → semua handler API (Next.js API routes, NestJS controllers)
+- `**/db/**/*` → file migrasi, skema, seed, dan akses database
+- `**/services/**/*` → service layer (payment, email, integrasi pihak ketiga)
+
+---
+
+## 1. Row-Level Security (RLS) PostgreSQL
+
+### 1.1 Aturan Wajib Kolom `tenant_id`
+- **Setiap tabel utama** yang menyimpan data bisnis institusi wajib memiliki kolom:
+  ```sql
+  tenant_id UUID NOT NULL REFERENCES tenants(id)
+  ```
+- Tabel referensi global (misalnya: `provinces`, `religions`) dikecualikan dari aturan ini, tetapi harus didokumentasikan secara eksplisit di `DATA_MODEL.md`.
+
+### 1.2 Kebijakan RLS Standar
+Setiap tabel dengan `tenant_id` wajib mengaktifkan RLS dan memasang policy berikut:
+
+```sql
+-- Aktifkan RLS
+ALTER TABLE <nama_tabel> ENABLE ROW LEVEL SECURITY;
+ALTER TABLE <nama_tabel> FORCE ROW LEVEL SECURITY;
+
+-- Kebijakan isolasi tenant
+CREATE POLICY tenant_isolation ON <nama_tabel>
+  FOR ALL
+  USING (tenant_id = current_setting('app.current_tenant')::uuid)
+  WITH CHECK (tenant_id = current_setting('app.current_tenant')::uuid);
+```
+
+### 1.3 Role Aplikasi
+- Role `sica_app` (digunakan oleh API server) wajib menggunakan `NOBYPASSRLS`.
+- Hanya role `sica_admin` (untuk migrasi dan operasi DBA) yang boleh bypass RLS, dan penggunaannya harus dicatat di audit log.
+
+### 1.4 Penetapan Konteks Tenant
+Middleware server **wajib** menjalankan perintah berikut pada awal setiap transaksi:
+
+```sql
+SET LOCAL app.current_tenant = '<tenant_uuid>';
+```
+
+Konteks ini diambil dari klaim `tid` (tenant ID) pada JWT access token yang sudah diverifikasi.
+
+---
+
+## 2. Validasi Input — Zod (Sanitasi Ketat)
+
+### 2.1 Aturan Validasi Wajib
+- **Semua** `request.body`, `query`, dan `params` harus divalidasi menggunakan skema **Zod** sebelum masuk ke service layer.
+- Skema Zod disimpan terpusat di `packages/contracts/` dan di-import oleh API handler.
+- Dilarang membuat skema validasi ad-hoc di luar `packages/contracts/`.
+
+### 2.2 Contoh Implementasi
+
+```typescript
+// packages/contracts/academic.ts
+import { z } from 'zod';
+
+export const CreateCourseSchema = z.object({
+  code: z.string().min(2).max(20).regex(/^[A-Z0-9-]+$/),
+  name: z.string().min(3).max(200),
+  credits: z.number().int().min(1).max(12),
+  semester: z.number().int().min(1).max(14),
+});
+
+// apps/web/app/api/v1/courses/route.ts
+import { CreateCourseSchema } from '@sica/contracts/academic';
+import { NextRequest, NextResponse } from 'next/server';
+
+export async function POST(req: NextRequest) {
+  const body = await req.json();
+  const parsed = CreateCourseSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: 'Validasi gagal', details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  // ... lanjut ke service layer dengan parsed.data
+}
+```
+
+### 2.3 Larangan
+- Dilarang menggunakan `as any` atau *type assertion* untuk melewati validasi.
+- Dilarang mempercayai data dari klien tanpa validasi server-side.
+- Dilarang menggunakan `JSON.parse()` tanpa validasi Zod setelahnya.
+
+---
+
+## 3. Autentikasi — SSO OAuth2 / PKCE
+
+### 3.1 Alur Autentikasi Utama
+- Implementasi **OAuth2 Authorization Code Flow dengan PKCE** untuk semua aplikasi (Web & Mobile).
+- Konfigurasi per-tenant: setiap tenant dapat mengaktifkan SSO federasi (OIDC/SAML) melalui `tenant_settings.sso_config`.
+
+### 3.2 Pengelolaan Token
+
+| Token | Penyimpanan | TTL | Keamanan |
+|-------|-------------|-----|----------|
+| **Access Token** (JWT EdDSA) | Memory (Web), Secure Storage (Mobile) | 10 menit | Klaim: `sub`, `tid`, `rc`, `sid`, `scope` |
+| **Refresh Token** (opaque) | HttpOnly Secure Cookie (Web), Secure Storage (Mobile) | 14 hari | Rotasi setiap penggunaan, deteksi reuse (family) |
+| **Session** | Server-side (PostgreSQL + Redis) | 14 hari | Dapat dicabut secara instan |
+
+### 3.3 Aturan Keamanan Token
+- Refresh token di-rotasi pada **setiap** penggunaan; token lama langsung diinvalidasi.
+- Jika token lama yang sudah di-rotasi digunakan kembali → **seluruh family dicabut** + pengguna dinotifikasi.
+- Cookie wajib menggunakan flag: `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`.
+- Dilarang menyimpan token di `localStorage` atau `sessionStorage`.
+
+---
+
+## 4. Isolasi Tenant per-Request
+
+### 4.1 Alur Middleware (Wajib)
+Setiap request API harus melalui middleware yang menjalankan langkah-langkah berikut secara berurutan:
+
+```
+1️⃣  Verifikasi tanda tangan JWT access token
+2️⃣  Periksa apakah session (sid) masih aktif di Redis/database
+3️⃣  Ekstrak klaim tenant_id (tid) dan role_context (rc) dari token
+4️⃣  Jalankan SET LOCAL app.current_tenant = '<tid>' pada koneksi database
+5️⃣  Validasi bahwa resource yang diminta sesuai dengan tenant_id
+6️⃣  Jika salah satu langkah gagal → tolak request dengan 401/403
+```
+
+### 4.2 Perlindungan Lintas Tenant
+- Dilarang keras mengakses data tenant lain, bahkan oleh admin.
+- Akses lintas tenant (misalnya: Platform Operator melihat statistik agregat) harus menggunakan endpoint khusus dengan otorisasi terpisah dan audit log.
+
+---
+
+## 5. Audit & Logging Keamanan
+
+### 5.1 Aksi yang Wajib Dicatat
+Semua aksi sensitif berikut harus dicatat ke tabel `audit_logs`:
+
+| Kategori | Contoh Aksi |
+|----------|-------------|
+| **Autentikasi** | Login berhasil/gagal, logout, rotasi token, MFA aktivasi |
+| **Otorisasi** | Perubahan role, pemberian/pencabutan hak akses |
+| **Data Akademik** | Submit KRS, input nilai, perubahan status mahasiswa |
+| **Keuangan** | Pembuatan tagihan, konfirmasi pembayaran, pembatalan |
+| **Administrasi** | Perubahan pengaturan tenant, manajemen pengguna |
+
+### 5.2 Format Audit Log
+```sql
+INSERT INTO audit_logs (id, tenant_id, user_id, action, resource_type, resource_id, 
+                         metadata, ip_address, user_agent, created_at)
+VALUES (...);
+```
+
+### 5.3 Aturan Penyimpanan
+- Tabel `audit_logs` bersifat **append-only** — dilarang UPDATE atau DELETE.
+- Retensi minimum: **7 tahun** (sesuai regulasi UU PDP dan retensi arsip).
+- Log dikirim ke SIEM untuk pemantauan real-time.
+
+---
+
+## 6. Penegakan Otomatis di CI/CD
+
+| Pemeriksaan | Alat | Tindakan Jika Gagal |
+|-------------|------|---------------------|
+| Query tanpa filter `tenant_id` | Custom ESLint rule | Build ditolak |
+| Penggunaan `any` type | `@typescript-eslint/no-explicit-any` | Build ditolak |
+| Tabel baru tanpa RLS | Skrip CI `check-rls.sh` | Build ditolak |
+| Kerentanan dependensi | `npm audit --audit-level=high` | Build ditolak |
+| SAST (analisis statis keamanan) | Semgrep | Peringatan pada PR |
+| Secret leak detection | GitLeaks | Build ditolak |
+
+---
+
+*Aturan ini mengacu pada `docs/SECURITY_COMPLIANCE.md` dan `docs/DATA_MODEL.md`. Pastikan selalu sinkron.*

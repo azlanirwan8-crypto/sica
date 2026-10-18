@@ -1,0 +1,164 @@
+# 04-workflow.mdc — Aturan Workflow & SOP Pengembangan SICA
+
+## 📂 Globs
+- `**/*` → berlaku untuk semua file dalam repositori
+
+---
+
+## 1. Roadmap & Manajemen Tugas
+
+### 1.1 Bacaan Wajib
+Sebelum memulai pengembangan fitur atau perbaikan bug, **wajib** baca:
+- `docs/ROADMAP_TASKS.md` — untuk memahami daftar tugas, milestone, dan prioritas.
+- `docs/INDEX.md` — untuk navigasi cepat ke dokumen terkait.
+
+### 1.2 Keterkaitan Task & Branch
+- Setiap issue atau feature branch **harus** mengacu ke **Task ID** yang tercatat di `ROADMAP_TASKS.md`.
+- Format Task ID: `TASK-###` (contoh: `TASK-001`, `TASK-042`).
+- Branch yang tidak terkait Task ID akan **ditolak** oleh CI.
+
+### 1.3 Penamaan Branch
+Gunakan format berikut sesuai konteks:
+
+| Jenis | Format | Contoh |
+|-------|--------|--------|
+| Fitur baru | `feature/TASK-###-deskripsi-singkat` | `feature/TASK-012-deteksi-bentrok-jadwal` |
+| Perbaikan bug | `bugfix/TASK-###-deskripsi-singkat` | `bugfix/TASK-033-race-condition-token` |
+| Hotfix produksi | `hotfix/TASK-###-deskripsi-singkat` | `hotfix/TASK-099-jwt-signature-bypass` |
+
+---
+
+## 2. SOP Migrasi Database
+
+### 2.1 Bacaan Wajib
+- `docs/MIGRATION_SOP.md` — memuat aturan mutlak dan alur kerja migrasi database.
+
+### 2.2 Alur Migrasi (4 Tahap)
+
+```
+1️⃣ Modifikasi Skema TypeScript     → packages/database/src/schema/*
+2️⃣ Generate File SQL Terpisah      → pnpm drizzle-kit generate
+3️⃣ Review Checklist Keamanan       → Periksa RLS, lock_timeout, backward compatibility
+4️⃣ Eksekusi Migrasi                → pnpm db:migrate
+```
+
+### 2.3 Checklist Review File SQL
+Setiap file migrasi `.sql` yang di-generate **harus** diperiksa terhadap kriteria berikut:
+
+- [ ] `SET lock_timeout = '3000ms';` ada di awal file
+- [ ] `SET statement_timeout = '15000ms';` ada di awal file
+- [ ] Tabel baru memiliki kolom `tenant_id UUID NOT NULL`
+- [ ] RLS diaktifkan (`ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY`)
+- [ ] Policy isolasi tenant (`tenant_isolation`) sudah dibuat
+- [ ] Tidak ada perintah destruktif (`DROP DATABASE`, `DROP SCHEMA CASCADE`, `--force`)
+- [ ] Perubahan bersifat backward-compatible (tidak menghapus kolom yang masih digunakan)
+
+### 2.4 Larangan Keras
+- **Dilarang** menjalankan `drizzle-kit push --force`.
+- **Dilarang** mengubah skema langsung via GUI (DBeaver, pgAdmin) tanpa file migrasi.
+- **Dilarang** membuat tabel baru tanpa RLS.
+
+---
+
+## 3. Kontrak Environment
+
+### 3.1 Bacaan Wajib
+- `docs/ENV_CONTRACT.md` — memuat semua variabel environment yang harus didefinisikan.
+
+### 3.2 Aturan Pengelolaan
+- Setiap variabel environment yang diperlukan **harus** terdaftar di `ENV_CONTRACT.md` beserta:
+  - Nama variabel
+  - Tipe data
+  - Deskripsi
+  - Nilai default (jika ada)
+  - Environment mana saja yang memerlukannya (`development`, `staging`, `production`)
+- CI menjalankan skrip `pnpm env:check` untuk memvalidasi keberadaan semua variabel wajib.
+- **Dilarang** meng-commit file `.env` ke repositori. Gunakan `.env.example` sebagai template.
+- Rahasia (secrets) disimpan di **vault** (misalnya: AWS Secrets Manager, Doppler), bukan di file.
+
+---
+
+## 4. Conventional Commits & Git Workflow
+
+### 4.1 Bacaan Wajib
+- `docs/GIT_WORKFLOW.md` — memuat standar branching, pesan komit, dan proses PR.
+
+### 4.2 Format Pesan Komit
+Setiap commit **wajib** mematuhi format **Conventional Commits 1.0.0**:
+
+```
+<type>(<scope>): <subject singkat, imperatif, huruf kecil, tanpa titik>
+
+[opsional: body penjelasan latar belakang]
+
+[opsional: footer — Closes #123 atau BREAKING CHANGE: ...]
+```
+
+### 4.3 Tipe Komit yang Diizinkan
+
+| Tipe | Kapan Digunakan | Contoh |
+|------|-----------------|--------|
+| `feat` | Fitur baru untuk pengguna | `feat(krs): tambahkan deteksi bentrok jadwal` |
+| `fix` | Perbaikan bug | `fix(auth): cegah race condition rotasi refresh token` |
+| `docs` | Perubahan dokumentasi | `docs(api): perbarui spesifikasi endpoint presensi` |
+| `refactor` | Restrukturisasi tanpa ubah perilaku | `refactor(db): optimasi query join rls modul akademik` |
+| `test` | Penambahan/perbaikan tes | `test(grading): tambahkan skenario pembulatan ipk` |
+| `perf` | Optimasi performa | `perf(attendance): pasang cache redis qr broadcast` |
+| `ci` | Modifikasi pipeline CI/CD | `ci(github): tambahkan sast semgrep pada pull request` |
+| `chore` | Pembaruan dependensi, konfigurasi | `chore(deps): update drizzle-orm ke 0.33.0` |
+
+### 4.4 Aturan Scope
+Gunakan nama modul atau target arsitektur sebagai scope:
+- `auth`, `krs`, `khs`, `attendance`, `payment`, `feeder`, `database`, `mobile`, `web`, `lms`, `docs`
+
+### 4.5 Proses Pull Request
+
+| Langkah | Deskripsi |
+|---------|-----------|
+| 1️⃣ | Buat branch dari `staging` sesuai format penamaan (§1.3) |
+| 2️⃣ | Kembangkan fitur/perbaikan dengan mematuhi semua guardrails |
+| 3️⃣ | Buat Pull Request ke `staging` dengan deskripsi yang jelas |
+| 4️⃣ | CI pipeline harus 100% hijau (lint, test, security scan, env check) |
+| 5️⃣ | Minimal **2 approval** dari reviewer (Lead Architect + domain owner) |
+| 6️⃣ | Merge menggunakan **Squash and Merge** |
+| 7️⃣ | Untuk rilis ke production: PR dari `staging` → `main` dengan approval Lead Architect + DevOps |
+
+---
+
+## 5. Checklist Sebelum Commit
+
+Setiap developer dan AI Agent **harus** memastikan hal berikut sebelum melakukan commit:
+
+- [ ] Kode lolos `lint` tanpa warning (`eslint --max-warnings 0` / `dart analyze`)
+- [ ] Semua unit test relevan berjalan hijau
+- [ ] Skema Zod diperbarui jika ada perubahan payload API
+- [ ] File migrasi SQL sudah di-review (jika ada perubahan database)
+- [ ] Variabel environment baru sudah ditambahkan ke `ENV_CONTRACT.md`
+- [ ] Pesan komit mengikuti format Conventional Commits
+- [ ] Branch terkait Task ID di `ROADMAP_TASKS.md`
+- [ ] Dokumentasi terkait sudah diperbarui (jika ada dampak)
+
+---
+
+## 6. Penegakan di CI/CD
+
+Pipeline GitHub Actions (`ci.yml`) menjalankan urutan berikut secara otomatis:
+
+```
+1️⃣  npm ci && npm run lint             → Lint TypeScript/ESLint
+2️⃣  npm run test:unit                  → Unit test (Vitest)
+3️⃣  dart analyze && flutter test       → Lint & test Flutter
+4️⃣  npm run security:scan              → SAST (Semgrep) + audit dependensi
+5️⃣  npm run env:check                  → Validasi variabel environment
+6️⃣  npm run validate:roadmap           → Pastikan branch terkait TASK-### di ROADMAP_TASKS.md
+7️⃣  npm run db:lint                    → Validasi file migrasi SQL (RLS, lock_timeout)
+```
+
+Jika **salah satu langkah gagal**, pipeline akan:
+- **Menolak** Pull Request.
+- Mengirim notifikasi ke channel `#devops-alerts`.
+- Menampilkan pesan diagnostik yang jelas untuk mempermudah perbaikan.
+
+---
+
+*Aturan ini mengacu pada `docs/ROADMAP_TASKS.md`, `docs/MIGRATION_SOP.md`, `docs/ENV_CONTRACT.md`, dan `docs/GIT_WORKFLOW.md`. Pastikan selalu sinkron.*

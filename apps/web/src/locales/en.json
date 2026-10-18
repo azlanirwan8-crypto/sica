@@ -1,0 +1,46 @@
+{
+  "auth": {
+    "loginTitle": "Sign In to Academic Portal",
+    "loginSubtitle": "Please enter your institutional account credentials",
+    "tenantLabel": "Campus Subdomain Code",
+    "tenantPlaceholder": "e.g. unpad or ui",
+    "usernameLabel": "Student ID / Faculty ID / Email",
+    "usernamePlaceholder": "Enter your username or email",
+    "passwordLabel": "Password",
+    "passwordPlaceholder": "Minimum 8 characters",
+    "rememberMe": "Remember this session",
+    "forgotPassword": "Forgot password?",
+    "loginButton": "Sign In",
+    "loggingIn": "Verifying credentials...",
+    "loginSuccess": "Login successful, redirecting...",
+    "mfaRequired": "Two-Factor Authentication (MFA) Required",
+    "mfaInstruction": "Enter the 6-digit OTP code from your authenticator app",
+    "otpPlaceholder": "000000",
+    "verifyOtp": "Verify OTP",
+    "verifying": "Verifying...",
+    "invalidCredentials": "Invalid username or password.",
+    "mfaFailed": "Invalid or expired OTP code."
+  },
+  "dashboard": {
+    "title": "Academic Dashboard",
+    "welcome": "Welcome back",
+    "activePeriod": "Active Academic Year",
+    "quickActions": "Quick Actions",
+    "krsOnline": "Course Enrollment (KRS)",
+    "khsTranscript": "Grade Report & Transcript",
+    "attendance": "Class Attendance",
+    "billing": "Tuition Fee Status",
+    "profile": "My Profile",
+    "logout": "Sign Out"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "academic": "Academic",
+    "krs": "Online KRS",
+    "khs": "Grade Report",
+    "schedule": "Class Schedule",
+    "attendance": "QR Attendance",
+    "finance": "Finance & Tuition",
+    "settings": "Settings"
+  }
+}

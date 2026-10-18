@@ -1,0 +1,24 @@
+{
+  "name": "@sica/database",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint src/ --max-warnings 0",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/migrate.ts",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.33.0",
+    "postgres": "^3.4.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.14",
+    "drizzle-kit": "^0.24.0",
+    "tsx": "^4.17.0",
+    "typescript": "^5.5.4"
+  }
+}

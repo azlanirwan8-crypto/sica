@@ -1,0 +1,14 @@
+rules:
+  - id: sica-require-tenant-id-filter
+    patterns:
+      - pattern: db.select().from(...)
+      - pattern-not: db.select().from(...).where(..., eq(..., tenantId), ...)
+    message: "Potensi pelanggaran isolasi tenant: Seluruh query ORM wajib memfilter dengan tenant_id atau mengaktifkan session RLS."
+    languages: [typescript, javascript]
+    severity: ERROR
+
+  - id: sica-no-unhashed-passwords
+    pattern: password = $X
+    message: "Kata sandi wajib di-hash menggunakan Argon2id sebelum disimpan ke database."
+    languages: [typescript, javascript]
+    severity: ERROR

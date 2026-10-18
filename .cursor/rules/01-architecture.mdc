@@ -1,0 +1,118 @@
+# 01-architecture.mdc — Aturan Arsitektur SICA
+
+## 📂 Globs
+- `apps/web/**/*` → semua kode Next.js (App Router, Server Components)
+- `apps/mobile/**/*` → semua kode Flutter (Feature-First, Riverpod)
+
+---
+
+## 1. Prinsip Clean Architecture
+
+### 1.1 Pemisahan Layer (Wajib)
+Setiap modul/fitur harus diorganisasi ke dalam tiga layer terpisah:
+
+| Layer | Isi | Aturan Dependensi |
+|-------|-----|-------------------|
+| **Domain** (`domain/`) | Entitas, use-case, interface repository | Tidak boleh tergantung pada layer lain |
+| **Data** (`data/`) | Implementasi repository, API client, DB provider | Hanya tergantung pada Domain |
+| **Presentation** (`presentation/`) | Komponen UI, state management | Tergantung pada Domain; tidak boleh akses Data secara langsung |
+
+### 1.2 Dependency Rule
+- Dependensi hanya boleh mengarah **ke dalam** (Presentation → Domain ← Data).
+- Presentation **dilarang** meng-import langsung dari Data layer.
+- Gunakan Dependency Injection untuk menghubungkan Data ke Domain.
+
+---
+
+## 2. Aturan Web — Next.js 15 (App Router)
+
+### 2.1 Routing & Rendering
+- Gunakan **App Router** (`src/app/`) sebagai satu-satunya mekanisme routing.
+- **Server Components** menjadi default; gunakan `'use client'` hanya jika komponen memerlukan state lokal, event handler, atau browser API.
+- Route dinamis tenant: `(portal)/[tenant]/` — semua halaman portal wajib berada di bawah segmen ini.
+- **Edge Runtime** hanya untuk fungsi stateless ringan (misalnya: auth callback); logika bisnis wajib di Node runtime.
+
+### 2.2 Data Fetching — TanStack Query v5
+- Semua pengambilan data dari API menggunakan **TanStack Query** (`useQuery`, `useMutation`).
+- Setelah mutasi berhasil, wajib panggil `queryClient.invalidateQueries()` untuk menjaga konsistensi cache.
+- `staleTime` disesuaikan per domain:
+  - Data dinamis (KRS, kuota kelas): 3 menit.
+  - Data statis (referensi prodi, tahun akademik): 30 menit.
+
+### 2.3 State Management
+- **Server State** → TanStack Query (data dari API/database).
+- **Client State** → Zustand (state UI lokal: sidebar terbuka, modal aktif, filter tabel).
+- **Dilarang** mencampur server state dan client state dalam satu store.
+
+### 2.4 Validasi & Tipe
+- Semua form menggunakan **React Hook Form** + **Zod resolver**.
+- Skema Zod di-import dari `packages/contracts/` — jangan duplikasi skema.
+- TypeScript **strict mode** wajib aktif; `any` type dilarang.
+
+---
+
+## 3. Aturan Mobile — Flutter (Feature-First)
+
+### 3.1 Struktur Direktori Feature-First
+Setiap fitur berada di folder terpisah dengan sub-layer:
+
+```
+lib/src/features/<nama_fitur>/
+├── domain/          # Entitas, use-case, interface repository
+├── data/            # Implementasi repository, model API
+└── presentation/    # Widget, controller, state
+```
+
+### 3.2 State Management — Riverpod 2.x
+- **Riverpod** (v2) adalah satu-satunya state management yang diizinkan.
+- Gunakan `@riverpod` annotation (code generation) untuk provider baru.
+- `setState()` hanya diperbolehkan di dalam widget lokal yang sangat sederhana (misalnya: animasi toggle).
+- Dilarang menggunakan `ChangeNotifier`, `Bloc`, atau `Provider` (paket lama).
+
+### 3.3 Model Data
+- Gunakan **Freezed** untuk semua model data (immutability + union types).
+- Gunakan **json_serializable** untuk serialisasi/deserialisasi JSON.
+- Tipe data harus sinkron dengan skema Zod di `packages/contracts/`.
+
+### 3.4 Navigasi
+- Gunakan **GoRouter** dengan konfigurasi deklaratif.
+- Deep link harus didukung untuk semua halaman utama.
+
+### 3.5 Penyimpanan Lokal
+- **Drift** (SQLite) untuk cache data offline.
+- **Flutter Secure Storage** untuk token dan data sensitif.
+
+---
+
+## 4. Aturan Bersama (Web & Mobile)
+
+### 4.1 Kontrak Tipe Bersama
+- Semua DTO dan skema validasi didefinisikan sekali di `packages/contracts/`.
+- Generator otomatis menghasilkan tipe TypeScript dan Dart dari sumber yang sama.
+
+### 4.2 Penanganan Error
+- Semua error API harus ditangkap dan ditampilkan dalam format yang konsisten.
+- Gunakan komponen `ErrorBoundary` (Web) dan `ErrorWidget` (Mobile).
+- Error jaringan harus memberikan opsi **retry** kepada pengguna.
+
+### 4.3 Loading State
+- Dilarang menggunakan spinner/circular progress sebagai satu-satunya indikator loading.
+- Gunakan **Skeleton Loading** (pulse) untuk tabel, kartu, dan daftar.
+- Tombol aksi harus menampilkan status loading inline.
+
+---
+
+## 5. Penegakan di CI/CD
+
+| Pemeriksaan | Web | Mobile |
+|-------------|-----|--------|
+| Lint | `eslint --max-warnings 0` | `dart analyze --fatal-infos` |
+| Tipe | `tsc --noEmit` | `dart analyze` |
+| Arsitektur | Impor antar-layer dicek oleh ESLint rule | `dart_dependency_validator` |
+| Build | `next build` harus sukses tanpa error | `flutter build apk --release` harus sukses |
+
+Jika salah satu pemeriksaan gagal, pipeline akan **menolak** Pull Request dengan pesan diagnostik yang jelas.
+
+---
+
+*Aturan ini mengacu pada `docs/ARCHITECTURE.md` dan `docs/TECH_CONVENTIONS.md`. Pastikan selalu sinkron.*

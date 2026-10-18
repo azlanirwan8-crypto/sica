@@ -1,0 +1,114 @@
+# 03-ui-conventions.mdc — Aturan Kebersihan Visual, Usability & Micro-Interactions SICA
+
+## 📂 Globs
+- `apps/web/**/*` → semua kode UI Web (Next.js, komponen React)
+- `apps/mobile/**/*` → semua kode UI Mobile (Flutter widget)
+
+---
+
+## 1. Sistem Spacing — 8pt Grid (Wajib)
+
+### 1.1 Aturan Dasar
+- Semua nilai padding dan margin **harus** merupakan kelipatan **8 px** (8, 16, 24, 32, 40, 48).
+- Gunakan token spacing yang konsisten di seluruh aplikasi:
+  - `--space-xs: 8px`
+  - `--space-sm: 16px`
+  - `--space-md: 24px`
+  - `--space-lg: 32px`
+  - `--space-xl: 40px`
+  - `--space-2xl: 48px`
+
+### 1.2 Ruang Napas (Whitespace)
+- Jarak vertikal minimum antar bagian utama: **24 px**.
+- Jarak antar baris dalam tabel atau kartu: **16 px**.
+- Tata letak **tidak boleh padat** — berikan ruang napas yang cukup agar antarmuka terasa nyaman.
+
+---
+
+## 2. Skala Tipografi (Hierarki Visual Wajib)
+
+| Level | Ukuran / Tinggi Baris | Ketebalan | Kegunaan |
+|-------|----------------------|-----------|----------|
+| **Judul Halaman (H1)** | 28 px / 36 px | Semi-Bold 600 | Headline utama dashboard |
+| **Judul Bagian (H2)** | 22 px / 28 px | Semi-Bold 600 | Judul bagian utama |
+| **Judul Kartu (H3)** | 16 px / 24 px | Medium 500 | Header kartu, judul modal |
+| **Teks Isi** | 14 px / 20 px | Regular 400 | Konten utama, tabel, formulir |
+| **Keterangan / Teks Redup** | 12 px / 16 px | Regular 400 / Medium 500 | Teks bantuan, cap waktu, catatan kaki |
+
+---
+
+## 3. Mode Gelap / Terang & Aksesibilitas
+
+### 3.1 Rasio Kontras (WCAG 2.1 AA)
+- Teks biasa: rasio kontras ≥ **4.5:1**.
+- Teks besar (≥ 18px bold atau ≥ 24px regular): rasio kontras ≥ **3:1**.
+- Verifikasi setiap pasangan warna depan-belakang dengan pengujian kontras otomatis di CI.
+
+### 3.2 Token Warna
+- Sediakan override eksplisit `data-theme='dark'` di `tokens.css`.
+- Jangan menggunakan warna mentah (`#ffffff`, `rgb(0,0,0)`) secara langsung — selalu gunakan variabel CSS token.
+
+---
+
+## 4. Animasi & Desain Gerak (Motion Design)
+
+### 4.1 Web — Next.js + Framer Motion / Tailwind Animate
+- **Transisi Halaman**: Fade-in + slide-up (durasi 0.2–0.3 detik, `ease-out`).
+- **Modal & Dropdown**: Skala dari 95% → 100% sambil fade-in (0.15 detik).
+- **Skeleton Loading**: Semua tabel dan kartu menggunakan **pulse skeleton** (bukan spinner) untuk mencegah CLS. Implementasi via `@/components/ui/skeleton.tsx`.
+- **Tombol & Elemen Interaktif**:
+  - Hover: `translateY(-1px)` dengan bayangan halus.
+  - Klik aktif: `scale(0.98)` dengan bayangan berkurang.
+
+### 4.2 Mobile — Flutter Material Motion
+- **Navigasi**: Gunakan `PageRouteBuilder` dengan transisi `FadeThrough` atau `SharedAxis` (spesifikasi Material Motion).
+- **Transisi Elemen Bersama**: Animasi Hero untuk kartu jadwal dan lencana KTM Digital saat navigasi ke layar detail.
+- **Animasi Umpan Balik**:
+  - Ripple (`InkWell`) untuk target sentuh.
+  - `AnimatedContainer` untuk perubahan state.
+  - Lottie/CustomPainter untuk aksi sukses (misalnya: konfirmasi scan QR).
+
+---
+
+## 5. Usability & Micro-Interactions
+
+### 5.1 Target Sentuh (Mobile)
+- Area sentuh minimum: **44 × 44 dp** (≈ 48 px).
+- Berikan padding yang cukup di sekitar ikon dan tombol agar mudah dijangkau.
+
+### 5.2 Empty State (Keadaan Kosong)
+- Setiap tabel/daftar yang kosong **wajib** menampilkan:
+  - Ilustrasi SVG minimalis yang sesuai konteks.
+  - Teks penjelasan yang ramah dan membimbing pengguna.
+  - Tombol **Ajakan Bertindak (CTA)** utama untuk mengarahkan langkah selanjutnya.
+- Gunakan komponen `EmptyState` (`apps/web/components/ui/empty-state.tsx` dan widget Flutter `EmptyStateWidget`).
+
+### 5.3 Umpan Balik Instan (Toast & Loading State)
+- Semua aksi yang memodifikasi data (Simpan KRS, Input Nilai, Scan QR, Bayar Tagihan) harus memicu:
+  - **Toast** notifikasi (sukses atau gagal).
+  - Status loading pada tombol aksi (disabled + spinner inline).
+- Posisi Toast:
+  - Web: pojok kanan atas.
+  - Mobile: tengah bawah.
+- Toast otomatis hilang setelah **4 detik**.
+
+### 5.4 Perlindungan Double-Click
+- Semua tombol pembayaran dan submit formulir **wajib** menerapkan:
+  - Status `disabled` saat request sedang diproses.
+  - Animasi spinner loading inline.
+  - Pencegahan submit ganda.
+
+---
+
+## 6. Penegakan di CI/CD
+
+| Pemeriksaan | Alat | Tindakan |
+|-------------|------|----------|
+| Rasio kontras WCAG | `axe-core` / `@axe-core/react` | Peringatan pada PR |
+| Aksesibilitas dasar | `eslint-plugin-jsx-a11y` | Build ditolak jika error |
+| Ukuran touch target | Lint rule kustom Flutter | Peringatan pada analisis |
+| Hardcoded string (i18n) | ESLint rule kustom | Build ditolak |
+
+---
+
+*Aturan ini mengacu pada `docs/UI_UX_DESIGN.md`. Pastikan selalu sinkron.*

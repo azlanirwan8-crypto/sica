@@ -1,0 +1,46 @@
+{
+  "auth": {
+    "loginTitle": "Masuk ke Portal Akademik",
+    "loginSubtitle": "Silakan masukkan kredensial akun institusi Anda",
+    "tenantLabel": "Kode Subdomain Kampus",
+    "tenantPlaceholder": "contoh: unpad atau ui",
+    "usernameLabel": "NIM / NIDN / Email",
+    "usernamePlaceholder": "Masukkan identitas Anda",
+    "passwordLabel": "Kata Sandi",
+    "passwordPlaceholder": "Minimal 8 karakter",
+    "rememberMe": "Ingat Sesi Saya",
+    "forgotPassword": "Lupa kata sandi?",
+    "loginButton": "Masuk Sekarang",
+    "loggingIn": "Memproses verifikasi...",
+    "loginSuccess": "Login berhasil, mengalihkan...",
+    "mfaRequired": "Verifikasi 2-Faktor (MFA) Diperlukan",
+    "mfaInstruction": "Masukkan 6 digit kode OTP dari aplikasi authenticator Anda",
+    "otpPlaceholder": "000000",
+    "verifyOtp": "Verifikasi OTP",
+    "verifying": "Memverifikasi...",
+    "invalidCredentials": "Username atau password salah.",
+    "mfaFailed": "Kode OTP tidak valid atau kadaluarsa."
+  },
+  "dashboard": {
+    "title": "Dashboard Akademik",
+    "welcome": "Selamat datang kembali",
+    "activePeriod": "Tahun Akademik Aktif",
+    "quickActions": "Aksi Cepat",
+    "krsOnline": "Pengisian KRS",
+    "khsTranscript": "KHS & Transkrip",
+    "attendance": "Presensi Kuliah",
+    "billing": "Status Tagihan UKT",
+    "profile": "Profil Saya",
+    "logout": "Keluar"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "academic": "Akademik",
+    "krs": "KRS Online",
+    "khs": "KHS / Nilai",
+    "schedule": "Jadwal Kuliah",
+    "attendance": "Presensi QR",
+    "finance": "Keuangan & UKT",
+    "settings": "Pengaturan"
+  }
+}

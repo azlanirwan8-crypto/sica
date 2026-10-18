@@ -1,0 +1,48 @@
+{
+  "name": "sica",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SICA — Sistem Informasi Kampus All-in-One (SaaS Multi-Tenant)",
+  "author": "SICA Team",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev:web": "turbo run dev --filter=@sica/web",
+    "build:web": "turbo run build --filter=@sica/web",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint:fix",
+    "test": "turbo run test",
+    "test:unit": "turbo run test:unit",
+    "db:generate": "turbo run db:generate --filter=@sica/database",
+    "db:migrate": "turbo run db:migrate --filter=@sica/database",
+    "db:lint": "turbo run db:lint --filter=@sica/database",
+    "env:check": "node scripts/env-check.js",
+    "validate:roadmap": "node scripts/validate-roadmap.js",
+    "security:scan": "npx semgrep --config auto .",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\""
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.3.0",
+    "turbo": "^2.1.0",
+    "typescript": "^5.6.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix --max-warnings 0",
+      "prettier --write"
+    ],
+    "*.{json,md,css}": [
+      "prettier --write"
+    ]
+  }
+}

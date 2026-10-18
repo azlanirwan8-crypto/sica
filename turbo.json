@@ -1,0 +1,48 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": ["**/.env.*local"],
+  "globalEnv": [
+    "NODE_ENV",
+    "DATABASE_URL",
+    "DIRECT_DATABASE_URL",
+    "REDIS_URL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "lint:fix": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "test:unit": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "db:generate": {
+      "cache": false,
+      "outputs": ["migrations/**"]
+    },
+    "db:migrate": {
+      "cache": false,
+      "outputs": []
+    },
+    "db:lint": {
+      "cache": false,
+      "outputs": []
+    }
+  }
+}
