@@ -13,6 +13,7 @@
 | **Cabang utama** | `main` (protected), `staging`, branch fitur `feat/*`, `fix/*` |
 | **Aturan rahasia** | `.env`, `.env.local` **WAJIB di-gitignore** (sudah di `.gitignore`). Hanya `.env.example` (placeholder) yang di-commit. `git push` wajib melewati pemeriksaan tak ada secret nyata di file ter-stage. |
 | **Sebelum push** | `git status` + verifikasi `.env` tak ter-track + lint/test gate + Conventional Commits. Push ke remote = aksi shared/ireversibel → butuh konfirmasi eksplisit operator. |
+| **Status awal** | ✅ **Initial push selesai 2026-10-18** (commit `0ae41ea`, 144 file). Riwayat remote (README seed `d11972c`) di-*merge* (`--allow-unrelated-histories`), **bukan** force-push. `.tools/` (toolchain node/pnpm lokal, 137MB) & `*.tsbuildinfo` di-gitignore. |
 
 ---
 
