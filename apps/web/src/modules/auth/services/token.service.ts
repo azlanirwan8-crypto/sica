@@ -13,6 +13,27 @@ export function generateOpaqueToken(): string {
   return randomBytes(REFRESH_TOKEN_BYTES).toString('base64url');
 }
 
+/**
+ * Refresh token berformat `rt_<tenantId>.<random>`. Payload acak tetap opaque;
+ * prefix tenant (bukan rahasia) memungkinkan server menyetel konteks RLS untuk
+ * lookup `refresh_tokens` (yang tenant-scoped) dalam satu hop — web & mobile seragam.
+ */
+export function issueRefreshToken(tenantId: string): string {
+  return `rt_${tenantId}.${generateOpaqueToken()}`;
+}
+
+/** Ekstrak tenantId dari refresh token berformat `rt_<uuid>.<random>`; null bila tak cocok. */
+export function parseRefreshTokenTenant(token: string): string | null {
+  if (!token.startsWith('rt_')) return null;
+  const rest = token.slice(3);
+  const dot = rest.indexOf('.');
+  if (dot <= 0) return null;
+  const uuid = rest.slice(0, dot);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid)
+    ? uuid
+    : null;
+}
+
 export function newFamilyId(): string {
   return randomUUID();
 }

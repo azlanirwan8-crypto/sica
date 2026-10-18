@@ -18,7 +18,7 @@ import {
 } from '@sica/database';
 import { signJwt } from './jwt.service';
 import { createPasswordHasher } from './password.service';
-import { generateOpaqueToken, newFamilyId, hashToken } from './token.service';
+import { generateOpaqueToken, issueRefreshToken, newFamilyId, hashToken, parseRefreshTokenTenant } from './token.service';
 
 export interface AuthRuntimeConfig {
   readonly privateKeyPem: string;
@@ -149,7 +149,7 @@ export async function authenticate(
   // 6. Buat sesi + refresh token + akses token JWT (dalam konteks tenant utk INSERT RLS).
   const sessionId = crypto.randomUUID();
   const familyId = newFamilyId();
-  const rawRefresh = generateOpaqueToken();
+  const rawRefresh = issueRefreshToken(tenant.id);
   const refreshHash = hashToken(rawRefresh);
   const sessionExpiry = nowPlusSeconds(config.refreshTtlSec);
 
@@ -204,3 +204,162 @@ export async function authenticate(
     expiresInSeconds: config.accessTtlSec,
   };
 }
+
+// =============================================================================
+// Refresh (rotasi + reuse-detection family) & Logout (revokasi sesi)
+// Rujukan: SECURITY_COMPLIANCE §2.2 (NIST 800-63B reuse detection).
+// =============================================================================
+
+export type RefreshErrorCode =
+  | 'INVALID_TOKEN'
+  | 'REUSE_DETECTED'
+  | 'EXPIRED'
+  | 'SESSION_REVOKED'
+  | 'DISABLED'
+  | 'CONFIG_MISSING';
+
+export type RefreshResult =
+  | {
+      readonly ok: true;
+      readonly accessToken: string;
+      readonly refreshToken: string;
+      readonly expiresInSeconds: number;
+    }
+  | { readonly ok: false; readonly code: RefreshErrorCode };
+
+interface RefreshRow {
+  id: string;
+  sessionId: string;
+  userId: string;
+  familyId: string;
+  usedAt: Date | null;
+  revokedAt: Date | null;
+  expiresAt: Date;
+}
+
+/**
+ * Tukar refresh token (single-use) dengan pasangan baru pada family yang sama.
+ * Deteksi-reuse: token lama yang dipakai ulang → cabut SELURUH family.
+ */
+export async function rotateRefreshToken(
+  rawRefresh: string,
+  config: AuthRuntimeConfig
+): Promise<RefreshResult> {
+  if (!config.privateKeyPem) return { ok: false, code: 'CONFIG_MISSING' };
+  const tenantId = parseRefreshTokenTenant(rawRefresh);
+  if (!tenantId) return { ok: false, code: 'INVALID_TOKEN' };
+  const tokenHash = hashToken(rawRefresh);
+
+  return withTenantContext(tenantId, async (tx): Promise<RefreshResult> => {
+    const rows = await tx
+      .select({
+        id: refreshTokens.id,
+        sessionId: refreshTokens.sessionId,
+        userId: refreshTokens.userId,
+        familyId: refreshTokens.familyId,
+        usedAt: refreshTokens.usedAt,
+        revokedAt: refreshTokens.revokedAt,
+        expiresAt: refreshTokens.expiresAt,
+      })
+      .from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, tokenHash))
+      .limit(1);
+    const row = rows[0] as RefreshRow | undefined;
+    if (!row) return { ok: false, code: 'INVALID_TOKEN' };
+
+    // Reuse: token sudah pernah dipakai / sudah dicabut → cabut seluruh family.
+    if (row.usedAt || row.revokedAt) {
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(eq(refreshTokens.familyId, row.familyId));
+      return { ok: false, code: 'REUSE_DETECTED' };
+    }
+    if (row.expiresAt.getTime() < Date.now()) return { ok: false, code: 'EXPIRED' };
+
+    // Sesi harus masih hidup.
+    const sess = await tx
+      .select({ revokedAt: sessions.revokedAt, expiresAt: sessions.expiresAt })
+      .from(sessions)
+      .where(eq(sessions.id, row.sessionId))
+      .limit(1);
+    const s = sess[0] as { revokedAt: Date | null; expiresAt: Date } | undefined;
+    if (!s || s.revokedAt || s.expiresAt.getTime() < Date.now()) {
+      return { ok: false, code: 'SESSION_REVOKED' };
+    }
+
+    // Role & status keanggotaan dibaca ulang (revocation hak akses pasca-login).
+    const mem = await tx
+      .select({ role: tenantMemberships.role, status: tenantMemberships.status })
+      .from(tenantMemberships)
+      .where(and(eq(tenantMemberships.tenantId, tenantId), eq(tenantMemberships.userId, row.userId)))
+      .limit(1);
+    const m = mem[0] as { role: string; status: string } | undefined;
+    if (!m || m.status !== 'ACTIVE') return { ok: false, code: 'DISABLED' };
+
+    // Konsumsi token lama (single-use) + terbitkan yang baru pada family sama.
+    await tx.update(refreshTokens).set({ usedAt: new Date() }).where(eq(refreshTokens.id, row.id));
+    const newRaw = issueRefreshToken(tenantId);
+    await tx.insert(refreshTokens).values({
+      id: crypto.randomUUID(),
+      tenantId,
+      userId: row.userId,
+      sessionId: row.sessionId,
+      tokenHash: hashToken(newRaw),
+      familyId: row.familyId,
+      rotatedFrom: row.id,
+      expiresAt: nowPlusSeconds(config.refreshTtlSec),
+    });
+
+    const accessToken = signJwt(
+      { sub: row.userId, tid: tenantId, sid: row.sessionId, role: m.role },
+      {
+        privateKeyPem: config.privateKeyPem,
+        issuer: config.issuer,
+        audience: config.audience,
+        ttlSeconds: config.accessTtlSec,
+      }
+    );
+    return { ok: true, accessToken, refreshToken: newRaw, expiresInSeconds: config.accessTtlSec };
+  });
+}
+
+/** Cabut sesi + seluruh refresh token milik sesi tsb (logout). */
+export async function revokeSession(tenantId: string, sessionId: string): Promise<void> {
+  await withTenantContext(tenantId, async (tx) => {
+    await tx
+      .update(sessions)
+      .set({ revokedAt: new Date(), revokedReason: 'logout' })
+      .where(eq(sessions.id, sessionId));
+    await tx
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(eq(refreshTokens.sessionId, sessionId));
+  });
+}
+
+/** Logout via refresh token: resolve sesi & cabut family-nya. */
+export async function revokeByRefreshToken(rawRefresh: string): Promise<boolean> {
+  const tenantId = parseRefreshTokenTenant(rawRefresh);
+  if (!tenantId) return false;
+  const tokenHash = hashToken(rawRefresh);
+  return withTenantContext(tenantId, async (tx): Promise<boolean> => {
+    const rows = await tx
+      .select({ sessionId: refreshTokens.sessionId, familyId: refreshTokens.familyId })
+      .from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, tokenHash))
+      .limit(1);
+    const r = rows[0] as { sessionId: string; familyId: string } | undefined;
+    if (!r) return false;
+    await tx
+      .update(sessions)
+      .set({ revokedAt: new Date(), revokedReason: 'logout' })
+      .where(eq(sessions.id, r.sessionId));
+    await tx
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(eq(refreshTokens.familyId, r.familyId));
+    return true;
+  });
+}
+

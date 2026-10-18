@@ -6,6 +6,8 @@ import {
   createSuccessEnvelope,
   RefreshTokenResponseDataSchema,
 } from '@sica/contracts';
+import { buildAuthConfig } from '@/modules/auth/services/auth-config';
+import { rotateRefreshToken } from '@/modules/auth/services/auth.service';
 
 const RefreshTokenEnvelope = createSuccessEnvelope(RefreshTokenResponseDataSchema);
 
@@ -13,71 +15,64 @@ export async function POST(request: NextRequest) {
   const requestId = request.headers.get('x-request-id') ?? crypto.randomUUID();
   const timestamp = new Date().toISOString();
 
-  try {
-    const body: unknown = await request.json();
-
-    const parsed = RefreshTokenRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      const errorResponse = StandardErrorResponseSchema.parse({
+  const fail = (status: number, code: string, message: string): NextResponse =>
+    NextResponse.json(
+      StandardErrorResponseSchema.parse({
         success: false,
-        error: {
-          code: 'VALIDATION_FAILED',
-          message: 'Format permintaan refresh token tidak valid.',
-          details: parsed.error.issues.map((issue) => ({
-            field: issue.path.join('.'),
-            message: issue.message,
-          })),
-        },
-        meta: {
-          timestamp,
-          requestId,
-        },
-      });
+        error: { code, message },
+        meta: { timestamp, requestId },
+      }),
+      { status }
+    );
 
-      return NextResponse.json(errorResponse, { status: 422 });
+  try {
+    // Sumber token: body (mobile/explicit) atau cookie httpOnly (web).
+    let refreshToken = request.cookies.get('sica_refresh_token')?.value ?? '';
+    try {
+      const body: unknown = await request.json();
+      const parsed = RefreshTokenRequestSchema.safeParse(body);
+      if (parsed.success) refreshToken = parsed.data.refreshToken;
+    } catch {
+      /* body kosong — pakai cookie */
     }
+    if (!refreshToken) return fail(401, 'UNAUTHORIZED', 'Refresh token tidak tersedia.');
 
-    const newAccessToken = `jwt_access_refreshed_${crypto.randomUUID()}`;
-    const newRefreshToken = `jwt_refresh_rotated_${crypto.randomUUID()}`;
+    const { config } = buildAuthConfig();
+    if (!config) return fail(500, 'INTERNAL_SERVER_ERROR', 'Konfigurasi token belum lengkap.');
+
+    const result = await rotateRefreshToken(refreshToken, config);
+    if (!result.ok) {
+      // Pesan seragam — jangan bocorkan apakah token invalid/reuse/expired ke klien.
+      return fail(401, 'UNAUTHORIZED', 'Sesi tidak valid atau telah dicabut.');
+    }
 
     const responsePayload = RefreshTokenEnvelope.parse({
       success: true,
       data: {
-        accessToken: newAccessToken,
-        refreshToken: newRefreshToken,
-        expiresIn: 900,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        expiresIn: result.expiresInSeconds,
       },
-      meta: {
-        timestamp,
-        requestId,
-      },
+      meta: { timestamp, requestId },
     });
-
     const response = NextResponse.json(responsePayload, { status: 200 });
-
-    response.cookies.set('sica_access_token', newAccessToken, {
+    const secure = process.env['NODE_ENV'] === 'production';
+    response.cookies.set('sica_access_token', result.accessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure,
       sameSite: 'lax',
       path: '/',
-      maxAge: 900,
+      maxAge: result.expiresInSeconds,
     });
-
+    response.cookies.set('sica_refresh_token', result.refreshToken, {
+      httpOnly: true,
+      secure,
+      sameSite: 'lax',
+      path: '/api/v1/auth',
+      maxAge: config.refreshTtlSec,
+    });
     return response;
   } catch (error) {
-    const errorResponse = StandardErrorResponseSchema.parse({
-      success: false,
-      error: {
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'Gagal memperbarui access token.',
-        details: [{ message: (error as Error).message }],
-      },
-      meta: {
-        timestamp,
-        requestId,
-      },
-    });
-
-    return NextResponse.json(errorResponse, { status: 500 });
+    return fail(500, 'INTERNAL_SERVER_ERROR', `Gagal memperbarui access token. ${(error as Error).message}`);
   }
 }
