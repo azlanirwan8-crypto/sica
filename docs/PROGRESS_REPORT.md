@@ -105,7 +105,7 @@ Legenda status: `Spes` = sudah dispesifikasi di `/docs`; `Logic` = aturan bisnis
 | AUD-07 | `tsc` gagal: 5 dependensi tak ada di node_modules (lucide-react, class-variance-authority, sonner, clsx, tailwind-merge) | Sedang | Setup | **Open** — perlu `pnpm install` (belum dijalankan; konfirmasi operator) |
 | AUD-08 | Status PROGRESS/ROADMAP mengklaim 100% production-ready | Sedang | DoD | **FIXED** — dikoreksi ke status sebenarnya |
 | AUD-09 | `graduation_records` di-`CREATE TABLE` dua kali di DATA_MODEL §5 (memblokir replay migrasi) | Sedang | §3.2 | **Teridentifikasi** — keputusan & rencana refactor di DATA_MODEL §11.5; **Open** |
-| AUD-10 | Celah field data Sevima/PDDikti: biodata mahasiswa, tabel dosen/tendik hilang, SKS course belum dipecah, status presensi, kode feeder institusi | **Kritis** | §3.2, INTEGRATIONS | Spesifikasi ditulis (DATA_MODEL §11). Implementasi Drizzle sebagian **SELESAI** (`schema/people.ts`, `students` biodata) — terverifikasi `tsc`. Sisa: migrasi SQL+RLS, courses/attendances, kontrak Zod, UI form. |
+| AUD-10 | Celah field data Sevima/PDDikti: biodata mahasiswa, tabel dosen/tendik hilang, SKS course belum dipecah, status presensi, kode feeder institusi | **Kritis** | §3.2, INTEGRATIONS | Spesifikasi ditulis (DATA_MODEL §11). Drizzle **SELESAI & terverifikasi `tsc`:** `schema/people.ts`, biodata `students`, **`attendances` (status/source/GPS/mock/markedBy) + `courses` (sks_teori/praktik/course_type)**, enum `attendance_source`/`course_type`; **kontrak Zod** `attendance.ts` (+ test). Migrasi `0005` ditulis (belum dieksekusi). **Sisa:** migrasi+RLS tabel `people`, kolom kode feeder institusi, kontrak `StudentBiodata`/`Lecturer`, form UI. |
 | AUD-11 | Inkonsistensi dokumen: SECURITY §2.2 menyebut token **EdDSA/ES256** padahal ENV_CONTRACT/ADR/kode memakai **RS256** | Sedang | DoD konsistensi | **FIXED** — distandarkan RS256 di SECURITY §2.2 + dicatat di §2.4. |
 | AUD-12 | Vitest tak meng-resolve alias `@/` (tak ada config) → test yang mengimpor modul app via `@/` gagal kolektif | Sedang | §3.1, TESTING | **FIXED** — `apps/web/vitest.config.ts` ditambahkan (alias `@`→`src`); 30 test lulus. |
 
@@ -164,3 +164,13 @@ Melanjutkan §5.6 — provider DB + orkestrasi + endpoint, teruji credential-fre
 - **Refactor ORM:** operator Drizzle (`eq/and/or/inArray/isNull/gt`) di-re-export dari `@sica/database` agar `apps/web` tak bergantung langsung `drizzle-orm` (pnpm isolated). `client.ts` juga re-export `sql`.
 - **Bukti:** `tsc --noEmit` **0 error**; `vitest` **65/65 lulus** (9 file). `@sica/database` bersih (hanya error `@sica/logger` pre-existing tak terkait).
 - **Sisa:** pasang guard `withModule` ke seluruh route domain + tulis event audit; cache Redis 60s; eksekusi migrasi `0004` saat DB ready (§4.5).
+
+### 5.11 Slice Field-Data Presensi & SKS (AUD-10, 2026-10-18)
+Menutup sebagian besar AUD-10 yang dapat dikerjakan tanpa DB:
+- **`attendances`** (`schema/enrollments.ts`) diperkaya: `status` (enum `attendance_status`), `source` (`attendance_source`: QR/GEOFENCE/MANUAL/APP_BULK/FEEDER_SYNC), `latitude/longitude`, `distance_meters`, `is_mock_location`, `marked_by`, `notes`, `created_at`, indeks `(tenant_id, student_id, marked_at DESC)`.
+- **`courses`** (`schema/academic-master.ts`): pemecahan SKS `sks_teori`/`sks_praktik` + `course_type` (`course_type` enum); total `sks` tetap otoritatif.
+- **Enum** baru di `schema/enums.ts`: `attendance_source`, `course_type`.
+- **Kontrak Zod** `packages/contracts/src/attendance.ts` (`AttendanceRecord`/`MarkAttendance`/`CourseSks` + enum) + diekspor via `index.ts`.
+- **Migrasi** `packages/database/migrations/0005_field_data_attendance_courses.sql` — expand-only, idempoten (`ADD COLUMN IF NOT EXISTS`), guard `lock_timeout`, CHECK konsistensi `present = (status='PRESENT')` & `sks = teori+praktik`. Belum dieksekusi (butuh PostgreSQL).
+- **Bukti:** `tsc` contracts/database/web **0 error**; `vitest` **71/71 lulus** (10 file; +`attendance-contract.test.ts`).
+- **Sisa AUD-10:** migrasi+RLS tabel `people`, kolom kode feeder institusi (`tenants`/`organizations`/`study_programs`), kontrak `StudentBiodata`/`Lecturer`, form UI biodata.

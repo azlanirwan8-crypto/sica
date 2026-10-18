@@ -121,6 +121,24 @@ export const attendanceStatusEnum = pgEnum('attendance_status', [
   'ABSENT',
 ]);
 
+/** Sumber pencatatan presensi (audit trail anti-pemalsuan + analitik kepatuhan). */
+export const attendanceSourceEnum = pgEnum('attendance_source', [
+  'QR',
+  'GEOFENCE',
+  'MANUAL',
+  'APP_BULK',
+  'FEEDER_SYNC',
+]);
+
+/** Jenis pembelajaran matakuliah — pemecahan SKS ala PDDikti/Sevima. (DATA_MODEL §11.3) */
+export const courseTypeEnum = pgEnum('course_type', [
+  'TEORI',
+  'PRAKTIKUM',
+  'LABORATORIUM',
+  'LAPANGAN',
+  'KULIAH_MANDIRI',
+]);
+
 // ── Modular SaaS entitlement / add-on gating (DATA_MODEL §12) ──
 export const moduleCategoryEnum = pgEnum('module_category', ['CORE', 'ADDON']);
 export const moduleLicenseMetricEnum = pgEnum('module_license_metric', [

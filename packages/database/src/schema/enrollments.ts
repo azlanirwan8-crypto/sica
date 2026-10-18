@@ -5,12 +5,18 @@ import {
   boolean,
   integer,
   numeric,
+  doublePrecision,
   timestamp,
   index,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
-import { enrollmentStatusEnum, gradeStatusEnum } from './enums';
+import {
+  enrollmentStatusEnum,
+  gradeStatusEnum,
+  attendanceStatusEnum,
+  attendanceSourceEnum,
+} from './enums';
 import { courses, academicPeriods } from './academic-master';
 import { students, classes, classSessions } from './classes';
 
@@ -52,6 +58,11 @@ export const enrollments = pgTable(
   })
 );
 
+/**
+ * Presensi per sesi kelas. Memenuhi kebutuhan Sevima/PDDikti: status rinci,
+ * sumber pencatatan (QR/geofence/manual), bukti GPS + anti-mock-location, dan
+ * penanda (who marked) untuk jejak audit. (DATA_MODEL §11.4)
+ */
 export const attendances = pgTable(
   'attendances',
   {
@@ -65,13 +76,27 @@ export const attendances = pgTable(
     studentId: uuid('student_id')
       .notNull()
       .references(() => students.id, { onDelete: 'cascade' }),
-    present: boolean('present').notNull(),
+    status: attendanceStatusEnum('status').notNull(),
+    present: boolean('present').notNull(), // flag cepat (derived dari status) utk kompatibilitas
+    source: attendanceSourceEnum('source').notNull().default('QR'),
     markedAt: timestamp('marked_at', { withTimezone: true }).notNull().defaultNow(),
+    markedBy: uuid('marked_by'), // user (dosen/admin) bila sumber manual/bulk; null = self-scan
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
+    distanceMeters: integer('distance_meters'), // hasil Haversine saat scan ( utk audit)
+    isMockLocation: boolean('is_mock_location').notNull().default(false),
+    notes: text('notes'), // alasan izin/sakit utk status non-hadir
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     sessionStudentUnique: uniqueIndex('uq_attendances_session_student').on(
       table.sessionId,
       table.studentId
+    ),
+    tenantStudentTimeIdx: index('idx_attendances_tenant_student_time').on(
+      table.tenantId,
+      table.studentId,
+      table.markedAt
     ),
   })
 );

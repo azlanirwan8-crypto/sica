@@ -1237,7 +1237,12 @@ ALTER TABLE study_programs  ADD COLUMN establishment_decree text, ADD COLUMN deg
 ### 11.6 Konsekuensi ke Lapis Kontrak & UI
 - `packages/contracts` perlu `StudentBiodataSchema`, `LecturerSchema`, `AttendanceStatusSchema` agar form registrasi/biodata punya **field lengkap** (Guardrail §3.3, §3.5).
 - `UI_UX_DESIGN.md`: form biodata mahasiswa & dosen wajib menampilkan field di §11.2–11.4 dengan masking PII (NIK/alamat) sesuai `SECURITY_COMPLIANCE.md`; KTM digital memakai `students.photo_url`.
-- Belum ada perubahan kode Drizzle untuk §11 (doc-first sesuai instruksi); skema `packages/database/src/schema/*.ts` akan diselaraskan pada task eksekusi berikutnya (§ ROADMAP 2.1 / item baru).
+- **Status implementasi (audit field-data 2026-10-18):**
+  - ✅ Drizzle diselaraskan: `schema/people.ts` (lecturers/staff/addresses/guardians), biodata `students`, **`attendances`** (G-07: `status`, `source`, `latitude/longitude`, `distance_meters`, `is_mock_location`, `marked_by`, `notes`), **`courses`** (G-06 parsial: `sks_teori`, `sks_praktik`, `course_type`). Enum `attendance_source`/`course_type` baru.
+  - ✅ Kontrak Zod: `packages/contracts/src/attendance.ts` (`AttendanceStatusSchema`, `AttendanceSourceSchema`, `CourseTypeSchema`, `AttendanceRecordSchema`, `MarkAttendanceSchema`, `CourseSksSchema`) + teruji.
+  - ✅ Migrasi ditulis: `migrations/0005_field_data_attendance_courses.sql` (expand-only, idempoten) — belum dieksekusi (butuh DB).
+  - ⏳ Sisa: kontrak `StudentBiodataSchema`/`LecturerSchema`, kolom feeder institusi (`kode_pt`/`kode_prodi`/`id_pd`), `courses.sks_praktik_kerja`/`sks_lab`/`bahasa_pengantar`/`kode_rumpun`, `attendances.meeting_seq`/`device_id`/`accuracy_m`, dan form UI (§11.2–11.4).
+
 
 ---
 

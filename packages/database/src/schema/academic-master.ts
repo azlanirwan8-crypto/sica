@@ -11,7 +11,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
-import { academicYearTermEnum, periodStatusEnum } from './enums';
+import { academicYearTermEnum, periodStatusEnum, courseTypeEnum } from './enums';
 
 export const organizations = pgTable(
   'organizations',
@@ -187,7 +187,10 @@ export const courses = pgTable(
       .references(() => curricula.id, { onDelete: 'cascade' }),
     code: text('code').notNull(),
     name: text('name').notNull(),
-    sks: numeric('sks', { precision: 4, scale: 1 }).notNull(),
+    sks: numeric('sks', { precision: 4, scale: 1 }).notNull(), // total (otoritatif, kompatibel)
+    sksTeori: numeric('sks_teori', { precision: 4, scale: 1 }), // pemecahan ala PDDikti/Sevima
+    sksPraktik: numeric('sks_praktik', { precision: 4, scale: 1 }),
+    courseType: courseTypeEnum('course_type'),
     semesterIdeal: integer('semester_ideal'),
   },
   (table) => ({
