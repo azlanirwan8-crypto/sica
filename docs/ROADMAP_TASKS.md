@@ -66,7 +66,7 @@ Fokus utama fase ini adalah membangun pondasi monorepo pnpm, skema database Post
   - `apps/web/src/modules/auth/services/token.service.ts` (opaque token + SHA-256 hash + family id + `safeEqualHex`).
   - `apps/web/src/lib/api-response.ts::extractRequestContext` kini **memverifikasi JWT** (fail-closed) — menutup AUD-02 pada jalur API.
   - Env baru `JWT_ISSUER`/`JWT_AUDIENCE` (config/env.ts, ENV_CONTRACT, SECURITY §2.4).
-- [ ] **Auth — sisa integrasi (butuh `pnpm install` + PostgreSQL + Redis):** Argon2id aktif; lookup `users`/`tenant_memberships` + cek hash + persist `sessions`/`refresh_tokens`; verifikator **Edge/WebCrypto (JWK)** untuk `middleware.ts`; revocation set `sid`.
+- [~] **Auth — sisa integrasi:** Argon2id aktif; lookup `users`/`tenant_memberships` + cek hash + persist `sessions`/`refresh_tokens`; revocation set `sid` (butuh `pnpm install` + PostgreSQL + Redis). **Verifikator JWT Edge/JWK — SELESAI & teruji:** `apps/web/src/lib/jwt-edge.ts` (`verifyJwtEdge` via WebCrypto RS256) + unit test `tests/unit/jwt-edge.test.ts`. **Sisa:** rangkai `verifyJwtEdge` ke `middleware.ts` (butuh `JWT_PUBLIC_KEY_JWK` di env) + provider tenant untuk guard API.
 - [x] Bangun halaman Landing Page & Login Portal berbasis Velzon Card layout dengan interaksi Sonner Toast.
   - *Target file:* `apps/web/src/app/page.tsx`, `apps/web/src/app/(auth)/login/page.tsx`, `apps/web/src/modules/auth/components/login-form.tsx`
 - [x] Bangun layout dashboard web responsif (Sidebar, Header dengan Profile Avatar, Multi-Tenant Switcher).
@@ -77,9 +77,9 @@ Fokus utama fase ini adalah membangun pondasi monorepo pnpm, skema database Post
 ### 1.5 Modular Entitlement & Add-on Gating (Packaging SaaS — ADR-13, DATA_MODEL §12)
 > Menjawab kebutuhan "kampus beli sebagian modul" (mis. sudah punya PMB → cukup SIAKAD; atau butuh LMS saja).
 - [x] Skema Drizzle entitlement — `modules`, `module_dependencies`, `plan_modules`, `tenant_modules` (+ enum `module_category`/`module_license_metric`/`tenant_module_status`). **Terverifikasi `tsc` package database: 0 error schema.** (*Target file:* `packages/database/src/schema/modules.ts`)
-- [ ] Kontrak Zod `packages/contracts/src/entitlement.ts` (`TenantModuleSchema`, `ActivateModuleSchema`).
-- [ ] Skema SQL migrasi `packages/database/migrations/0004_entitlement_modules.sql` + seed katalog 19 modul + graf dependensi; `tenant_modules` ikut generator RLS §6.2.
-- [ ] Resolver `apps/web/src/lib/entitlement.ts` (cache Redis 60s + invalidasi) + guard HOF `withModule(code, handler)`.
+- [x] Kontrak Zod `packages/contracts/src/entitlement.ts` (`ModuleCodeSchema`, `TenantModuleSchema`, `ActivateModuleSchema`, `DeactivateModuleSchema`) — diekspor via `index.ts`; terverifikasi `tsc`.
+- [~] Skema SQL migrasi `packages/database/migrations/0004_entitlement_modules.sql` + seed katalog 19 modul + graf dependensi + RLS `tenant_modules` — **ditulis lengkap**, belum dieksekusi (butuh instance PostgreSQL). `tenant_modules` ikut pola RLS §6.2 (`app.tenant_id()`).
+- [~] Resolver `apps/web/src/lib/entitlement.ts` + guard HOF `withModule(code, …)` — **logika graf dependensi murni (aktivasi/deaktivasi/siklus) + guard terimplementasi & teruji (vitest)**. Sisa: provider `ModuleCheck` ke `tenant_modules` (DB) + cache Redis 60s + invalidasi.
 - [ ] Terapkan `withModule(...)` ke seluruh route `api/v1/<domain>` + enforcement dependensi (422 `MODULE_DEPENDENCY_UNMET`, 409 `MODULE_IN_USE`) + audit.
 - [ ] Endpoint `GET /tenant/modules` & `POST /tenant/modules/:code/activate|deactivate` (API_SPEC §4.5).
 - [ ] Sidebar Web (`sidebar.tsx`) & Bottom-nav Mobile (`custom_bottom_nav.dart`) disaring dari modul aktif (parity §3.4) + layout/route guard 404.

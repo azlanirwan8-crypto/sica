@@ -122,3 +122,11 @@ Ditetapkan (design-locked; implementasi butuh env cloud + `pnpm install`):
 - **Read/Write split + composite indexing** `tenant_id`-leading, `INCLUDE`, partisi per periode, gate `EXPLAIN` (DATA_MODEL §13).
 - **HA ops:** HPA/Serverless limits, `/health` & `/health/ready`, failover Patroni/Sentinel, zero-downtime canary (DEPLOYMENT_DEVOPS §4).
 - Guardrail baru **AGENTS.md §3.7**; checklist **ROADMAP §4.4** (6 `[x]` dokumen, 7 `[ ]` implementasi).
+
+### 5.6 Slice Entitlement + Edge JWT (terverifikasi, 2026-10-18)
+Kerjakan tanpa DB/cloud (murni + `tsc`/`vitest`), sesuai rekomendasi jalur-2:
+- **Kontrak Zod** `packages/contracts/src/entitlement.ts` (19 `MODULE_CODES`, skema katalog/aktivasi/deaktivasi) — `[x]`.
+- **Resolver + guard** `apps/web/src/lib/entitlement.ts`: `missingDependencies`, `evaluateActivation`, `evaluateDeactivation`, `hasDependencyCycle`, `withModule` (framework-agnostic) — `[~]` (logic + guard teruji; provider DB/cache Redis menyusul).
+- **Verifikator JWT Edge** `apps/web/src/lib/jwt-edge.ts` (`verifyJwtEdge` WebCrypto RS256/JWK) — menutup jalur AUD-02 Edge; wiring `middleware.ts` menyusul (butuh `JWT_PUBLIC_KEY_JWK`).
+- **Migrasi SQL** `0004_entitlement_modules.sql` (katalog+dependensi+RLS `tenant_modules`) — ditulis, belum dieksekusi (butuh PostgreSQL).
+- **Bukti:** `tsc` web **0 error non-dependensi**; `vitest` **46/46 lulus** (6 file). Contracts & database package `tsc` bersih.
