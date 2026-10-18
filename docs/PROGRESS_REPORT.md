@@ -174,3 +174,9 @@ Menutup sebagian besar AUD-10 yang dapat dikerjakan tanpa DB:
 - **Migrasi** `packages/database/migrations/0005_field_data_attendance_courses.sql` — expand-only, idempoten (`ADD COLUMN IF NOT EXISTS`), guard `lock_timeout`, CHECK konsistensi `present = (status='PRESENT')` & `sks = teori+praktik`. Belum dieksekusi (butuh PostgreSQL).
 - **Bukti:** `tsc` contracts/database/web **0 error**; `vitest` **71/71 lulus** (10 file; +`attendance-contract.test.ts`).
 - **Sisa AUD-10:** migrasi+RLS tabel `people`, kolom kode feeder institusi (`tenants`/`organizations`/`study_programs`), kontrak `StudentBiodata`/`Lecturer`, form UI biodata.
+
+### 5.12 Slice Kontrak Biodata/Dosen (AUD-10, 2026-10-18)
+- **`packages/contracts/src/people.ts`** — `StudentBiodataSchema` (+ default `status:ACTIVE`, `citizenship:WNI`, `feederStatusCode:'1'`), `StudentGuardianSchema`, `LecturerSchema` (+ default rank/employment/primary), enum `Sex`/`LecturerJobRank`/`EmploymentType`/`IncomeBand`/`FundingSource`. Diekspor via `index.ts`.
+- **Parity field** dg Drizzle (`students`, `lecturers`, `staff`) — mematuhi Guardrail §3.3/§3.4 (kontrak tunggal TS↔Dart).
+- **Bukti:** `tsc` contracts/web **0 error**; `vitest` **76/76 lulus** (11 file; +`people-contract.test.ts`).
+- **Sisa AUD-10 (butuh DB/UI):** migrasi+RLS tabel `people`, kolom feeder institusi, form UI biodata.
