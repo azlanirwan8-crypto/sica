@@ -42,5 +42,268 @@
     "attendance": "QR Attendance",
     "finance": "Finance & Tuition",
     "settings": "Settings"
+  },
+  "landing": {
+    "nav": {
+      "features": "Features",
+      "modules": "Modules",
+      "roles": "Roles",
+      "security": "Security",
+      "pricing": "Pricing",
+      "faq": "FAQ",
+      "login": "Sign In",
+      "demo": "Book a Demo"
+    },
+    "hero": {
+      "badge": "Multi-Tenant SaaS · Built Around National Academic Information Standards",
+      "titleA": "One Campus Platform,",
+      "titleHighlight": "Every Academic Process Covered",
+      "subtitle": "SICA connects registration, course enrollment, attendance, grading, finance and PDDikti reporting in one secure multi-tenant platform. Designed so enrollment day stays smooth while thousands of students access it at once.",
+      "ctaPrimary": "Try the Portal",
+      "ctaSecondary": "Browse All Modules",
+      "trust1": "Per-institution data isolation (RLS)",
+      "trust2": "Web & mobile parity",
+      "trust3": "Audit-ready records",
+      "previewCaption": "Student dashboard — GPA, credits, attendance and today's schedule"
+    },
+    "stats": {
+      "heading": "Capacity Tested for Campus Peak Conditions",
+      "items": [
+        { "value": "19", "label": "Business modules in the catalogue" },
+        { "value": "1,000+", "label": "Concurrent users as the design target" },
+        { "value": "30 sec", "label": "Rotating attendance QR against proxy check-in" },
+        { "value": "2 languages", "label": "Indonesian & English, switchable" }
+      ]
+    },
+    "problem": {
+      "eyebrow": "Why Legacy Systems Feel Heavy",
+      "title": "Real Problems We Solve",
+      "items": [
+        { "title": "Enrollment day takes the server down", "desc": "Credit quotas and seats compete in the same hour. SICA separates read/write paths, locks per class and guarantees idempotent submission." },
+        { "title": "Proxy attendance and manual recaps", "desc": "Short-lived QR, HMAC signature and Haversine geofencing enforce physical presence; attendance recaps automatically become an exam eligibility gate." },
+        { "title": "National reporting keeps rejecting rows", "desc": "Field completeness follows PDDikti Neo Feeder requirements from the schema, not patched at reporting time." },
+        { "title": "One campus locks out another", "desc": "Every business table carries tenant_id with default-deny Row-Level Security, so data cannot leak across institutions." }
+      ]
+    },
+    "modules": {
+      "eyebrow": "Modular",
+      "title": "Enable Only What Your Campus Needs",
+      "subtitle": "The academic core is always present; add-on modules can be self-served with dependency guarding.",
+      "coreLabel": "Core",
+      "addonLabel": "Add-on",
+      "items": []
+    },
+    "catalog": {
+      "eyebrow": "19-Module Catalogue",
+      "title": "The Whole Campus Lifecycle, Mapped per Role",
+      "subtitle": "Nine core modules are always available; ten add-ons can be self-served with dependency guarding. Filter by your role.",
+      "allRoles": "All roles",
+      "coreTab": "Core Modules",
+      "addonTab": "Add-on Modules",
+      "allTab": "All",
+      "rolesLabel": "Used by",
+      "dependsLabel": "Requires",
+      "licenseLabel": "License",
+      "empty": "No modules match this filter.",
+      "roles": {
+        "mahasiswa": "Students",
+        "dosen": "Lecturers & Advisors",
+        "baak": "Academic Affairs",
+        "pimpinan": "Leadership",
+        "ortu": "Parents"
+      },
+      "license": {
+        "INCLUDED": "Included",
+        "PER_SEAT": "Per seat",
+        "FLAT": "Flat rate"
+      },
+      "items": [
+        { "code": "identity", "name": "Identity & Access", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "dosen", "mahasiswa", "pimpinan"], "desc": "One identity for students, lecturers and staff with per-institution roles and memberships." },
+        { "code": "academic", "name": "Academic Master Data", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "pimpinan", "dosen"], "desc": "Faculties, programmes, curricula, courses, periods and rooms as a single source of truth." },
+        { "code": "teaching", "name": "Teaching & Scheduling", "category": "CORE", "license": "INCLUDED", "roles": ["dosen", "baak"], "desc": "Classes, lecturers, weekly schedules and sessions with clash detection." },
+        { "code": "enrollment", "name": "Enrolment & Advisor Approval", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "dosen", "baak"], "desc": "Course registration with GPA-based credit quota, prerequisites and advisor sign-off." },
+        { "code": "attendance", "name": "Attendance & Geofencing", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "dosen", "baak"], "desc": "Rotating QR, GPS geofencing, detailed status and attendance recaps as an exam gate." },
+        { "code": "assessment", "name": "Grading, Reports & Transcripts", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "dosen", "baak", "ortu"], "desc": "Weighted components, letter conversion, semester grade reports and final transcripts." },
+        { "code": "finance", "name": "Finance & Enrolment Gate", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "baak", "pimpinan", "ortu"], "desc": "Tuition, invoices, payment channels and a settlement-based registration gate." },
+        { "code": "feeder_pddikti", "name": "PDDIKTI Feeder", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "pimpinan"], "desc": "Field completeness and code mapping so national reporting is not rejected." },
+        { "code": "audit", "name": "Audit Trail", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "pimpinan"], "desc": "Trail of sensitive changes and administrator actions for auditing." },
+        { "code": "pmb", "name": "Admission & Selection CBT", "category": "ADDON", "license": "FLAT", "roles": ["baak", "pimpinan"], "depends": ["identity", "academic"], "desc": "New student admission and computer-based selection exams." },
+        { "code": "cbt", "name": "Computer-Based Test", "category": "ADDON", "license": "FLAT", "roles": ["mahasiswa", "dosen", "baak"], "depends": ["identity", "academic"], "desc": "Online exams with item bank, schedule and automatic grading." },
+        { "code": "lms", "name": "Online Learning (LMS)", "category": "ADDON", "license": "PER_SEAT", "roles": ["mahasiswa", "dosen"], "depends": ["teaching", "enrollment"], "desc": "Materials, assignments and class interaction beyond contact hours." },
+        { "code": "mbkm", "name": "MBKM (Independent Campus)", "category": "ADDON", "license": "FLAT", "roles": ["mahasiswa", "dosen", "baak"], "depends": ["enrollment", "assessment", "academic"], "desc": "Running and credit conversion of learning activities outside the programme." },
+        { "code": "thesis", "name": "Final Project / Thesis", "category": "ADDON", "license": "PER_SEAT", "roles": ["mahasiswa", "dosen", "baak"], "depends": ["enrollment", "assessment"], "desc": "Supervision, examination and documentation of final projects." },
+        { "code": "spmi", "name": "Quality Assurance & Accreditation", "category": "ADDON", "license": "FLAT", "roles": ["pimpinan", "baak", "dosen"], "depends": ["academic", "assessment", "feeder_pddikti"], "desc": "Internal quality assurance and accreditation data preparation." },
+        { "code": "hr_bkd", "name": "HR / Workload / SISTER", "category": "ADDON", "license": "PER_SEAT", "roles": ["dosen", "baak", "pimpinan"], "depends": ["identity", "teaching"], "desc": "Lecturer workload, employment history and HR reporting." },
+        { "code": "parent_portal", "name": "Parent Portal", "category": "ADDON", "license": "INCLUDED", "roles": ["ortu"], "depends": ["enrollment", "assessment", "finance"], "desc": "View a student's attendance, grades and bills in a limited, secure way." },
+        { "code": "graduation", "name": "Commencement / Diploma Legalisation", "category": "ADDON", "license": "FLAT", "roles": ["mahasiswa", "baak", "pimpinan"], "depends": ["assessment", "feeder_pddikti"], "desc": "Graduation process, diplomas, graduate profiles and legalisation services." },
+        { "code": "tracer_iku", "name": "Tracer Study & KPI", "category": "ADDON", "license": "FLAT", "roles": ["pimpinan", "baak", "mahasiswa"], "depends": ["graduation", "feeder_pddikti"], "desc": "Alumni tracking and university core performance indicators." }
+      ]
+    },
+    "benchmark": {
+      "eyebrow": "Benchmark",
+      "title": "Why Campuses Choose SICA",
+      "subtitle": "Against conventional academic systems and generic SaaS — it is not about menu count, but the technical foundation underneath.",
+      "columns": ["Conventional SIAKAD", "Generic Academic SaaS", "SICA"],
+      "rows": [
+        { "label": "Cross-campus data isolation", "cells": ["Separate instances", "Database schema", "Row-level security, default-deny"] },
+        { "label": "Self-serve module activation", "cells": ["No", "Limited", "Yes, with dependency map"] },
+        { "label": "Shared Web ↔ Mobile data contract", "cells": ["Two codebases", "Sometimes", "One source (Zod → TS & Dart)"] },
+        { "label": "On-premise / dedicated deploy", "cells": ["Yes", "Rare", "Yes"] },
+        { "label": "Enrolment-day peak readiness", "cells": ["Often down", "Limited", "Queue + per-class lock + idempotent"] },
+        { "label": "PDDikti field completeness", "cells": ["Patched at reporting", "Partial", "Designed into the schema"] }
+      ],
+      "sevimaTitle": "Market-standard module coverage",
+      "sevimaNote": "Core modules are production-ready; add-ons are mapped in a staged roadmap.",
+      "statusReady": "Ready",
+      "statusPartial": "Staged",
+      "statusRoadmap": "Roadmap",
+      "sevima": [
+        { "label": "Academic & Enrolment", "status": "ready" },
+        { "label": "Attendance & Geofencing", "status": "ready" },
+        { "label": "Grades, Reports & Transcripts", "status": "ready" },
+        { "label": "Finance & Tuition", "status": "partial" },
+        { "label": "PDDikti Feeder", "status": "partial" },
+        { "label": "Admission & CBT", "status": "roadmap" },
+        { "label": "MBKM", "status": "roadmap" },
+        { "label": "Final Project / Thesis", "status": "roadmap" },
+        { "label": "Quality & Accreditation", "status": "roadmap" },
+        { "label": "HR / Workload / SISTER", "status": "roadmap" },
+        { "label": "Parent Portal", "status": "roadmap" },
+        { "label": "Commencement / Diploma", "status": "roadmap" },
+        { "label": "Tracer Study & KPI", "status": "roadmap" }
+      ]
+    },
+    "deepdive": {
+      "krs": {
+        "eyebrow": "Enrolment Flow",
+        "title": "An Orderly Course Registration Window",
+        "steps": [
+          { "title": "Read last semester GPA", "desc": "Credit limit is computed from GPA and curriculum rules, never typed by hand." },
+          { "title": "Pick classes, detect clashes", "desc": "Schedule, lecturer and room conflicts are checked before submission." },
+          { "title": "Billing gate", "desc": "The institution may require tuition settlement before enrolment becomes effective." },
+          { "title": "Advisor approval", "desc": "Academic advisors approve or reject with a recorded reason." }
+        ]
+      },
+      "attendance": {
+        "eyebrow": "Attendance Flow",
+        "title": "Attendance You Can Defend",
+        "steps": [
+          { "title": "Lecturer opens the session", "desc": "QR is issued with a 30-second lifetime and an HMAC signature." },
+          { "title": "Student scans in class", "desc": "GPS coordinates are compared against the classroom location." },
+          { "title": "Layered validation", "desc": "Mock locations, out-of-radius and expired QR codes are all rejected." },
+          { "title": "Automatic recap", "desc": "Attendance percentage becomes exam eligibility and audit evidence." }
+        ]
+      }
+    },
+    "roles": {
+      "eyebrow": "Roles",
+      "title": "A Different View for Every Stakeholder",
+      "tabs": [
+        {
+          "key": "mahasiswa",
+          "label": "Students",
+          "title": "Everything about the semester on one screen",
+          "desc": "Cumulative GPA and earned credits are computed from locked grades, the daily schedule shows rooms and lecturers, and the billing status is visible before registering courses.",
+          "points": ["Dashboard reads real academic data", "Course registration with live remaining credits", "Print grade report and transcript", "Scan attendance QR from the phone"]
+        },
+        {
+          "key": "dosen",
+          "label": "Lecturers & Advisors",
+          "title": "Teach, grade and advise without spreadsheets",
+          "desc": "Assigned classes, today's sessions and advisee lists come first, then component grading with weights locked to 100%.",
+          "points": ["Assigned classes and today's sessions", "Approve advisee course registration", "Enter and lock component grades", "Attendance recap per student"]
+        },
+        {
+          "key": "admin",
+          "label": "Academic Affairs",
+          "title": "Operational control of one institution",
+          "desc": "Close data gaps before reporting: course master, parallel classes, active periods and add-on activation can be managed without waiting for the vendor.",
+          "points": ["Aggregates of students, lecturers and classes", "Module activation with dependency map", "Manage periods and parallel schedules", "Audit trail of administrator actions"]
+        },
+        {
+          "key": "pimpinan",
+          "label": "Leadership",
+          "title": "The numbers used to make decisions",
+          "desc": "Performance indices, study completion and reporting compliance are presented consistently, so leadership meetings discuss policy instead of arguing about figures.",
+          "points": ["Academic performance index per study programme", "Completion and study-duration monitoring", "Reporting readiness", "Exports for senate meetings"]
+        }
+      ]
+    },
+    "security": {
+      "eyebrow": "Security & Compliance",
+      "title": "Built Assuming Campus Data Will Be Tested for Leaks",
+      "items": [
+        { "title": "Row-level tenant isolation", "desc": "Default-deny RLS on tenant_id across business tables with the tenant context set per transaction." },
+        { "title": "RS256 session JWT", "desc": "Asymmetrically signed access tokens, single-use refresh tokens and family reuse detection." },
+        { "title": "Hashed passwords", "desc": "Modern hashing with a server-side pepper and account lockout after repeated failures." },
+        { "title": "Audit trail", "desc": "Grade changes, manual attendance and admin actions are recorded with the actor." },
+        { "title": "Least privilege", "desc": "Module and role gating restricts routes and menus, not just hidden buttons." },
+        { "title": "Personal data protection", "desc": "Student biodata follows reporting needs without collecting more than required." }
+      ]
+    },
+    "integrations": {
+      "eyebrow": "Integrations",
+      "title": "Connected to Systems the Campus Already Runs",
+      "items": [
+        { "title": "PDDikti Neo Feeder", "desc": "Sync master and academic data for national reporting." },
+        { "title": "Payment gateways", "desc": "Virtual accounts, QRIS and automatic reconciliation to student bills." },
+        { "title": "Email & WhatsApp", "desc": "Notifications for schedule, billing and academic announcements." },
+        { "title": "Campus SSO", "desc": "OAuth2/OIDC with PKCE reusing existing identities." },
+        { "title": "Attendance devices", "desc": "Biometric or card readers as an alternative attendance source." },
+        { "title": "LMS & library", "desc": "Materials and loan status linked to one identity." }
+      ]
+    },
+    "pricing": {
+      "eyebrow": "Pricing",
+      "title": "Indicative, Scaled to Your Campus",
+      "subtitle": "Figures below are planning ranges; the final proposal follows student volume and the modules you activate.",
+      "annualNote": "per student per year",
+      "plans": [
+        { "name": "Starter", "price": "IDR 12,000", "desc": "For a new faculty or campus that needs the academic core running fast.", "features": ["Core academic modules", "Web & mobile portal", "Business-hours support", "1 institution (tenant)"], "cta": "Talk to Us", "featured": false },
+        { "name": "Campus", "price": "IDR 19,000", "desc": "The most complete package for universities with many faculties and programmes.", "features": ["All core modules", "Finance & billing", "PDDikti Feeder integration", "Campus SSO", "Priority support", "99.9% SLA"], "cta": "Choose Campus", "featured": true },
+        { "name": "Enterprise", "price": "Custom", "desc": "Institutions with on-premise needs, special audits and high volume.", "features": ["Everything in Campus", "Dedicated / on-prem deploy", "Audit & penetration testing", "Staff training", "Dedicated project manager"], "cta": "Contact Sales", "featured": false }
+      ]
+    },
+    "testimonials": {
+      "eyebrow": "Testimonials",
+      "title": "Voices from the Academic Community",
+      "disclaimer": "Quotes are illustrative for marketing demo purposes and will be replaced with verified client testimonials.",
+      "items": [
+        { "quote": "The biggest difference is enrollment day. We used to babysit the server; now we just watch the queue.", "name": "Head of Academic Affairs", "org": "Public University (West Java)" },
+        { "quote": "As an advisor, approving my advisees' study plans no longer means printing paper forms.", "name": "Lecturer & Academic Advisor", "org": "Informatics Engineering Programme" },
+        { "quote": "Attendance eligibility for final exams is finally trustworthy, because it is location-validated.", "name": "Vice Rector for Academic Affairs", "org": "Private University (East Java)" }
+      ]
+    },
+    "faq": {
+      "eyebrow": "FAQ",
+      "title": "Questions We Are Asked Most",
+      "items": [
+        { "q": "Does SICA replace an existing academic system?", "a": "SICA can run in parallel and later become the system of record. Master data and grade history migrate in stages using an expand-and-contract scheme so there is no academic downtime." },
+        { "q": "How is one campus prevented from reading another's data?", "a": "Every business table uses a tenant_id column with default-deny Row-Level Security. The tenant context is set at the start of the transaction, so even a query that forgets to filter cannot return another tenant's rows." },
+        { "q": "Is it ready for thousands of simultaneous students?", "a": "The design target is 1,000+ concurrent users: read/write splitting, pooled database connections, per-class locking and a worker queue to finalise enrolment." },
+        { "q": "How long until it is usable?", "a": "The academic core typically goes live within weeks for one institution, depending on master data completeness and which add-on modules are activated." },
+        { "q": "Can we run it on campus servers?", "a": "Yes. The architecture supports dedicated or local cloud deployment, with releases separated from deployments behind feature flags." },
+        { "q": "Is there a mobile app?", "a": "Yes. The web portal and mobile app share the same data contracts so key features have equivalents, including QR attendance from the phone." }
+      ]
+    },
+    "cta": {
+      "title": "Ready to See SICA with Your Campus Data?",
+      "subtitle": "We can prepare a test tenant containing a sample study programme, courses and one full registration cycle so the demo feels like real operations.",
+      "primary": "Book a Technical Demo",
+      "secondary": "Open the Demo Portal"
+    },
+    "footer": {
+      "tagline": "All-in-one academic platform for Indonesian higher education.",
+      "product": "Product",
+      "company": "Company",
+      "resources": "Resources",
+      "legal": "Legal",
+      "productLinks": ["Academic Modules", "Attendance & Geofencing", "Campus Finance", "Mobile App"],
+      "companyLinks": ["About Us", "Careers", "Partners", "Contact"],
+      "resourceLinks": ["Documentation", "Service Status", "Changelog", "Help Center"],
+      "legalLinks": ["Privacy Policy", "Terms of Service", "Data Security"],
+      "copyright": "All Rights Reserved.",
+      "contactNote": "For institutions: implementation consulting and data migration are available."
+    }
   }
 }

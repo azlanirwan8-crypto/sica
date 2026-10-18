@@ -1,6 +1,9 @@
+/**
+ * Dashboard layout — Velzon "horizontal layout": menu utama berada di baris atas
+ * (TopNav), bukan sidebar vertikal. Tidak ada offset kiri; konten memenuhi lebar.
+ */
 import React from 'react';
-import { Sidebar } from '../../components/layout/sidebar';
-import { Header } from '../../components/layout/header';
+import { TopNav } from '../../components/layout/top-nav';
 
 export default function DashboardLayout({
   children,
@@ -8,28 +11,28 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div style={{ minHeight: '100vh', display: 'flex' }}>
-      {/* Sidebar navigasi tetap di sisi kiri */}
-      <Sidebar />
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: 'var(--sica-surface-canvas)',
+      }}
+    >
+      <TopNav />
 
-      {/* Konten utama di sebelah kanan sidebar */}
-      <div
+      <main
         style={{
-          marginLeft: '260px',
           flex: 1,
-          minWidth: 0, // izinkan menyusut agar tidak overflow horizontal (flex-item default min-width:auto)
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: '100vh',
-          backgroundColor: 'var(--sica-surface-canvas)',
+          width: '100%',
+          maxWidth: '1400px',
+          margin: '0 auto',
+          padding: '28px 24px',
+          minWidth: 0,
         }}
       >
-        <Header />
-
-        <main style={{ padding: '32px 24px', flex: 1, minWidth: 0, maxWidth: '1400px', width: '100%', margin: '0 auto' }}>
-          {children}
-        </main>
-      </div>
+        {children}
+      </main>
     </div>
   );
 }

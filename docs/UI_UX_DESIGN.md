@@ -237,38 +237,39 @@ Komponen identitas digital resmi di dalam aplikasi mobile:
 
 ## 4. Standar Responsivitas & Breakpoints Grid
 
-Aplikasi web SICA menerapkan sistem grid responsif 12 kolom dengan breakpoints berikut:
+> **Keputusan layout (2026-10-19):** SICA memakai **Velzon "layout horizontal"** — **menu utama mendatar di baris kedua header**, BUKAN sidebar vertikal. Komponen `sidebar.tsx`/`header.tsx` lama telah dihapus dan digantikan `components/layout/top-nav.tsx`.
+
+**Struktur header horizontal (2 baris):**
+- **Baris 1:** brand (emblem + lockup) · pencarian · ikon utilitas (bahasa, modul, layar penuh, mode gelap, notifikasi ber-badge) · kartu profil (avatar + nama + peran).
+- **Baris 2:** menu navigasi berikon dengan dropdown (Dashboard · Akademik ▾ · Lainnya ) · pill institusi aktif · tombol keluar. Item tanpa halaman ditandai badge **"Segera"** (bukan link mati).
 
 | Breakpoint | Rentang Lebar | Mode Layout SICA Web |
 |---|---|---|
-| **Mobile (`sm`)** | `< 768px` | Sidebar di-collapse penuh ke Offcanvas Drawer; Header menyajikan tombol hamburger; Tabel beralih menjadi tampilan tumpukan kartu (*Card List View*); Navigasi bawah opsional. |
-| **Tablet (`md`)** | `768px – 1024px` | Sidebar beralih ke mode icon mini-compact (lebar 70px) dengan tooltip flyout; Data grid menampilkan kolom utama dengan tombol ekspansi horizontal. |
-| **Desktop (`lg` / `xl`)**| `> 1024px` | Sidebar penuh dua kolom (lebar 250px) dengan kategori modul; Data grid multi-kolom penuh; Widget dashboard tersusun 3 hingga 4 kolom berdampingan. |
+| **Mobile (`sm`)** | `< 768px` | Baris menu (baris 2) collapse ke **hamburger/offcanvas**; utilitas & kartu profil disembunyikan; tabel jadi tumpukan kartu. |
+| **Tablet (`md`)** | `768px – 1024px` | Hamburger aktif (menu baris 2 masih tersembunyi < 1024px); pencarian tampil ≥ 1280px; grid widget menyesuaikan. |
+| **Desktop (`lg` / `xl`)**| `> 1024px` | Header 2 baris penuh; menu mendatar + dropdown hover; data grid multi-kolom; widget dashboard 3–4 kolom. |
 
 ```
-Desktop (>1024px):
-┌──────────┬────────────────────────────────────────────────────────┐
-│ SIDEBAR  │ HEADER (Tenant Brand, Search, Notif, User Profile)     │
-│ [Modul]  ├────────────────────────────────────────────────────────┤
-│ - Admin  │ [Stat Card 1]  [Stat Card 2]  [Stat Card 3]  [Stat 4]  │
-│ - KRS    ├─────────────────────────────┬──────────────────────────┤
-│ - Nilai  │ Main Content (Data Table)   │ Side Widget (Kalender)   │
-│ - Keuang │                             │                          │
-└──────────┴─────────────────────────────┴──────────────────────────┘
-
-Mobile (<768px):
-┌────────────────────────────────────────────────────────┐
-│ [≡] SICA Portal                            [🔔] [User] │
-├────────────────────────────────────────────────────────┤
-│ [Stat Card Slider (Swipeable)]                         │
-├────────────────────────────────────────────────────────┤
-│ List View Mahasiswa / Jadwal                           │
-│ ┌────────────────────────────────────────────────────┐ │
-│ │ Mata Kuliah: Pemrograman Web Lanjut                │ │
-│ │ Jam: 08:00 - 10:30 WIB · Ruang: Lab 01             │ │
-│ └────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────┘
+Desktop (>1024px) — Velzon horizontal layout:
+┌──────────────────────────────────────────────────────────────────────┐
+│ [Logo]  [ Search… ]                     [🌐][▦][][🌙][🔔³] (Avatar) │  Baris 1
+├──────────────────────────────────────────────────────────────────────┤
+│ ⊞ Dashboard   🎓 Akademik ▾   ▦ Lainnya ▾            (•) Kampus  ⎋ Keluar │  Baris 2 (menu)
+├──────────────────────────────────────────────────────────────────────┤
+│ [Stat Card 1]  [Stat Card 2]  [Stat Card 3]  [Stat Card 4]            │
+├──────────────────────────────────┬───────────────────────────────────┤
+│ Main Content (Data Table)        │ Side Widget (Kalender)            │
+└──────────────────────────────────┴───────────────────────────────────┘
 ```
+
+### 4.1 Lockup Brand SICA
+- **Emblem** (`public/sica-emblem.png`, background transparan, hasil `scripts/make-logo-transparent.mjs` + `scripts/crop-logo-emblem.mjs`) dipakai berdampingan dengan tipografi asli: **"SICA"** (extrabold) di atas **"SYSTEM INTEGRATION CENTRAL ACADEMIC"** (uppercase, letter-spacing lebar).
+- Varian `dark` untuk latar gelap (halaman login); `priority` untuk LCP; dipakai sebagai favicon & OG image.
+
+### 4.2 Sistem Motion (Web)
+- Landing & transisi memakai **IntersectionObserver + animasi CSS** (`components/landing/motion.tsx`: `Reveal`, `CountUp`; keyframes di `globals.css`), bukan hanya Framer Motion, agar ringan di server component.
+- Wajib menghormati **`prefers-reduced-motion: reduce`** (semua animasi non-esensial dinonaktifkan).
+- Header landing: sticky + scroll-spy (menandai menu aktif) + bilah progres baca + shadow saat digulir.
 
 ---
 

@@ -23,6 +23,16 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
 h1, h2, h3, h4, h5, h6 {
   color: var(--sica-text-heading);
   font-weight: 600;
@@ -41,4 +51,190 @@ a:hover {
 
 button {
   font-family: inherit;
+}
+
+/* ── Top navigation ala Velzon "horizontal layout" ─────────────────────────
+   Menu mendatar disembunyikan di bawah 1024px dan diganti toggle mobile,
+   sehingga tidak ada overflow horizontal pada layar sempit. */
+@media (max-width: 1023px) {
+  .sica-topnav-menu {
+    display: none !important;
+  }
+
+  .sica-topnav-toggle {
+    display: inline-flex !important;
+  }
+
+  .sica-topnav-actions {
+    margin-left: auto;
+    gap: 10px !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .sica-topnav-actions {
+    gap: 8px !important;
+  }
+
+  .sica-topnav-actions .sica-hide-sm {
+    display: none;
+  }
+}
+
+/* ── Header Velzon: pencarian, ikon utilitas, menu & dropdown ───────────── */
+.sica-search:focus-within {
+  border-color: var(--sica-color-primary) !important;
+  background-color: #fff !important;
+  box-shadow: 0 0 0 3px var(--sica-color-primary-light);
+}
+
+.sica-utils button:hover {
+  background-color: var(--sica-surface-hover) !important;
+  color: var(--sica-color-primary) !important;
+}
+
+.sica-profile {
+  transition: background-color 160ms ease;
+}
+
+.sica-profile:hover {
+  background-color: var(--sica-border-color) !important;
+}
+
+.sica-navitem > a:hover,
+.sica-navitem > button:hover {
+  background-color: var(--sica-surface-hover);
+  border-radius: var(--sica-radius-md) var(--sica-radius-md) 0 0;
+}
+
+.sica-dropdown a:hover {
+  background-color: var(--sica-surface-hover) !important;
+  color: var(--sica-color-primary) !important;
+}
+
+.sica-topnav-tail button:hover {
+  background-color: var(--sica-color-danger-light) !important;
+  border-color: var(--sica-color-danger) !important;
+}
+
+@media (max-width: 1279px) {
+  .sica-search {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  .sica-topnav-menu {
+    display: none !important;
+  }
+
+  .sica-topnav-toggle {
+    display: inline-flex !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .sica-utils {
+    display: none !important;
+  }
+
+  .sica-profile {
+    display: none !important;
+  }
+}
+
+/* ─ Motion landing: entrance, ambient background, micro-interaction ─────── */
+@keyframes sica-fade-up {
+  from { opacity: 0; transform: translate3d(0, 22px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes sica-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes sica-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(0, -14px, 0); }
+}
+
+@keyframes sica-blob {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(24px, -16px, 0) scale(1.08); }
+  66%      { transform: translate3d(-18px, 12px, 0) scale(0.95); }
+}
+
+@keyframes sica-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-50%, 0, 0); }
+}
+
+@keyframes sica-sheen {
+  from { transform: translate3d(-120%, 0, 0) skewX(-18deg); }
+  to   { transform: translate3d(220%, 0, 0) skewX(-18deg); }
+}
+
+.sica-anim {
+  animation-fill-mode: both;
+  animation-duration: 720ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sica-fade-up { animation-name: sica-fade-up; }
+.sica-fade-in { animation-name: sica-fade-in; animation-duration: 900ms; }
+.sica-float   { animation: sica-float 7s ease-in-out infinite; }
+.sica-blob    { animation: sica-blob 18s ease-in-out infinite; }
+
+.sica-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: sica-marquee 32s linear infinite;
+}
+
+.sica-marquee:hover .sica-marquee-track {
+  animation-play-state: paused;
+}
+
+/* Kilau lembut pada tombol utama saat hover */
+.sica-sheen {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.sica-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: translate3d(-120%, 0, 0) skewX(-18deg);
+}
+
+.sica-sheen:hover::after {
+  animation: sica-sheen 900ms ease-out;
+}
+
+/* Kartu yang terangkat halus saat disentuh pointer */
+.sica-lift {
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms ease, border-color 320ms ease;
+}
+
+.sica-lift:hover {
+  transform: translate3d(0, -6px, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sica-anim,
+  .sica-float,
+  .sica-blob,
+  .sica-marquee-track,
+  .sica-sheen::after {
+    animation: none !important;
+  }
+
+  .sica-lift:hover {
+    transform: none;
+  }
 }

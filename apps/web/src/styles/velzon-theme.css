@@ -56,6 +56,7 @@
   --sica-radius-lg: 12px;
   --sica-radius-xl: 16px;
   --sica-radius-full: 9999px;
+  --sica-radius-pill: 9999px;
 
   /* Shadows (Velzon Enterprise Elevation) */
   --sica-shadow-sm: 0 1px 2px 0 rgba(56, 65, 74, 0.05);

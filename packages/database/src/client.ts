@@ -22,6 +22,9 @@ export const db = drizzle(sqlClient, { schema });
 
 export type DatabaseClient = typeof db;
 
+/** Tipe transaksi RLS yang diteruskan callback `withTenantContext` (untuk lapisan akses data consumer). */
+export type TenantTx = Parameters<Parameters<DatabaseClient['transaction']>[0]>[0];
+
 /**
  * Eksekutor Transaksi dengan Isolasi Tenant RLS
  * Memastikan perintah SET LOCAL app.current_tenant dijalankan di awal transaksi
