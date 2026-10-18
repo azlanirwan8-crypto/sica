@@ -110,11 +110,11 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Stat Cards Grid (4 Columns) */}
+      {/* Stat Cards Grid (responsif; tak memaksa lebar min saat viewport sempit) */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))',
           gap: '20px',
         }}
       >
@@ -173,7 +173,7 @@ export default function DashboardPage() {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
           gap: '24px',
         }}
       >

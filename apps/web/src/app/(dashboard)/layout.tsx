@@ -17,6 +17,7 @@ export default function DashboardLayout({
         style={{
           marginLeft: '260px',
           flex: 1,
+          minWidth: 0, // izinkan menyusut agar tidak overflow horizontal (flex-item default min-width:auto)
           display: 'flex',
           flexDirection: 'column',
           minHeight: '100vh',
@@ -25,7 +26,7 @@ export default function DashboardLayout({
       >
         <Header />
 
-        <main style={{ padding: '32px 24px', flex: 1, maxWidth: '1400px', width: '100%', margin: '0 auto' }}>
+        <main style={{ padding: '32px 24px', flex: 1, minWidth: 0, maxWidth: '1400px', width: '100%', margin: '0 auto' }}>
           {children}
         </main>
       </div>

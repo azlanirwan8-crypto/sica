@@ -228,3 +228,11 @@ Aplikasi kini bisa dijalankan dan diuji login sungguhan secara lokal:
 - **Kredensial dev (lihat SEED_DATA):** admin@demo.sica.test/AdminPass!23 · dosen@demo.sica.test/LecturerPass!23 · mhs@demo.sica.test/StudentPass!23 (tenant slug `demo`).
 - **Build:** `tsc` web 0 error; `vitest` 76/76.
 - **Catatan:** `.env` (rahasia) gitignored; tidak ikut commit. Backup sementara di-exclude lokal & dihapus.
+
+### 5.17 QA UI — Perbaikan overflow horizontal dashboard (2026-10-18)
+Ditemukan saat uji visual lokal (viewport sempit): konten dashboard melebar → `body.scrollWidth` 1110 vs viewport 510 (overflow horizontal, konten ter-potong).
+- **Akar:** (1) `(dashboard)/layout.tsx` — kolom konten `flex:1` tanpa `min-width:0` (flex-item default `min-width:auto` → tak menyusut di bawah lebar intrinsik); (2) `dashboard/page.tsx` — grid `minmax(260px/360px,1fr)` memaksa lebar minimum kolom.
+- **Fix:** tambah `minWidth: 0` pada kolom konten + `main`; grid → `repeat(auto-fit, minmax(min(100%, 240px|320px), 1fr))` (tak pernah melampaui lebar kontainer).
+- **Verifikasi (browser, viewport 510):** `body.scrollWidth` 1110 → **495**, `horizontalOverflow: false`. (Elemen `absolute` dekoratif ter-clip `overflow-hidden`, tak memperlebar.)
+- **Kredensial dev per-role** dicatat di **SEED_DATA §1.1** (admin/dosen/mahasiswa; login via email ATAU NIM/NIDN; tenant `demo`) — ketiganya teruji HTTP 200.
+- **Catatan QA lanjutan:** data dashboard (nama/IPK/jadwal) masih **mock** — efek role belum terlihat di UI sampai halaman dibaca dari DB. Sidebar masih tetap (belum ada drawer mobile) — kandidat perbaikan responsif berikutnya.
