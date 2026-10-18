@@ -10,7 +10,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
-import { memberStatusEnum } from './enums';
+import { memberStatusEnum, memberRoleEnum } from './enums';
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey(),
@@ -54,6 +54,7 @@ export const tenantMemberships = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     memberCode: text('member_code'), // NIM / NIP / NIDN
+    role: memberRoleEnum('role').notNull().default('mahasiswa'), // RBAC per-tenant
     status: memberStatusEnum('status').notNull().default('PENDING'),
     joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
     leftAt: timestamp('left_at', { withTimezone: true }),

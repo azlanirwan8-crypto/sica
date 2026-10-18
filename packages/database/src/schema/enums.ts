@@ -14,6 +14,18 @@ export const memberStatusEnum = pgEnum('member_status', [
   'LEFT',
 ]);
 
+/**
+ * Peran pengguna DALAM satu tenant (RBAC per-tenant). Nilainya identik dgn
+ * `AuthUserRoleSchema` di @sica/contracts (superadmin lintas-tenant di level platform).
+ */
+export const memberRoleEnum = pgEnum('member_role', [
+  'super_admin',
+  'tenant_admin',
+  'dosen',
+  'mahasiswa',
+  'staff',
+]);
+
 export const subscriptionStatusEnum = pgEnum('subscription_status', [
   'TRIAL',
   'ACTIVE',

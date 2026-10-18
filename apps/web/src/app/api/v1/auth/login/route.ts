@@ -1,14 +1,52 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { signJwt } from '@/modules/auth/services/jwt.service';
 import {
   LoginRequestSchema,
   StandardErrorResponseSchema,
   createSuccessEnvelope,
   LoginResponseDataSchema,
 } from '@sica/contracts';
+import { authenticate, type AuthRuntimeConfig } from '@/modules/auth/services/auth.service';
 
 const LoginEnvelope = createSuccessEnvelope(LoginResponseDataSchema);
+
+function buildConfig(): { config: AuthRuntimeConfig | null; missing: string[] } {
+  const missing: string[] = [];
+  const privateKeyPem = process.env['JWT_PRIVATE_KEY'] ?? '';
+  const pepper = process.env['PASSWORD_HASH_PEPPER'] ?? '';
+  if (!privateKeyPem) missing.push('JWT_PRIVATE_KEY');
+  if (!pepper) missing.push('PASSWORD_HASH_PEPPER');
+  if (missing.length > 0) return { config: null, missing };
+  return {
+    config: {
+      privateKeyPem,
+      pepper,
+      issuer: process.env['JWT_ISSUER'] ?? 'sica',
+      audience: process.env['JWT_AUDIENCE'] ?? 'sica-web',
+      accessTtlSec: Number(process.env['JWT_ACCESS_TOKEN_TTL_SEC'] ?? 900),
+      refreshTtlSec: Number(process.env['JWT_REFRESH_TOKEN_TTL_SEC'] ?? 604800),
+    },
+    missing,
+  };
+}
+
+function errorJson(
+  status: number,
+  code: string,
+  message: string,
+  timestamp: string,
+  requestId: string,
+  details?: Array<{ field?: string; message: string }>
+): NextResponse {
+  return NextResponse.json(
+    StandardErrorResponseSchema.parse({
+      success: false,
+      error: { code, message, details },
+      meta: { timestamp, requestId },
+    }),
+    { status }
+  );
+}
 
 export async function POST(request: NextRequest) {
   const requestId = request.headers.get('x-request-id') ?? crypto.randomUUID();
@@ -16,149 +54,90 @@ export async function POST(request: NextRequest) {
 
   try {
     const body: unknown = await request.json();
-
-    // 1. Validasi Zod
     const parsed = LoginRequestSchema.safeParse(body);
     if (!parsed.success) {
-      const errorResponse = StandardErrorResponseSchema.parse({
-        success: false,
-        error: {
-          code: 'VALIDATION_FAILED',
-          message: 'Format payload login tidak valid.',
-          details: parsed.error.issues.map((issue) => ({
-            field: issue.path.join('.'),
-            message: issue.message,
-          })),
-        },
-        meta: {
-          timestamp,
-          requestId,
-        },
-      });
+      return errorJson(422, 'VALIDATION_FAILED', 'Format payload login tidak valid.', timestamp, requestId,
+        parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })));
+    }
+    const { tenantIdentifier, username, password } = parsed.data;
 
-      return NextResponse.json(errorResponse, { status: 422 });
+    const { config, missing } = buildConfig();
+    if (!config) {
+      return errorJson(500, 'INTERNAL_SERVER_ERROR', 'Konfigurasi autentikasi belum lengkap.', timestamp, requestId,
+        missing.map((f) => ({ field: f, message: 'Belum diset pada server.' })));
     }
 
-    const { username, password } = parsed.data;
+    const result = await authenticate(tenantIdentifier, username, password, config);
 
-    // 2. Mock verifikasi akun (Stub untuk baseline Phase 1)
-    if (password === 'wrongpassword') {
-      const errorResponse = StandardErrorResponseSchema.parse({
-        success: false,
-        error: {
-          code: 'UNAUTHORIZED',
-          message: 'Username atau kata sandi tidak valid.',
-          details: [{ field: 'password', message: 'Kombinasi akun salah.' }],
-        },
-        meta: {
-          timestamp,
-          requestId,
-        },
-      });
-
-      return NextResponse.json(errorResponse, { status: 401 });
+    if (!result.ok) {
+      switch (result.code) {
+        case 'INVALID_TENANT':
+          return errorJson(422, 'INVALID_TENANT', 'Institusi (subdomain) tidak dikenali.', timestamp, requestId,
+            [{ field: 'tenantIdentifier', message: 'Tenant tidak ditemukan.' }]);
+        case 'BAD_CREDENTIALS':
+          // 401 seragam — tidak membocorkan apakah user/tenant ada (anti-enumeration).
+          return errorJson(401, 'UNAUTHORIZED', 'Kombinasi kredensial salah.', timestamp, requestId);
+        case 'LOCKED':
+          return errorJson(423, 'ACCOUNT_LOCKED', 'Akun sementara terkunci akibat kegagalan login berulang.', timestamp, requestId);
+        case 'DISABLED':
+          return errorJson(403, 'ACCOUNT_DISABLED', 'Akun/tenant tidak aktif.', timestamp, requestId);
+        case 'CONFIG_MISSING':
+          return errorJson(500, 'INTERNAL_SERVER_ERROR', 'Konfigurasi autentikasi belum lengkap.', timestamp, requestId);
+        default:
+          return errorJson(500, 'INTERNAL_SERVER_ERROR', 'Gagal memproses autentikasi.', timestamp, requestId);
+      }
     }
 
-    // Simulasi jika user mengaktifkan MFA
-    if (username.toLowerCase().includes('mfa')) {
-      const responsePayload = LoginEnvelope.parse({
-        success: true,
-        data: {
-          requireMfa: true,
-          mfaToken: `mfa_${crypto.randomUUID().replace(/-/g, '')}`,
-        },
-        meta: {
-          timestamp,
-          requestId,
-        },
-      });
-
-      return NextResponse.json(responsePayload, { status: 200 });
+    if (result.requireMfa) {
+      return NextResponse.json(
+        LoginEnvelope.parse({
+          success: true,
+          data: { requireMfa: true, mfaToken: result.mfaToken },
+          meta: { timestamp, requestId },
+        }),
+        { status: 200 }
+      );
     }
-
-    // Login Sukses
-    // ⚠️ User lookup masih STUB (AUD-03): belum query `users`/`tenant_memberships` &
-    //    verifikasi Argon2id terhadap DB. Namun access token kini RSA-SHA256 SESUNGGUHNYA,
-    //    sehingga `extractRequestContext` dapat memverifikasi identitas (menutup AUD-02/03
-    //    pada jalur verifikasi). Prasyarat: JWT_PRIVATE_KEY diset.
-    const privateKeyPem = process.env['JWT_PRIVATE_KEY'];
-    if (!privateKeyPem) {
-      const errorResponse = StandardErrorResponseSchema.parse({
-        success: false,
-        error: {
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'Konfigurasi penandatanganan token belum lengkap.',
-          details: [{ field: 'JWT_PRIVATE_KEY', message: 'Signing key belum diset pada server.' }],
-        },
-        meta: { timestamp, requestId },
-      });
-      return NextResponse.json(errorResponse, { status: 500 });
-    }
-
-    const principal = {
-      id: crypto.randomUUID(),
-      tenantId: crypto.randomUUID(),
-      sessionId: crypto.randomUUID(),
-      role: 'mahasiswa',
-    };
-    const issuer = process.env['JWT_ISSUER'] ?? 'sica';
-    const audience = process.env['JWT_AUDIENCE'] ?? 'sica-web';
-    const ttlSeconds = Number(process.env['JWT_ACCESS_TOKEN_TTL_SEC'] ?? 900);
-
-    const accessToken = signJwt(
-      { sub: principal.id, tid: principal.tenantId, sid: principal.sessionId, role: principal.role },
-      { privateKeyPem, issuer, audience, ttlSeconds }
-    );
-    const refreshToken = `rt_${crypto.randomUUID()}`;
 
     const responsePayload = LoginEnvelope.parse({
       success: true,
       data: {
         requireMfa: false,
-        accessToken,
-        refreshToken,
-        expiresIn: ttlSeconds,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        expiresIn: result.expiresInSeconds,
         user: {
-          id: principal.id,
-          tenantId: principal.tenantId,
-          username,
-          fullName: 'SICA Student / Lecturer',
-          role: principal.role,
+          id: result.principal.userId,
+          tenantId: result.principal.tenantId,
+          username: result.principal.email,
+          fullName: result.principal.fullName,
+          role: result.principal.role,
           avatarUrl: null,
         },
       },
-      meta: {
-        timestamp,
-        requestId,
-      },
+      meta: { timestamp, requestId },
     });
 
     const response = NextResponse.json(responsePayload, { status: 200 });
-
-    // Access token JWT (HTTP-Only) — identitas & tenant kini terbawa di klaim terverifikasi.
-    response.cookies.set('sica_access_token', accessToken, {
+    const secure = process.env['NODE_ENV'] === 'production';
+    response.cookies.set('sica_access_token', result.accessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure,
       sameSite: 'lax',
       path: '/',
-      maxAge: ttlSeconds,
+      maxAge: result.expiresInSeconds,
     });
-
+    // Refresh token (opaque) hanya dikirim ke endpoint refresh.
+    response.cookies.set('sica_refresh_token', result.refreshToken, {
+      httpOnly: true,
+      secure,
+      sameSite: 'lax',
+      path: '/api/v1/auth',
+      maxAge: config.refreshTtlSec,
+    });
     return response;
   } catch (error) {
-    const errorResponse = StandardErrorResponseSchema.parse({
-      success: false,
-      error: {
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'Terjadi kesalahan sistem saat memproses login.',
-        details: [{ message: (error as Error).message }],
-      },
-      meta: {
-        timestamp,
-        requestId,
-      },
-    });
-
-    return NextResponse.json(errorResponse, { status: 500 });
+    return errorJson(500, 'INTERNAL_SERVER_ERROR', 'Terjadi kesalahan sistem saat memproses login.', timestamp, requestId,
+      [{ message: (error as Error).message }]);
   }
 }
