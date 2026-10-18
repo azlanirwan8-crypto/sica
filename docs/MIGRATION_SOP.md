@@ -81,6 +81,15 @@ pnpm db:migrate
 
 *Catatan: Migration runner berjalan menggunakan variabel `DIRECT_DATABASE_URL` (port 5432) guna menghindari batasan session mode pada PgBouncer.*
 
+### 2.5 Database Terkelola (Supabase / Neon) — Peran & Privilege
+Platform managed tidak memberi role superuser; `postgres` umumnya tidak bisa `CREATE ROLE`/`ALTER DEFAULT PRIVILEGES` → SQLSTATE `42501 insufficient_privilege` (BUKAN `duplicate_object`). Agar migrasi tetap jalan di kedua dunia:
+
+1. **DDL role/grand dibuat toleran** — `0001`/`0004` membungkus `CREATE ROLE`/`GRANT`/`REVOKE` dalam `DO $$ ... EXCEPTION WHEN others THEN RAISE NOTICE ... END $$;`. Kegagalan dilewati, bukan membatalkan transaksi.
+2. **Policy RLS memakai `TO public`** (bukan `TO sica_app`) — konsisten dgn generator 0001; `FORCE ROW LEVEL SECURITY` tetap mengikat **pemilik tabel**, sehingga isolasi tenant tidak bergantung pada keberadaan role terpisah.
+3. **Mode dev:** `DATABASE_URL` menunjuk role `postgres` (pemilik objek). Keamanan setara karena RLS di-`FORCE` + tiap transaksi `SET LOCAL app.current_tenant`.
+4. **Mode self-hosted/produksi:** jalankan sebagai superuser → `sica_app` (`NOBYPASSRLS`) & `sica_owner` (`BYPASSRLS`) benar-benar dibuat; aplikasi runtime memakai `sica_app`.
+5. **Alternatif keras:** buat role `sica_app` via Dashboard Supabase (Database → Roles) lalu biarkan blok GRANT berjalan (tidak kena `others`). Jangan menaruh rahasia di repo; `.env` di-gitignore.
+
 ---
 
 ## 3. Strategi Perubahan Kolom Non-Destruktif (Expand & Contract)

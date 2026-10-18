@@ -177,19 +177,25 @@ CREATE TABLE IF NOT EXISTS mfa_factors (
 CREATE INDEX IF NOT EXISTS idx_mfa_factors_user ON mfa_factors(user_id);
 
 -- 6. Setup Database Roles
+--    Toleran untuk managed Postgres/Supabase: `postgres` non-superuser tidak bisa
+--    CREATE ROLE → error `insufficient_privilege` (SQLSTATE 42501), BUKAN duplicate_object.
+--    Kita tangkap `others` agar migration tetap lanjut; runtime dev memakai role PEMILIK
+--    tabel dengan FORCE RLS + `SET app.current_tenant` (keamanan setara — lihat §7 & ROADMAP §4.5).
+--    Di self-hosted (superuser), role dibuat & di-grant normal.
 DO $$ BEGIN
   CREATE ROLE sica_app WITH NOLOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER;
-EXCEPTION WHEN duplicate_object THEN null; END $$;
+EXCEPTION WHEN others THEN RAISE NOTICE 'role sica_app dilewati: %', SQLERRM; END $$;
 
 DO $$ BEGIN
   CREATE ROLE sica_owner WITH NOLOGIN BYPASSRLS;
-EXCEPTION WHEN duplicate_object THEN null; END $$;
+EXCEPTION WHEN others THEN RAISE NOTICE 'role sica_owner dilewati: %', SQLERRM; END $$;
 
--- Grant permissions dasar
-GRANT USAGE ON SCHEMA public TO sica_app;
-GRANT USAGE ON SCHEMA app TO sica_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO sica_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO sica_app;
+DO $$ BEGIN
+  GRANT USAGE ON SCHEMA public TO sica_app;
+  GRANT USAGE ON SCHEMA app TO sica_app;
+  EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO sica_app';
+  EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO sica_app';
+EXCEPTION WHEN others THEN RAISE NOTICE 'grant sica_app dilewati (managed DB): %', SQLERRM; END $$;
 
 -- 7. Penegakan PostgreSQL Row-Level Security (RLS)
 DO $$

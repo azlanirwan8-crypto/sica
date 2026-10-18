@@ -117,10 +117,14 @@ ALTER TABLE tenant_modules FORCE  ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS tenant_isolation ON tenant_modules;
 CREATE POLICY tenant_isolation ON tenant_modules
-  AS PERMISSIVE FOR ALL TO sica_app
+  AS PERMISSIVE FOR ALL
+  TO public
   USING (tenant_id = app.tenant_id())
   WITH CHECK (tenant_id = app.tenant_id());
 
 -- Katalog global tidak boleh ditulis aplikasi runtime (hanya baca; penulisan via migrasi/operator).
-GRANT  SELECT ON modules, module_dependencies, plan_modules TO sica_app;
-REVOKE INSERT, UPDATE, DELETE ON modules, module_dependencies, plan_modules FROM sica_app;
+-- Toleran managed DB: role sica_app mungkin tak ada (Supabase) → dilewati; owner+FORCE tetap menegakkan policy.
+DO $$ BEGIN
+  GRANT  SELECT ON modules, module_dependencies, plan_modules TO sica_app;
+  REVOKE INSERT, UPDATE, DELETE ON modules, module_dependencies, plan_modules FROM sica_app;
+EXCEPTION WHEN others THEN RAISE NOTICE 'grant katalog sica_app dilewati (managed DB): %', SQLERRM; END $$;
