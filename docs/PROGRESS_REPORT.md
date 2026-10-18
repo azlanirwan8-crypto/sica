@@ -96,7 +96,7 @@ Legenda status: `Spes` = sudah dispesifikasi di `/docs`; `Logic` = aturan bisnis
 
 | ID | Temuan | Sev. | Guardrail | Status |
 |---|---|---|---|---|
-| AUD-01 | Route handler seluruhnya mock; `withTenantContext`/RLS tidak dipanggil runtime sehingga §3.2 tidak ditegakkan | **Kritis** | §3.2 RLS | Terbukti; **Open** (butuh integrasi DB) |
+| AUD-01 | Route handler seluruhnya mock; `withTenantContext`/RLS tidak dipanggil runtime sehingga §3.2 tidak ditegakkan | **Kritis** | §3.2 RLS | **DITANGANI sebagian besar** — Supabase DB hidup, RLS default-deny **terbukti** (tenant_modules→0 tanpa context), `withTenantContext` difix (`set_config`, §5.13). **Sisa:** rute domain masih stub; perlu dipanggil `withTenantContext` per-query. |
 | AUD-02 | `middleware.ts` hanya cek keberadaan cookie, tidak memverifikasi tanda tangan JWT → bypass rute terlindungi | **Kritis** | §3.2, SECURITY | **FIXED** — verifikasi tanda tangan kini di kedua jalur: API/Node (`extractRequestContext` → `jwt.service.ts`) dan **Edge** (`middleware.ts` → `edge-auth.ts`/`jwt-edge.ts`, WebCrypto RS256 + JWK, fail-secure). Butuh `JWT_PUBLIC_KEY_JWK` di-set. |
 | AUD-03 | Login mock: tanpa Argon2id, tanpa sign JWT RS256, tanpa query `users` | **Kritis** | §3.3, SECURITY | **Partial** — token kini RS256 nyata + fail-secure. **Sisa:** lookup user & cek hash Argon2id dari DB (butuh `pnpm install`+PostgreSQL+`argon2`). |
 | AUD-04 | `academic-calculation.test.ts` & `api-security-guards.test.ts` meng-import API fiktif → **tidak pernah ter-kompilasi**; klaim "Coverage 95%+" palsu | Tinggi | §3.1, TESTING | **FIXED** — direalign ke API nyata, 16/16 lulus |
@@ -180,3 +180,16 @@ Menutup sebagian besar AUD-10 yang dapat dikerjakan tanpa DB:
 - **Parity field** dg Drizzle (`students`, `lecturers`, `staff`) — mematuhi Guardrail §3.3/§3.4 (kontrak tunggal TS↔Dart).
 - **Bukti:** `tsc` contracts/web **0 error**; `vitest` **76/76 lulus** (11 file; +`people-contract.test.ts`).
 - **Sisa AUD-10 (butuh DB/UI):** migrasi+RLS tabel `people`, kolom feeder institusi, form UI biodata.
+
+### 5.13 MILESTONE — Supabase DB HIDUP, migrasi 0001→0005 diterapkan (2026-10-18)
+Mengubah status dari "design-locked/mock" ke **database nyata berjalan**:
+- **Akses:** project `wngdmslvcmnjroyblolj`, region **ap-northeast-1**. Host direct `db.<ref>` **IPv6-only** (ENOTFOUND di IPv4) → beralih ke **session pooler** `aws-0-ap-northeast-1.pooler.supabase.com:5432` (user `postgres.wngdmslvcmnjroyblolj`). `DATABASE_URL` runtime → **transaction pooler** `:6543?...pgbouncer=true` (Vercel IPv4 juga tak bisa direct). `.env` diperbarui accordingly.
+- **Migrasi diterapkan** (runner idempoten, per-file transaksi, `_sica_migrations`): 0001→0005 ✅.
+- **Verifikasi RLS/data:** `modules`=19, `module_dependencies`=23, policy `tenant_isolation`=32; `tenant_modules` tanpa `app.current_tenant` → **0 baris** (default-deny terbukti); smoke `withTenantContext` via PgBouncer transaction mode → GUC ter-set + query ter-isolasi OK.
+- **3 defect ditemukan & diperbaiki (real):**
+  1. `0002` mereferensi enum `academic_year_term` dll. tanpa `CREATE TYPE` → ditambah bootstrap enum idempoten.
+  2. **`0003_people_biodata.sql` dibuat** — tabel `lecturers/staff/student_addresses/student_guardians` + kolom biodata `students` + enum `sex_type/income_band/lecturer_job_rank/employment_type` + RLS. (Sebelumnya schema Drizzle tidak punya padanan migrasi → drift.)
+  3. **`client.ts::withTenantContext`** memakai `SET LOCAL = $1` (invalid: SET menolak bind parameter, syntax error $1) → diganti `set_config('app.current_tenant', $1, true)` (parameter-safe + PgBouncer-safe). **Ini memblokir SEMUA jalur tulis/baca tenant-scoped sebelumnya.**
+- **Audit register:** AUD-01 (RLS tak ditegakkan runtime) → **teratasi sebagian besar**: RLS kini terbukti di DB + executor `withTenantContext` berfungsi; **sisa:** rute domain masih banyak yang belum memanggil `withTenantContext` (stub/mock). AUD-10 → migrasi `people` kini ADA (sebelumnya hilang).
+- **Bukti build:** `tsc` web/db 0 error (non-dependency); `vitest` 76/76.
+- **Berikutnya:** (1) `argon2` aktif + rangkai login ke `users`/`tenant_memberships` + persist `sessions`/`refresh_tokens`; (2) ubah rute mock → `withTenantContext` nyata; (3) Vercel env + deploy preview → cek `/health/ready` ke DB.

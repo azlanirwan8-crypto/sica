@@ -38,8 +38,9 @@ export async function withTenantContext<T>(
   }
 
   return db.transaction(async (tx) => {
-    // Jalankan session variable GUC lokal pada transaksi
-    await tx.execute(sql`SET LOCAL app.current_tenant = ${tenantId};`);
+    // Set GUC tenant lokal transaksi. `SET LOCAL ... = $1` TIDAK valid (SET tak menerima
+    // bind parameter); pakai set_config(...) yang bisa diparameterkan & aman utk PgBouncer.
+    await tx.execute(sql`SELECT set_config('app.current_tenant', ${tenantId}, true);`);
     return callback(tx);
   });
 }

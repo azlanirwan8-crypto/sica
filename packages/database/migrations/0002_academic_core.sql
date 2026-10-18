@@ -3,6 +3,14 @@
 -- Architecture: PostgreSQL 16 Single Schema Multi-Tenant with Mandatory RLS
 -- ==============================================================================
 
+-- 0. Enum types akademik (idempoten; dipakai tabel di bawah tapi sebelumnya tak dibuat)
+DO $$ BEGIN CREATE TYPE academic_year_term AS ENUM ('GANJIL','GENAP','ANTAR'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE period_status AS ENUM ('DRAFT','OPEN','CLOSING','CLOSED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE student_status AS ENUM ('CANDIDATE','ACTIVE','ON_LEAVE','GRADUATED','DROPPED','STOPPED','TRANSFERRED','EXPELLED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE enrollment_status AS ENUM ('DRAFT','SUBMITTED','APPROVED','REJECTED','EFFECTIVE','WITHDRAWN','CANCELLED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE grade_status AS ENUM ('EMPTY','DRAFT','SUBMITTED','LOCKED','CORRECTING','CORRECTED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE attendance_status AS ENUM ('PRESENT','EXCUSED','SICK','ABSENT_LATE','ABSENT'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 -- 1. Master Akademik: Organisasi, Tahun, dan Periode Akademik
 CREATE TABLE IF NOT EXISTS organizations (
   id uuid PRIMARY KEY,

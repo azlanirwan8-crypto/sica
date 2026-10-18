@@ -177,8 +177,10 @@ class AppEnv {
 | Kategori | Nama Variabel | Wajib | Keterangan & Karakteristik |
 | :--- | :--- | :---: | :--- |
 | **Runtime** | `NODE_ENV` | Ya | `development` / `production` |
-| **Database** | `DATABASE_URL` | Ya | PostgreSQL pool connection string via PgBouncer |
-| **Database** | `DIRECT_DATABASE_URL` | Ya | PostgreSQL direct connection (port 5432) untuk DDL |
+| **Database** | `DATABASE_URL` | Ya | PostgreSQL pool connection string via PgBouncer. **Supabase:** host `aws-0-<region>.pooler.supabase.com:6543` + `?pgbouncer=true&pool_mode=transaction`; user `postgres.<ref>` |
+| **Database** | `DIRECT_DATABASE_URL` | Ya | Koneksi **session** (bukan transaction-mode) untuk DDL/migrasi. **Supabase:** pakai **session pooler** `aws-0-<region>.pooler.supabase.com:5432` (bukan `db.<ref>.supabase.co` yang **IPv6-only** & tak ter-resolve di IPv4 dev/Vercel) |
+
+> **Catatan Supabase (wajib):** koneksi runtime & migrasi memakai **pooler IPv4** dengan user `postgres.<project-ref>`. Host direct `db.<ref>.supabase.co` hanya IPv6 → `ENOTFOUND` di Vercel/dev. Region proyek SICA dev: **`ap-northeast-1`**.
 | **Cache** | `REDIS_URL` | Ya | Connection string Redis 7 untuk BullMQ & Lock |
 | **Auth** | `JWT_PRIVATE_KEY` | Ya | RS256 Private Key format PEM (hanya ada di server) |
 | **Auth** | `JWT_PUBLIC_KEY` | Ya | RS256 Public Key format PEM (verifikasi token, Node runtime) |
