@@ -9,62 +9,53 @@ import { SicaBrand } from '@/components/brand/sica-brand';
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-screen w-full bg-white">
-      {/* ── Panel kiri: showcase produk (dark) ── */}
-      <aside className="relative hidden w-[54%] shrink-0 overflow-hidden bg-gradient-to-br from-[#0b1b3a] via-[#132a5c] to-[#0a1730] text-white lg:flex lg:flex-col">
+    <div className="flex h-screen max-h-screen w-full overflow-hidden">
+      {/* ── Panel kiri (50%): showcase produk ── */}
+      <aside className="relative hidden w-1/2 flex-col justify-between overflow-hidden bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 p-12 text-white lg:flex">
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:34px_34px]" />
         <div className="pointer-events-none absolute -left-24 top-1/4 h-80 w-80 rounded-full bg-velzon-primary/25 blur-3xl" />
         <div className="pointer-events-none absolute -right-16 bottom-0 h-72 w-72 rounded-full bg-velzon-info/20 blur-3xl" />
 
-        <div className="relative z-10 flex h-full flex-col px-12 py-10 xl:px-16">
-          <div className="shrink-0">
-            <Link href="/" aria-label="SICA">
-              <SicaBrand height={38} variant="dark" />
-            </Link>
-          </div>
+        <div className="relative z-10 shrink-0">
+          <Link href="/" aria-label="SICA">
+            <SicaBrand height={38} variant="dark" />
+          </Link>
+        </div>
 
-          {/* Ilustrasi: pusat ruang tersisa; menyusut aman saat tinggi berubah */}
-          <div className="flex min-h-0 flex-1 items-center justify-center py-10">
-            <LoginShowcase />
-          </div>
+        <div className="relative z-10 flex min-h-0 flex-1 items-center justify-center py-6">
+          <LoginShowcase />
+        </div>
 
-          <div className="shrink-0">
-            <h1
-              className="max-w-[30rem] font-extrabold leading-[1.15] tracking-tight text-white"
-              style={{ fontSize: 'clamp(22px, 2.15vw, 34px)' }}
-            >
-              Pengelolaan Akademik Kampus Modern &amp; Terintegrasi PDDIKTI
-            </h1>
-            <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3">
-              <TrustBadge icon={<ShieldCheck className="h-4 w-4 text-velzon-success" />} title="ISO 27001" sub="Certified" />
-              <TrustBadge icon={<BadgeCheck className="h-4 w-4 text-velzon-info" />} title="Permendikbudristek" sub="No. 39/2025" />
-              <TrustBadge icon={<Gauge className="h-4 w-4 text-velzon-warning" />} title="SLA 99,9%" sub="Uptime" />
-            </div>
+        <div className="relative z-10 shrink-0">
+          <h1 className="max-w-lg text-3xl font-extrabold leading-tight tracking-tight text-white lg:text-4xl">
+            Pengelolaan Akademik Kampus Modern &amp; Terintegrasi PDDIKTI
+          </h1>
+          <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3">
+            <TrustBadge icon={<ShieldCheck className="h-4 w-4 text-velzon-success" />} title="ISO 27001" sub="Certified" />
+            <TrustBadge icon={<BadgeCheck className="h-4 w-4 text-velzon-info" />} title="Permendikbudristek" sub="No. 39/2025" />
+            <TrustBadge icon={<Gauge className="h-4 w-4 text-velzon-warning" />} title="SLA 99,9%" sub="Uptime" />
           </div>
         </div>
       </aside>
 
-      {/* ── Panel kanan: form login (light) ── */}
-      <main className="relative flex w-full flex-col bg-white lg:w-[46%]">
-        {/* Brand hanya di layar kecil (panel kiri disembunyikan) */}
-        <div className="px-6 pt-6 sm:px-10 lg:hidden">
+      {/* ── Panel kanan (50%): form login ── */}
+      <main className="flex w-full flex-col bg-slate-50/50 lg:w-1/2">
+        <div className="px-8 pt-8 sm:px-12 lg:hidden">
           <Link href="/" aria-label="SICA">
             <SicaBrand height={32} />
           </Link>
         </div>
 
-        <div className="flex flex-1 items-center justify-center px-6 py-8 sm:px-10">
-          <div className="w-full max-w-md">
-            <LoginForm tenantSlug="demo" />
-          </div>
+        <div className="flex flex-1 items-center justify-center overflow-y-auto p-8 lg:p-12">
+          <LoginForm tenantSlug="demo" />
         </div>
 
-        <footer className="px-6 pb-8 text-center text-[11px] leading-relaxed text-slate-400 sm:px-10">
+        <footer className="px-8 pb-6 pt-2 text-center text-xs font-medium text-slate-500 sm:px-12">
           <p className="flex items-center justify-center gap-1.5">
             <CalendarCheck className="h-3 w-3" />
             © 2026 SICA (System Integration Central Academic). Hak Cipta Dilindungi Undang-Undang.
           </p>
-          <p className="mt-1 text-slate-400/80">
+          <p className="mt-1">
             Kepatuhan Permendikbudristek No. 39/2025 &amp; SN-Dikti • Terintegrasi Feeder PDDIKTI
           </p>
         </footer>
@@ -78,8 +69,8 @@ function TrustBadge({ icon, title, sub }: { icon: React.ReactNode; title: string
     <div className="flex items-center gap-2.5">
       <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/10 ring-1 ring-white/15">{icon}</span>
       <span className="leading-tight">
-        <span className="block text-[12.5px] font-bold text-white">{title}</span>
-        <span className="block text-[11px] text-slate-300">{sub}</span>
+        <span className="block text-[13px] font-bold text-white">{title}</span>
+        <span className="block text-[11px] font-medium text-slate-300">{sub}</span>
       </span>
     </div>
   );

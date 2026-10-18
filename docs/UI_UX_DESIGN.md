@@ -74,8 +74,8 @@ SICA mengadopsi tema **Velzon Theme Suite** dengan penyesuaian khusus untuk doma
 
 ### 1.3 Tipografi & Skala Hirarki
 
-- **Primary Web Font**: `Inter`, `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`.
-- **Primary Mobile Font**: `Poppins` (Headings & Badges), `Inter` (Data Body & Numbers).
+- **Primary Web Font**: `Plus Jakarta Sans`, `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`. Dimuat via Google Fonts `<link>` di `app/layout.tsx` (weight 400–800, `display=swap`) dan dipetakan ke `theme.extend.fontFamily.sans` di `tailwind.config.ts` agar utilitas `font-sans` konsisten. *(Menggantikan `Inter` — keputusan refactor login "Principal Lead UI/UX Engineer", lihat [PROGRESS_REPORT.md §5.21](file:///c:/SICA/docs/PROGRESS_REPORT.md).)*
+- **Primary Mobile Font**: `Poppins` (Headings & Badges), `Inter` (Data Body & Numbers). *(Belum diubah — sisi Flutter belum masuk sprint ini.)*
 - **Tabular Numbers Font**: `font-variant-numeric: tabular-nums` (wajib untuk seluruh kolom angka: NIM, IPK, SKS, Rupiah, dan Jam Perkuliahan).
 
 | Tingkat Hirarki | Ukuran / Line Height | Bobot (*Weight*) | Penggunaan |
@@ -270,6 +270,14 @@ Desktop (>1024px) — Velzon horizontal layout:
 - Landing & transisi memakai **IntersectionObserver + animasi CSS** (`components/landing/motion.tsx`: `Reveal`, `CountUp`; keyframes di `globals.css`), bukan hanya Framer Motion, agar ringan di server component.
 - Wajib menghormati **`prefers-reduced-motion: reduce`** (semua animasi non-esensial dinonaktifkan).
 - Header landing: sticky + scroll-spy (menandai menu aktif) + bilah progres baca + shadow saat digulir.
+
+### 4.3 Halaman Login Split-Screen (Velzon) — Kontrak Tipografi
+Refactor "Principal Lead UI/UX Engineer" menetapkan kelas Tailwind eksplisit (bukan komponen Card/Button abstrak) agar bentuk huruf & proporsi **identik di zoom 80% vs 100%**. Font: **Plus Jakarta Sans**.
+- **Root**: `flex h-screen max-h-screen w-full overflow-hidden` — mengunci viewport, cegah scroll/liar; panel kanan punya `overflow-y-auto` sendiri untuk layar pendek.
+- **Panel kiri (50%, `lg:flex`/`hidden` di bawah)**: `bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 p-12 flex flex-col justify-between relative`. Heading `text-3xl lg:text-4xl font-extrabold leading-tight tracking-tight text-white` (warna eksplisit `text-white` — atasi aturan global `h1..h6`). Ilustrasi `login-showcase.tsx` (CSS/SVG murni, warna token Velzon, ikon Lucide).
+- **Panel kanan (50%)**: latar `bg-slate-50/50`, form ter-center. Kartu `w-full max-w-md rounded-2xl border border-slate-100 bg-white p-8 shadow-xl shadow-slate-200/50`.
+- **Hirarki teks form**: judul `text-2xl font-bold tracking-tight text-slate-900`; subjudul `text-sm font-medium text-slate-600`; label `text-xs font-semibold uppercase tracking-wider text-slate-700`; input `text-sm font-medium text-slate-900 placeholder:text-slate-400`; footer `text-xs font-medium text-slate-500`.
+- **Field/aksi**: input `rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:border-velzon-primary focus:ring-2 focus:ring-velzon-primary/20 transition-all duration-200`; tombol primer `bg-velzon-primary hover:bg-velzon-primary-hover text-white font-semibold text-sm rounded-xl py-3.5 shadow-lg shadow-velzon-primary/30`; SSO `border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium text-sm shadow-sm rounded-xl py-2.5`. **Catatan rekonsiliasi:** spesifikasi menyebut `blue-600/700`; dipetakan ke token merek Velzon (`velzon-primary`/`-hover`) demi konsistensi design system (aturan standing "selalu Velzon").
 
 ---
 

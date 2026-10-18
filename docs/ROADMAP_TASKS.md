@@ -48,7 +48,7 @@ Fokus utama fase ini adalah membangun pondasi monorepo pnpm, skema database Post
   - *Target file:* `packages/contracts/src/auth.ts`
 
 ### 1.4 Web Foundation & Autentikasi (Next.js App Router)
-- [x] Terapkan CSS Design Tokens Velzon (`#3577f1`, `#0ab39c`, `#f7b84b`, `#f06548`), Tailwind CSS, shadcn/ui primitives, dan font Google Inter.
+- [x] Terapkan CSS Design Tokens Velzon (`#3577f1`, `#0ab39c`, `#f7b84b`, `#f06548`), Tailwind CSS, shadcn/ui primitives, dan font Google **Plus Jakarta Sans** (web; `font-sans` di `tailwind.config.ts`, dimuat via `<link>` di `layout.tsx`). *(Sebelumnya Inter — lihat PROGRESS §5.20→§5.21.)*
   - *Target file:* `apps/web/src/app/globals.css`, `apps/web/src/styles/velzon-theme.css`, `apps/web/tailwind.config.ts`, `apps/web/src/lib/utils.ts`
 - [x] Pasang komponen UI dasar: `Button`, `Input`, `Card`, Lucide Icons, dan Sonner Toast Provider.
   - *Target file:* `apps/web/src/components/ui/button.tsx`, `apps/web/src/components/ui/input.tsx`, `apps/web/src/components/ui/card.tsx`, `apps/web/src/components/ui/toaster.tsx`
@@ -69,6 +69,7 @@ Fokus utama fase ini adalah membangun pondasi monorepo pnpm, skema database Post
 - [~] **Auth — sisa integrasi:** Argon2id aktif; lookup `users`/`tenant_memberships` + cek hash + persist `sessions`/`refresh_tokens`; revocation set `sid` (butuh `pnpm install` + PostgreSQL + Redis). **Verifikator JWT Edge/JWK — SELESAI & teruji:** `apps/web/src/lib/jwt-edge.ts` (`verifyJwtEdge` WebCrypto RS256) + helper `apps/web/src/lib/edge-auth.ts` (`verifyAccessToken`/`parseJwkPublicKey`) dirangkai ke `middleware.ts` + unit test `tests/unit/{jwt-edge,edge-auth}.test.ts`. **Sisa:** provider tenant untuk guard API + aktifkan `JWT_PUBLIC_KEY_JWK` di environment.
 - [x] Bangun halaman Landing Page & Login Portal berbasis Velzon Card layout dengan interaksi Sonner Toast.
   - [x] **Login split-screen ala Velzon** (PROGRESS §5.19): panel kiri gelap (brand + ilustrasi produk CSS/SVG + heading + 3 badge trust) / panel kanan form; `LoginForm` + toggle lihat sandi + SSO Google/Microsoft. Perbaikan bug global `h1` color (judul gelap jadi terbaca) & bug layout collapse (ilustrasi terpotong saat zoom 100% → kini flow-normal, terukur aman).
+    - [x] **Refactor total CSS/Font/Layout** (PROGRESS §5.21, "Principal Lead UI/UX Engineer"): font web → **Plus Jakarta Sans**; `login-form.tsx` & `page.tsx` ditulis ulang dengan kelas Tailwind eksplisit sesuai kontrak [UI_UX_DESIGN §4.3](file:///c:/SICA/docs/UI_UX_DESIGN.md) (root `h-screen overflow-hidden`, panel `w-1/2`, gradient `slate-950→blue-950`, label `uppercase tracking-wider`, tombol `velzon-primary`). Spec `blue-600` direkonsiliasi ke token Velzon. `tsc` 0, `lint` bersih, terverifikasi browser.
   - [x] **Katalog 19 modul per-peran** di landing (`module-catalog.tsx`) dari seed entitlement nyata + filter peran/kategori; **seksi Benchmark** (`benchmark.tsx`) diferensiator arsitektur + cakupan pasar. Copy i18n id/en.
   - *Target file:* `apps/web/src/app/page.tsx`, `apps/web/src/app/(auth)/login/page.tsx`, `apps/web/src/modules/auth/components/login-form.tsx`
 - [x] Bangun layout dashboard web responsif — **Velzon "layout horizontal"** (baris 1: brand + pencarian + ikon utilitas + kartu profil; baris 2: menu navigasi berikon + dropdown). Sidebar vertikal & `header.tsx` lama **dihapus** sesuai koreksi user.
