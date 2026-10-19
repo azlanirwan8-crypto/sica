@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Versi** | 1.1 |
+| **Versi** | 1.2 |
 | **Status** | **Katalog normatif** — sumber kebenaran tunggal untuk daftar role, hak akses, dan menu |
 | **Cakupan** | Seluruh persona SICA (Web + Mobile), 19 modul entitlement, katalog permission ber-scope |
 | **Bahasa Dokumen** | Indonesia (kode & database tetap Inggris) |
@@ -27,14 +27,27 @@
 |---|---|
 | **C / R / U / D** | Create / Read / Update / Delete pada sumber daya modul tersebut |
 | **P** | Penuh — C, R, U, D dalam scope-nya |
-| **T** | Tulis terbatas — R penuh + C/U pada objek Milik sendiri atau hasil penugasan |
-| **S** | Submit-then-approve — bisa menulis draft/mengajukan, tetapi baru berlaku setelah pihak lain menyetujui |
+| **T** | Tulis terbatas — R penuh + C/U/V pada objek milik sendiri atau hasil penugasan |
+| **S** | Diajukan→divalidasi — bisa menulis draft/mengajukan (`INSERT`), sah setelah pihak lain melakukan `VALIDATE` |
 | **B** | Baca saja (read-only) dalam scope-nya |
 | **A** | Baca agregat/anonim (tidak per-record) |
 | **—** | Tidak ada hak; menu tidak muncul, endpoint menolak `403`/`404` |
 | ✅ | Sudah terimplementasi di kode (rute API atau halaman tersedia) |
 | 🟡 | Sebagian — ada rute/halaman tetapi gating peran belum ditegakkan |
 | 📝 | Baru didokumentasikan — belum ada kode |
+
+**Enam aksi kanonik (FR-IDT-04).** Penyimpanan izin memakai kosakata aksi hasil adopsi benchmark ([DATA_MODEL §14.4](file:///c:/SICA/docs/DATA_MODEL.md), [SECURITY_COMPLIANCE §3.3](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md), [BENCHMARK_SEVIMA §2A.6](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md)): `READ · INSERT · UPDATE · DELETE · VALIDATE · OTHER`. Notasi `C R U D` pada tabel di bawah adalah singkatan baca; pemetaan bakunya:
+
+| Aksi kanonik | Verba pada kode §4 | Contoh pemakaian |
+|---|---|---|
+| `READ` | `view` | daftar & detail |
+| `INSERT` | `create`, `generate`, `submit`, `propose`, `request`, `join`, `upload`, `respond`, `record` | draft nilai, pengajuan KRS, catat pembayaran |
+| `UPDATE` | `update`, `manage`, `write`, `lock`, `publish`, `void`, `activate`, `deactivate`, `assign`, `sync`, `send`, `run`, `withdraw`, `close`, `publish` | ubah aturan, kunci nilai, aktifkan modul |
+| `DELETE` | `delete`, `revoke`, `release`, `leave`, `archive`, `leave` | lepas tautan ortu, cabut cekal (hard delete data akademik dilarang) |
+| `VALIDATE` | `approve`, `verify`, `confirm`, `endorse` | approval KRS oleh DPA, koreksi nilai oleh Kaprodi, keringanan/void oleh Bendahara, status `LUNAS` |
+| `OTHER` | `export`, `print`, `override`, `impersonation.grant`, `breakglass.use`, `recompute` | ekspor massal, cetak PDF ber-QR, buka gerbang paksa, impersonation, hitung ulang IPK |
+
+`OTHER` **bukan** tempat "apa saja yang tersisa" — setiap aksinya wajib terdaftar eksplisit di §4. Satu-satunya sumber kode string permission adalah §4 dokumen ini; enum `permission_verb` di DATA_MODEL hanya lapisan transport untuk layar matriks izin.
 
 ---
 
@@ -57,8 +70,8 @@
 | `TENANT_ADMIN` | Admin Perguruan Tinggi | `TENANT` | enum `tenant_admin` ✅ · PRD FR-ADM-06 | Pemegang otoritas tertinggi dalam satu tenant: struktur organisasi, user/role/permission, aktivasi modul, periode, aturan akademik global. |
 | `ADMIN_ACADEMIC` | Admin Akademik (BAAK) | `ORG` | DATA_MODEL §9 · PRD persona | CRUD akademik lintas prodi: master data, penugasan, tutup periode, transkrip, penyelesaian kasus rekonsiliasi status. |
 | `HEAD_OF_PROGRAM` | Ketua Program Studi | `PROGRAM` | DATA_MODEL §9 · PRD persona | Kendali kurikulum, kelas paralel, yudisium prodi; **satu-satunya** penyetuju koreksi nilai pasca-kunci (BR-G4). |
-| `ADMIN_FINANCE` | Admin Keuangan / UKT | `TENANT` | DATA_MODEL §9 · PRD persona | Tarif & kelompok tagihan, engine penagihan massal, matriks gerbang keuangan, laporan piutang. |
-| `TREASURER` | Bendahara | `TENANT` | DATA_MODEL §9 (`FINANCE approver`) · PRD persona | Konfirmasi & rekonsiliasi pembayaran, pencatatan deposit, pengajuan void. **Dual-approval**: pemohon void ≠ penyetuju (BR-K2). |
+| `ADMIN_FINANCE` | Admin Keuangan / UKT | `TENANT` | DATA_MODEL §9 · PRD persona · BENCHMARK `keuangan` | Tarif & kelompok tagihan, engine penagihan massal, matriks gerbang keuangan, laporan piutang. Terhadap void/keringanan ia **pemohon** (BR-K2). |
+| `TREASURER` | Bendahara / Penyetuju Keuangan | `TENANT` | DATA_MODEL §9 (`FINANCE approver`) · PRD persona · BENCHMARK `keuangan_approver` | **Penyetuju** void & keringanan (`VALIDATE`), konfirmasi pembayaran manual, rekonsiliasi harian, deposit. Mutually exclusive dengan `ADMIN_FINANCE` — pemohon ≠ penyetuju (BR-K2, AC-KEU-3). |
 | `LEADER` | Pimpinan (Rektor/Warek/Dekan) | `ORG` | DATA_MODEL §9 · PRD persona · katalog `pimpinan` | Baca agregat lintas unit + approve SK resmi + e-sign (BR-R15). Tidak mengedit data operasional. |
 | `FEEDER_OPERATOR` | Operator Feeder PDDIKTI | `TENANT` | DATA_MODEL §9 · BR-R11 · FR-FDR-01..03 | Menjalankan pra-validasi & kirim periode ke PDDIKTI, membaca error per record. Diangkat dengan SK Pimpinan; kredensial di Vault, bukan env biasa. |
 | `PMB_OPERATOR` 🟡 | Petugas ADM / PMB | `ORG` | usulan — FR-P2-01/02 | Kurasi cohort, verifikasi berkas pendaftar, penentuan kelulusan seleksi & registrasi ulang. Hari ini tidak ada pemilik modul `pmb`. |
@@ -103,10 +116,21 @@
 
 `scope_kind` ∈ `TENANT` · `ORG` · `PROGRAM` · `CLASS` · `PERIOD` · `SELF` (CHECK constraint di DDL).
 
+**Dua kolom yang wajib ditambahkan** agar matriks ini bisa di-query (bukan hanya dibaca manusia), menurut keputusan [FR-IDT-04 / DATA_MODEL §14.4](file:///c:/SICA/docs/DATA_MODEL.md):
+
+| Kolom | Tipe | Fungsi |
+|---|---|---|
+| `permissions.resource` | `text NOT NULL` | Kunci menu layar, mis. `admin.master.prodi`, `academic.krs.submit` — satu baris = satu titik aksi pada satu menu |
+| `permissions.verb` | `permission_verb NOT NULL` | ∈ `READ/INSERT/UPDATE/DELETE/VALIDATE/OTHER` (§1.2); gabungan `resource:verb` = satu izin atomik |
+
+Tanpa keduanya, layar matriks izin `/admin/pengguna/hak-akses` tidak dapat merender "menu × 6 kotak centang × scope" dan audit hak akses hanya bisa dibaca sebagai daftar kode. Ini dicatat sebagai celah **G-09** di §8.2.
+
+**`permissions` adalah tabel global tanpa `tenant_id`** — pengecualian ini adalah register resmi satu-satunya untuk lapis otorisasi; tabel referensi global lain (mis. `provinces`, `religions` milik FR-ADM-07) didaftarkan di `DATA_MODEL.md`, bukan di sini.
+
 ### 3.2 Resolusi hak saat request (urutan tetap)
 
 ```
-1. Verifikasi JWT RS256 → klaim sub, tid, role, sid        (fail-closed)
+1. Verifikasi JWT RS256 → klaim sub, tid, role, rc, sid          (fail-closed)
 2. tenants.status == ACTIVE ?              tidak → 423 LOCKED
 3. membership.status == ACTIVE ?           tidak → 403
 4. tenant_modules[module] ACTIVE/TRIAL ?   tidak → 404 MODULE_NOT_AVAILABLE
@@ -308,11 +332,37 @@ Aksi ditulis `C R U D` bila keempatnya tersedia sebagai permission terpisah.
 
 **Larangan identifier.** Semua kode permission wajib ASCII dengan pola `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$` — lint rule `no-restricted-syntax` di CI menolak kode yang memuat karakter non-ASCII. Istilah Indonesia tetap boleh pada kolom *sumber daya*, tidak pernah pada kode.
 
+### 4.4 Permission untuk kebutuhan Area Admin baru (PRD §5.8, hasil benchmark)
+
+13 FR baru lahir dari studi Sevima. Tanpa kode izinnya, menu Admin yang dijanjikan tidak bisa ditegakkan — jadi daftar di bawah **menambah** §4.2 dan ikut menjadi katalog.
+
+| FR | Kebutuhan | Permission baru | Aksi kanonik | Pemilik |
+|---|---|---|---|---|
+| FR-ADM-07 | Kamus/data referensi per tenant (unsur nilai, jenis matakuliah, rumpun, slot waktu, status hadir, agama, pekerjaan, penghasilan, wilayah…) | `academic.reference.view/.create/.update/.delete` | `READ` `INSERT` `UPDATE` `DELETE` | `ADMIN_ACADEMIC`; `READ` semua role tugas |
+| FR-ADM-08 | Skema enrollment ("sistem kuliah") — mengikat kelas yang boleh diambil **dan** tarifnya | `enrollment.scheme.view/.manage` | `READ` `UPDATE` | `TENANT_ADMIN` + `HEAD_OF_PROGRAM` (prodi) |
+| FR-ADM-09 | Meta-konfigurasi mandiri: visibilitas/label/urutan kolom, template laporan, blok tanda tangan | `settings.meta.view/.update` | `READ` `UPDATE` | `TENANT_ADMIN`; `READ` semua |
+| FR-ADM-10 | Panel "Kesehatan Data" pra-`LIVE` (NIM duplikat, dosen tanpa NIDN, prodi tanpa akreditasi…) | `academic.health.run/.view` | `OTHER` | `TENANT_ADMIN`, `ADMIN_ACADEMIC`, `PLATFORM_OPERATOR` |
+| FR-ADM-11 | Diagnosa "mengapa terkunci" pada setiap halaman transaksi | `academic.denialreason.view` | `READ` | semua role (hanya atas penolakan miliknya sendiri) |
+| FR-ADM-12 | Impact analysis sebelum hapus/nonaktif master (fakultas→prodi→kurikulum→matkul→kelas) | `academic.impact.view` | `READ` | `ADMIN_ACADEMIC`, `HEAD_OF_PROGRAM` |
+| FR-ADM-13 | Impersonation berjustifikasi (alasan + MFA + TTL + audit) | `identity.impersonation.grant/.revoke` | `INSERT` `DELETE` | `PLATFORM_OPERATOR`; `TENANT_ADMIN` hanya scope tenant sendiri |
+| FR-AKA-16 | Pemaketan KRS mahasiswa baru (`first_semester_packed_sks`) | `enrollment.pack.view/.apply` | `READ` `UPDATE` | `ADMIN_ACADEMIC`, `HEAD_OF_PROGRAM` |
+| FR-AKA-17 | Pindah program studi (pemetaan NIM asal→tujuan, riwayat dipindah bukan hapus) | `academic.transfer.request/.approve` | `INSERT` `VALIDATE` | `STUDENT`/`ADMIN_ACADEMIC` ajukan → `ADMIN_ACADEMIC` setujui |
+| FR-AKA-18 | Dua tahap publikasi nilai + kunci/buka massal + **hitung ulang** IP/IPS/IPK/transkrip | `assessment.grade.publish` · `assessment.grade.lock` · `assessment.grade.lockmassal` · `assessment.recompute` | `UPDATE` `OTHER` | `LECTURER` (kelas ampuan), `HEAD_OF_PROGRAM` (buka kunci), `ADMIN_ACADEMIC` (hitung ulang) |
+| FR-KUR-02 | Ekivalensi & konversi matakuliah (RPL, pindah prodi, MBKM) | `academic.equivalency.view/.manage` | `READ` `INSERT` `UPDATE` `DELETE` | `HEAD_OF_PROGRAM`, `ADMIN_ACADEMIC` |
+| FR-RPT-02 | Monitoring operasional admin: kepatuhan nilai, utilisasi ruang, statistik login | `academic.monitoring.view` · `teaching.roomutilization.view` · `identity.loginstats.view` | `READ` | `TENANT_ADMIN`, `ADMIN_ACADEMIC`, `LEADER` (agregat) |
+| FR-DOC-02 | Persuratan akademik: template + token variabel + penomoran otomatis + TTE | `document.letter.view/.create` · `document.numbering.manage` · `document.tte.sign` | `READ` `INSERT` `UPDATE` `VALIDATE` | `ADMIN_ACADEMIC`, `STAFF` (TU), `LEADER` (tanda tangan) |
+
+Catatan: `finance.waiver.request/.approve`, `feeder.validate.run`, `academic.periodreopen.*` sudah ada di §4.2 dan **tidak** diduplikasi di sini.
+
 ---
 
 ## 5. Matriks Akses Ringkas (Role × Modul)
 
 Kolom = 19 modul katalog [`MODULE_CODES`](file:///C:/SICA/packages/contracts/src/entitlement.ts#L9-L16). Nilai = tingkat hak dalam scope role tersebut (legenda §1.2). `C*` = modul Add-on, hanya berlaku bila `tenant_modules` status `ACTIVE`/`TRIAL`.
+
+Aksi entitlement & platform (`tenant_modules`, `plans`, provisioning tenant) tidak menjadi kolom sendiri karena bukan modul katalog — kodenya ada di §4.2 kelompok *Entitlement & platform* dan dipakai silang oleh `PLATFORM_OPERATOR`, `TENANT_ADMIN`, `LEADER`.
+
+**Kolom yang masih terbuka (G-10).** Katalog 19 modul belum memuat `litabmas`, `documents`/`persuratan` + `esign`, dan `kerjasama` yang dimiliki pembanding (didaftarkan di [PRD §5.8](file:///c:/SICA/docs/PRD.md)). Sementara keputusan belum diambil, permission persuratan ditampung di `document.*` (§4.4) dan penelitian ditampung sebagai grant `AUDIT_MU_REVIEW`/`hr.portofolio.write`; grid ini **wajib** bertambah kolomnya begitu modul resmi masuk `MODULE_CODES`.
 
 Aksi entitlement & platform (`tenant_modules`, `plans`, provisioning tenant) **tidak** menjadi kolom sendiri karena bukan modul katalog — kodenya ada di §4.2 kelompok `tenant_modules / paket` dan dipakai silang oleh `PLATFORM_OPERATOR`, `TENANT_ADMIN`, serta `LEADER` (lihat §6.1–§6.2).
 
@@ -397,13 +447,13 @@ Kolom **Aksi** memakai notasi `C R U D` subset dari katalog §4. Kolom **Permiss
 | `LEADER` | `graduation`* | Pimpinan → SK Yudisium & Ijazah | R U | `graduation.yudisium.issue`, `graduation.diploma.issue`, `graduation.tte.sign` | Tetapkan SK, tanda tangan TTE tersertifikasi (BR-R15) |
 | `LEADER` | `spmi`* | Mutu → Revi Manajemen | R U | `spmi.capa.track`, `spmi.instrumen.export` | Sahkan tindak lanjut CAPA & siap akreditasi |
 | `LEADER` | `tracer_iku`* | Pimpinan → IKU | R | `tracer.iku.report.view` | Capaian IKU 1 (tracer study) & pelaporan |
-| `ADMIN_FINANCE` | `finance` | Keuangan → Tarif & Tagihan | C R U D | `finance.tariff.*`, `finance.invoice.generate`, `finance.waiver.approve` | Komponen tarif versioned per prodi/angkatan/jenjang; engine tagihan idempoten (BR-K1, AC-KEU-2) |
-| `ADMIN_FINANCE` | `finance` | Keuangan → Gerbang KRS | R U | `finance.gate.view`, `finance.gate.override`, `academic.gate.configure` | Matriks komponen→aksi yang dibatasi; override hanya dengan approval + alasan + audit |
-| `ADMIN_FINANCE` | `finance` | Keuangan → Pembatalan Tagihan | R U | `finance.invoice.void` | Penyetuju void — **tidak boleh** sama dengan pemohon (BR-K2, AC-KEU-3) |
+| `ADMIN_FINANCE` | `finance` | Keuangan → Tarif & Tagihan | C R U D | `finance.tariff.*`, `finance.invoice.generate`, `finance.waiver.request` | Komponen tarif versioned per prodi/angkatan/jenjang; engine tagihan idempoten (BR-K1, AC-KEU-2). Keringanan: **pengaju** |
+| `ADMIN_FINANCE` | `finance` | Keuangan → Gerbang KRS | R U | `finance.gate.view`, `finance.gate.override`, `academic.gate.configure` | Matriks komponen→aksi yang dibatasi; override hanya dengan approval + alasan + audit (FR-KEU-06) |
+| `ADMIN_FINANCE` | `finance` | Keuangan → Pembatalan Tagihan | R C | `finance.invoice.void` (ajukan) | Berkedudukan **pemohon**; persetujuan milik `TREASURER` (BR-K2, AC-KEU-3) |
 | `ADMIN_FINANCE` | `academic` | Keuangan → Status Akademik | R | `academic.studentstatus.view`, `academic.feedercode.view` | Verifikasi jalur masuk & status aktif sebelum menagih (BR-A17) |
-| `TREASURER` | `finance` | Keuangan → Pembayaran | R C U | `finance.payment.record`, `finance.payment.confirm`, `finance.installment.create`, `finance.deposit.manage` | Catat pembayaran manual, cicilan, deposit; status 4-keadaan (FR-KEU-07) |
-| `TREASURER` | `finance` | Keuangan → Rekonsiliasi | R C | `finance.ledger.view`, `finance.reconcile.run` | Rekonsiliasi harian vs statement bank; alert delta |
-| `TREASURER` | `finance` | Keuangan → Usul Pembatalan | C | `finance.invoice.void` (request only) | Sebagai **pemohon**; persetujuan milik `ADMIN_FINANCE`/`LEADER` |
+| `TREASURER` | `finance` | Keuangan → Antrean Persetujuan | R U | `finance.waiver.approve`, `finance.invoice.void` (setuju), `finance.payment.confirm` | Kumpulan aksi `VALIDATE`; **tidak dapat** mengajukan sendiri — baris grant ini mutual-exclusion dengan `ADMIN_FINANCE` |
+| `TREASURER` | `finance` | Keuangan → Pembayaran | R C U | `finance.payment.record`, `finance.installment.create`, `finance.deposit.manage` | Catat pembayaran non-gateway, cicilan, deposit; status 4-keadaan (FR-KEU-07) |
+| `TREASURER` | `finance` | Keuangan → Rekonsiliasi | R C | `finance.ledger.view`, `finance.reconcile.run` | Rekonsiliasi harian vs statement bank; alert delta (mencegah pembayaran tak ter-match) |
 | `FEEDER_OPERATOR` | `feeder_pddikti` | Laporan → Pemetaan Feeder | C R U D | `feeder.mapping.manage` | Kamus entitas lokal→kode PDDIKTI sebagai **tabel data**, bukan kode program |
 | `FEEDER_OPERATOR` | `feeder_pddikti` | Laporan → Kirim Periode | C R U | `feeder.validate.run`, `feeder.period.send`, `feeder.sync.view` | Pra-validasi + approve `diff` sebelum write; retry aman idempoten (BR-R10, FR-FDR-03) |
 | `FEEDER_OPERATOR` | `feeder_pddikti` | Laporan → Koreksi Data Terkirim | C R | `feeder.correction.request`, `.approve` | Tidak ada hard delete (BR-R10); koreksi via usulan resmi |
@@ -477,7 +527,7 @@ Kolom **Aksi** memakai notasi `C R U D` subset dari katalog §4. Kolom **Permiss
 
 | Aturan | Pencegahan | Ditegakkan di |
 |---|---|---|
-| Pemohon `finance.invoice.void` ≠ penyetuju | Tagihan dibatalkan sendiri oleh pencatat | Service + dual-approval (BR-K2) |
+| Pemohon `finance.invoice.void` ≠ penyetuju — `ADMIN_FINANCE` mengajukan, `TREASURER` menyetujui | Tagihan dibatalkan sendiri oleh pencatatnya | Grant kedua role ini **mutually exclusive** saat assignment + dual-approval di service (BR-K2, AC-KEU-3) |
 | `grading.value.write` (dosen) ≠ `grading.unlock` (Kaprodi) | Nilai "titipan" & koreksi senyap | `assessment.correction.*` workflow + audit (BR-G4) |
 | `identity.assignment.grant` butuh approval orang kedua (`access_change_requests`) | Admin jahat menaikkan hak sendiri | Empat-mata + `audit_logs` (FR-ADM-06) |
 | `feeder.period.send` hanya setelah `diff` di-approve | Feeder merusak data produksi | Append-log + approval sebelum kirim (SECURITY §5) |
@@ -556,8 +606,10 @@ Menu tahap berikutnya **tidak boleh** terbuka sebelum tahap sebelumnya lengkap �
 | **G-04** | Scope (prodi/kelas/periode) belum ditegakkan lewat assignment | Dosen secara teori dapat membaca dan menulis data lintas kelas bila service lupa cek relasi | Guard membaca `scope_*` + `valid_to`; CI fixture 2 tenant wajib 404 |
 | **G-05** | Menu tidak disaring dari `tenant_modules` — [top-nav.tsx:89-112](file:///C:/SICA/apps/web/src/components/layout/top-nav.tsx#L89-L112) statis | Kampus bisa membuka menu modul yang tidak dibeli → pelanggaran PRD §5.7 "nol akses menu modul tak dibeli" | `GET /tenant/modules` → filter nav Web & bottom-nav Mobile (ROADMAP baris sidebar) |
 | **G-06** | `GUARDIAN`, `APPLICANT`, `ALUMNI`, dan 6 role 🟡 lainnya tidak punya wadah di enum | Modul `parent_portal`/`pmb` & persona PRD tak bisa dilayani walau dijual | Masuk ke migrasi `roles`; atau perluasan enum eksplisit |
-| **G-07** | Tidak ada MFA enforcement per role di kode (FR-IDT-01: MFA untuk semua peran tulis-admin) | Akun admin terkompromi = damage maksimal | Guard `mfa_factor` pada semua `*.create/update/delete` role admin & platform |
-| **G-08** | Aturan token di `.cursor/rules/02-security.mdc:103` menyebut **EdDSA**, sedangkan `SECURITY_COMPLIANCE.md:80` (AUD-11) mengunci **RS256** dan kode memakai RS256 | Cursor rule menyesatkan agen yang menulis kode baru | Sinkronkan rule ke RS256 di commit yang sama saat matriks ini disetujui |
+| **G-07** | Tidak ada MFA enforcement per role di kode (FR-IDT-01: MFA untuk semua peran tulis-admin) | Akun admin terkompromi = damage maksimal | Guard `identity.mfa.manage` pada semua aksi `INSERT/UPDATE/DELETE/VALIDATE` role R-01…R-09, R-15, R-16 |
+| **G-08** ~~EdDSA vs RS256~~ | **CLOSED 2026-10-19** — `.cursor/rules/02-security.mdc` sudah disinkron ke **RS256** sesuai AUD-11 ([SECURITY_COMPLIANCE.md:80](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md#L80)) dan implementasi `jwt.service.ts`/`jwt-edge.ts` | — (lihat §11 poin 6) | — |
+| **G-09** | `permissions` belum punya kolom `resource` + `verb` ([DATA_MODEL §14.4](file:///c:/SICA/docs/DATA_MODEL.md), FR-IDT-04) | Layar matriks izin tidak bisa merender menu × 6 aksi × scope; audit hak akses jadi daftar kode yang tidak terstruktur | Tambah 2 kolom + enum `permission_verb` saat migrasi (ADM-8) |
+| **G-10** | Katalog 19 modul belum mencakup `litabmas`, `documents`/`persuratan` + `esign`, `kerjasama` (dicatat di [PRD §5.8](file:///c:/SICA/docs/PRD.md)) | Persona `Admin LPPM`/`Reviewer`/persuratan akademik tidak punya modul → permission-nya menggantung ke `academic.document.*` | Putuskan produk: tambah `MODULE_CODES` baru (perlu migrasi katalog + grid §5) atau lipat ke `documents` di bawah `academic` |
 
 ### 8.3 Rencana implementasi bertahap
 
@@ -649,6 +701,7 @@ Menu tahap berikutnya **tidak boleh** terbuka sebelum tahap sebelumnya lengkap �
 |---|---|---|
 | 1.0 | 2026-10-19 | Katalog 22 role, ~160 permission, matriks Role × Modul × Menu × Aksi CRUD, aturan ABAC/SoD/PII, dan pendaftaran 8 celah implementasi (G-01…G-08). |
 | 1.1 | 2026-10-19 | §11 Rekonsiliasi dengan dokumen Area Admin baru ([BENCHMARK_SEVIMA.md](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md), [PRD §5.8](file:///c:/SICA/docs/PRD.md), [DATA_MODEL §14](file:///c:/SICA/docs/DATA_MODEL.md), [API_SPEC §4.6](file:///c:/SICA/docs/API_SPEC.md), [UI_UX_DESIGN §9](file:///c:/SICA/docs/UI_UX_DESIGN.md), [SECURITY_COMPLIANCE §3.3](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md)): pemetaan 15 peran tampilan ↔ 22 peran normatif, pemetaan kosakata aksi `VALIDATE↔approve`, kepemilikan menu, ikatan celah ke Slice ADM-1/ADM-8, dan **G-08 dinyatakan CLOSED** (rule Cursor disinkron ke RS256). Dokumen didaftarkan sebagai **#19** di [AGENTS.md](file:///c:/SICA/AGENTS.md) §2.2 & [INDEX.md](file:///c:/SICA/docs/INDEX.md) §1. |
+| 1.2 | 2026-10-19 | Kosakata aksi kanonik dijadikan eksplisit di §1.2 (tabel pemetaan `READ/INSERT/UPDATE/DELETE/VALIDATE/OTHER` → verba kode §4, dengan larangan `OTHER` sebagai sisa). §2.2 & §6.2 & §7.1 diralat agar **BR-K2 benar arah**: `ADMIN_FINANCE` = pemohon void/keringanan, `TREASURER` = penyetuju (`VALIDATE`), grant keduanya *mutually exclusive*. §3.1 menambah keharusan kolom `permissions.resource` + `permissions.verb` dan mendaftarkan celah **G-09** di §8.2; klaim `rc` ditambahkan pada langkah resolusi §3.2; penegasan bahwa §4 adalah satu-satunya sumber string permission. |
 
 *Matriks ini adalah sumber kebenaran hak akses. Endpoint, menu, dan seed role baru wajib dirujuk ke sini sebelum didokumentasikan di tempat lain.*
 
