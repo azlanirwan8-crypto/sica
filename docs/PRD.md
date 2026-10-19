@@ -291,6 +291,36 @@ SICA dijual sebagai **SaaS modular**. Campus dapat memilih sebagian modul tanpa 
 
 **KPI keberhasilan packaging:** provisioning/pencabutan modul ≤ 1 menit (data-driven, tanpa deploy), nol akses endpoint/menu modul yang tidak dibeli, dan metering `PER_SEAT` (mis. LMS) tercatat di `tenant_usage`.
 
+### 5.8 Modul Administrasi & Data Master (hasil benchmark Sevima — 2026-10-19)
+> Rujukan detail & bukti: [BENCHMARK_SEVIMA.md](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md) §2, §2A, §3–§7. Bagian ini **menambah** kebutuhan fungsional yang terbukti ada di aplikasi admin Sevima tetapi belum terdaftar sebagai FR di PRD. Prioritas pengerjaan: **Area Admin dimulai dari Data Master** (urutan ADM-1…ADM-9 pada dokumen benchmark §7).
+
+| ID | Modul | Kebutuhan | Kelas | Sumber benchmark |
+|---|---|---|---|---|
+| FR-ADM-07 | Administrasi | **Kamus/data referensi per tenant** yang dapat dirawat admin: `Unsur Nilai`, `Jenis Matakuliah`, `Kelompok Matakuliah`, `Bidang Ilmu/Rumpun`, `Slot Waktu`, `Status Hadir`, `Jenis Pertemuan`, `Jenis Kegiatan`, `Agama`, `Pekerjaan`, `Penghasilan`, `Suku`, `Jenis Tinggal`, `Kebutuhan Khusus`, `Transportasi`, `Status/Jenis Keluar Mahasiswa`, `Jenjang/Tingkat Pendidikan`, `Negara/Provinsi/Kota/Kecamatan/Kelurahan` | C | Sevima `Data Pelengkap` 6 kategori |
+| FR-ADM-08 | Administrasi | **Skema enrollment ("sistem kuliah")** per prodi/angkatan yang mengikat (a) kelas yang boleh diambil saat KRS dan (b) tarif yang berlaku | C | Sevima `Sistem Kuliah` |
+| FR-ADM-09 | Administrasi | **Meta-konfigurasi mandiri per tenant**: visibilitas/label/urutan kolom pada form & data master, template laporan, blok penandatanganan — tanpa tiket ke vendor, dengan diff + audit | B | Sevima `Kustomisasi Form/Kolom Data Master/Laporan/Penandatanganan`; titik lemah D-1 |
+| FR-ADM-10 | Administrasi | **Panel "Kesehatan Data" pra-go-live**: laporan kelengkapan & anomali (NIM duplikat, dosen tanpa NIDN, prodi tanpa akreditasi, matakuliah tanpa kurikulum, kelas tanpa jadwal, mahasiswa tanpa dosen-wali) sebagai *gate* sebelum tenant `LIVE` | B | Sevima: puluhan artikel "kenapa tidak muncul"; D-4 |
+| FR-ADM-11 | Administrasi | **Diagnostics "mengapa terkunci"** pada setiap halaman transaksi (sebab penolakan + tautan perbaikan), bukan pesan error umum | B | D-4, D-6 |
+| FR-ADM-12 | Administrasi | **Dampak-penghapusan (impact analysis)** sebelum hapus/nonaktifkan master: tampilkan dependensi (fakultas→prodi→kurikulum→matakuliah→kelas) dan tawarkan *nonaktif-soft*, bukan hapus paksa | B | D-3 |
+| FR-ADM-13 | Administrasi | **Impersonation berjustifikasi** (padanan `Login As`): wajib alasan + MFA + TTL pendek + tercatat `audit_logs`; tersedia untuk peran `tenant_admin` scope terbatas & `super_admin` | M | D-9, Journey J6 |
+| FR-AKA-16 | Akademik | **Pemaketan KRS ("kuliah paket")** untuk mahasiswa baru: paket SKS otomatis per prodi/angkatan, tetap tunduk plafon BR-R2 | C | Sevima `Paket Kuliah/Pemaketan KRS`; `academic_rules.first_semester_packed_sks` |
+| FR-KUR-02 | Kurikulum | **Ekivalensi & konversi matakuliah** (dipakai RPL, pindah prodi, MBKM) dengan ambang nilai + pencatatan sumber konversi | C | Sevima `Ekivalensi Mata Kuliah`, `RPL` |
+| FR-AKA-17 | Akademik | **Pindah program studi** dengan pemetaan NIM asal→tujuan dan pemindahan riwayat (bukan hapus-tambah) | B | Sevima `Pindah Program Studi` |
+| FR-AKA-18 | Akademik | **Dua tahap publikasi nilai**: *umumkan* (terlihat mahasiswa) vs *kunci* (dasar KHS/transkrip) + **kunci/buka massal** + **hitung ulang** nilai kelas/IPS/IPK/transkrip ter-audit | B | Sevima `Umumkan Nilai` vs `Kunci Nilai`, `Hitung Ulang…` |
+| FR-RPT-02 | Reporting | **Monitoring operasional admin**: kepatuhan pengisian nilai per dosen/kelas, pemanfaatan ruang, statistik login & aktivitas admin | B | Sevima `Monitoring Pengisian Nilai`, `Monitoring Ruang`, `Statistik Login` |
+| FR-DOC-02 | Dokumen | **Persuratan akademik**: template surat + token variabel (`judul_ta`, `nama_penguji_1`, …), penomoran otomatis per tenant, validasi pengajuan, TTE | B | Sevima `Persuratan`, `Berita Acara TA`, `Generate Penomoran Dokumen` |
+| FR-IDT-04 | Identitas | **Matriks hak akses 6 aksi** per (aplikasi, role, scope): `READ`, `INSERT`, `UPDATE`, `DELETE`, `VALIDATE`, `OTHER` — `VALIDATE` dipakai untuk aksi persetujuan (KRS, koreksi nilai, status) | B | Sevima `Hak Akses` (bukti verbatim §2A.6) |
+
+**Rekonsiliasi ruang lingkup (§5.3):** pengecualian "Tata Usaha Persuratan Umum" tetap berlaku untuk naskah dinas non-akademik, **tetapi** surat **akademik** (KHS, surat keterangan aktif kuliah, legalisir, SK yudisium, berita acara ujian, kartu ujian) kini **di dalam lingkup** melalui FR-DOC-02/FR-AKA-14.
+
+**Katalog modul perlu diperluas (keputusan produk, tercatat untuk eksekusi ROADMAP §1.5):** dibanding Sevima, katalog 19 modul SICA belum mencakup `litabmas` (penelitian & pengabdian), `documents`/`persuratan` + `esign`, dan `kerjasama` (SIMKERMA).
+
+**Usulan revisi NFR berbasis benchmark —⚠️ menunggu persetujuan pemilik produk (belum mengubah angka resmi §6.2):** Sevima menjual **SLA 99,9%** dan pemulihan **< 15 menit** (§2A.5), sedangkan SICA saat ini NFR-A1 = 99,5%/bulan dan NFR-A2 = RPO ≤ 15 mnt / RTO ≤ 4 jam. Menyelaraskan ke 99,9% + RTO ≤ 15 menit menaikkan biaya infrastruktur (replika + failover otomatis + PITR aggressif); keputusan diambil bersama, bukan diam-diam.
+
+**Yang secara sadar TIDAK kita tiru dari Sevima** (anti-pattern, lihat §2A.9): password reset default = tanggal lahir, `Login As` tanpa justifikasi, konfigurasi yang terkunci di vendor, dan "unit kerja" yang baru muncul setelah migrasi oleh penyedia.
+
+---
+
 ## 6. Acceptance Criteria (terukur)
 
 Format: Given/When/Then. Semua AC diverifikasi automated test; bertanda 🔒 wajib lolos di CI sebelum deploy.

@@ -148,6 +148,34 @@ Cache izin di Redis dengan TTL 5 menit dan **invalidasi event-driven** saat assi
 
 ---
 
+### 3.3 Matriks izin Area Admin (6 aksi + scope) dan penegakan berlapis
+> Rujukan silang: [API_SPEC §4.6](file:///c:/SICA/docs/API_SPEC.md) (rute `/admin/*`), [DATA_MODEL §14.4](file:///c:/SICA/docs/DATA_MODEL.md) (`permission_verb`), [PRD `FR-IDT-04`](file:///c:/SICA/docs/PRD.md), [BENCHMARK_SEVIMA §2A.6](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md).
+
+SICA mengadopsi granularitas izin admin yang terbukti dipakai lapangan (Sevima menyimpan hak akses per *aplikasi × role* dengan aksi `Read/Insert/Update/Delete/Validate/Other`) **tetapi menambah dua hal yang tidak mereka punya**: scope per penugasan, dan empat-mata untuk perubahan izin.
+
+| Verb | Makna | Contoh sumber daya | Catatan keamanan |
+|---|---|---|---|
+| `READ` | baca daftar/detail | `admin.master.prodi` | PII ter-masking bila peran tidak memegang `UPDATE` |
+| `INSERT` | buat | `admin.personel.mahasiswa` | validasi plafon nasional di service, bukan UI |
+| `UPDATE` | ubah | `admin.master.matakuliah` | `before/after` wajib masuk `audit_logs` |
+| `DELETE` | hapus keras | `admin.master.ruang` | **hanya** bila nol rujukan; selain itu `deactivate` |
+| `VALIDATE` | menyetujui | `academic.krs.approve`, `assessment.grade.correction.approve`, `admin.status.change.approve` | pemohon ≠ penyetuju (BR-K2, `student_status_history` CHECK) |
+| `OTHER` | aksi khusus terdaftar | `admin.period.transition`, `admin.class.generate`, `admin.feeder.push`, `admin.impersonate` | **bukan** tempat "sisa aksi"; tiap entri terdaftar eksplisit di katalog |
+
+**Empat lapis yang wajib dilalui setiap rute `/admin/*`** (kurang satu pun = temuan audit, bukan gaya):
+1. Verifikasi JWT RS256 (`extractRequestContext`, fail-closed).
+2. Role + **scope** (`user_role_assignments`) → `403 ADMIN_SCOPE_MISMATCH` bila objek di luar prodi/periode/kelas penugasan.
+3. `withModule(code)` → `424 MODULE_INACTIVE` (menu juga disaring, tapi penyembunyian menu **bukan** kontrol).
+4. `withTenantContext` → `set_config('app.current_tenant', …)` sebelum query pertama; RLS `FORCE` + `NOBYPASSRLS` sebagai jaring terakhir.
+
+**Impersonation (padanan `Login As`).** Tidak dihilangkan karena kebutuhan dukungan itu nyata, tetapi dikunci: wajib alasan tertulis + MFA ulang + TTL ≤ 30 menit + hanya dari peran `tenant_admin` (scope prodi) / `super_admin` + **setiap** sesi impersonation tercatat `audit_logs` dan terlihat oleh tenant di Log Aktivitas. Praktik vendor yang membuka `Login As` tanpa justifikasi (bukti dokumentasi Sevima) kami nyatakan **tidak dapat diterima**.
+
+**Reset kredensial.** Dilarang meniru pola "password default = tanggal lahir `YYYYMMDD`" (praktik terdokumentasi Sevima): reset memakai token sekali-pakai ber-ekspirasi pendek, wajib ganti sandi saat login berikutnya, dan `password_history` menolak 5 sandi terakhir.
+
+**Perubahan hak akses** mengalir lewat `access_change_requests` (pengaju ≠ penyetuju), tidak pernah self-service oleh peminta, dan setiap grant/revocation memancarkan invalidasi cache izin (TTL 5 menit, event-driven) — dengan mutasi nilai & keuangan selalu cek langsung tanpa cache (§3.2).
+
+---
+
 ## 4. OWASP Top 10 — mitigasi terintegrasi di kode
 
 ### A01 Broken Access Control — risiko tertinggi di SICA

@@ -2,6 +2,7 @@
 **Status:** Active Execution Plan  
 **Architecture Reference:** [ARCHITECTURE.md](file:///c:/SICA/docs/ARCHITECTURE.md), [PRD.md](file:///c:/SICA/docs/PRD.md), [TECH_CONVENTIONS.md](file:///c:/SICA/docs/TECH_CONVENTIONS.md)  
 **Methodology:** Checklist Task Berurutan (Phase 1 s.d. Phase 4)  
+**Baseline Kompetitif:** [BENCHMARK_SEVIMA.md](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md) — hasil studi dokumentasi Sevima (peran, menu, modul, data master, flow) + peta selisih SICA
 
 > **⚠️ KOREKSI STATUS — Audit Principal Lead Architect (2026-10-18).** Centang `[x]` di bawah sebelumnya menandai "kerangka/placeholder selesai", bukan "fitur production". Berdasarkan verifikasi `tsc` & `vitest`: **kontrak Zod, UI Velzon/shadcn, dan engine aturan bisnis (GPA/IPS, SKS-quota, conflict-detector) nyata & teruji**; namun **route handler backend masih mock** (tanpa DB/RLS runtime, `Math.random()`), **login & middleware auth belum memverifikasi JWT**, dan **dependensi belum ter-install penuh** (proyek gagal build sampai `pnpm install`). Item mock kini ditandai `[~]` (partial). Detail: [PROGRESS_REPORT.md §5](file:///c:/SICA/docs/PROGRESS_REPORT.md) & [ISSUE_RESOLUTION.md](file:///c:/SICA/docs/ISSUE_RESOLUTION.md).
 
@@ -89,7 +90,7 @@ Fokus utama fase ini adalah membangun pondasi monorepo pnpm, skema database Post
 - [~] Resolver `apps/web/src/lib/entitlement.ts` + guard HOF `withModule(code, …)` — **logika graf dependensi murni + guard terimplementasi & teruji (vitest)**. **Provider `ModuleCheck` DB — SELESAI:** `apps/web/src/modules/entitlement/entitlement.repository.ts` (`createTenantModuleCheck` + `createDrizzleEntitlementRepository` dengan `withTenantContext`/RLS). **Sisa:** cache Redis 60s + invalidasi.
 - [~] Enforcement dependensi di service (`422 MODULE_DEPENDENCY_UNMET`, `409 MODULE_IN_USE`) + endpoint — **SELESAI & teruji** (`entitlement.service.ts`, `tests/unit/entitlement-service.test.ts`). **Sisa:** terapkan `withModule(...)` ke **seluruh** route domain `api/v1/<domain>` (butuh provider aktif + DB) + tulis event audit aktivasi/deaktivasi.
 - [x] Endpoint `GET /tenant/modules` & `POST /tenant/modules/:code/activate|deactivate` (API_SPEC §4.5) — route handler dibuat (`apps/web/src/app/api/v1/tenant/modules/**`), validasi Zod (`ModuleCodeSchema`/`Activate`/`Deactivate`), gating peran admin, peta 422/409. Runtime butuh DB (Supabase/§4.5); orkestrasi tervalidasi via unit test.
-- [ ] Sidebar Web (`sidebar.tsx`) & Bottom-nav Mobile (`custom_bottom_nav.dart`) disaring dari modul aktif (parity §3.4) + layout/route guard 404.
+- [ ] Navigasi Web (`components/layout/top-nav.tsx` — **`sidebar.tsx` sudah dihapus**, diganti layout Velzon horizontal) & Bottom-nav Mobile (`custom_bottom_nav.dart`) disaring dari modul aktif (parity §3.4) + layout/route guard 404. **Dikerjakan di Slice ADM-1** (ROADMAP §2.5.1).
 - [ ] Halaman marketplace/self-service add-on + metering `PER_SEAT` ke `tenant_usage`.
 - [ ] Provisioning otomatis modul Core saat pembuatan tenant; default `finance`/`feeder_pddikti` ON namun dapat di-OFF.
 
@@ -144,6 +145,92 @@ Fokus fase ini adalah menyelesaikan seluruh alur transaksi akademik inti: manaje
   - *Target file:* `apps/web/src/app/(dashboard)/academic/advisor/page.tsx`
 - [x] Bangun halaman Kartu Hasil Studi (KHS) dan cetak dokumen PDF (KRS & KHS).
   - *Target file:* `apps/web/src/app/(dashboard)/academic/khs/page.tsx`, `apps/web/src/modules/academic/services/pdf-generator.service.ts`
+
+---
+
+### 2.5 Area Administrasi & Data Master (keputusan urutan 2026-10-19)
+> **Keputusan pemilik produk:** pengerjaan berikutnya **Admin dulu, mulai dari master data**, bukan loop KRS-read lebih dulu. Dasar: seluruh transaksi (KRS, nilai, presensi, tagihan, feeder) punya FK ke master data; hari ini master data **hanya** bisa diisi skrip seed, sehingga kampus tidak bisa mengelola sendiri — padahal "mandiri kelola tanpa vendor" adalah titik jual terhadap SIAKAD legacy.
+> **Rujukan wajib sebelum kode:** [BENCHMARK_SEVIMA.md](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md) (§2, §2A, §3–§7), [PRD §5.8](file:///c:/SICA/docs/PRD.md) (FR-ADM-07…13, FR-IDT-04, FR-DOC-02, dll.), [DATA_MODEL §14](file:///c:/SICA/docs/DATA_MODEL.md), [API_SPEC §4.6](file:///c:/SICA/docs/API_SPEC.md), [UI_UX_DESIGN §9](file:///c:/SICA/docs/UI_UX_DESIGN.md).
+
+#### 2.5.0 Prasyarat dokumen-sudah-selesai (siklus ini)
+- [x] Studi dokumentasi Sevima (menu admin, `Data Pelengkap` 6 kategori, `Setting Prodi` 9 tab, 20 pemetaan sumber Feeder, model hak akses 6 aksi, portofolio 20+ modul, model harga & hosting) dituangkan sebagai catatan resmi.
+- [x] PRD: 13 FR baru + koreksi out-of-scope persuratan + usulan perluasan katalog modul (`litabmas`, `documents`, `kerjasama`).
+- [x] DATA_MODEL §14: matriks status objek admin + DDL baru (`reference_items`/`reference_kinds`, `tenant_settings`, `enrollment_schemes`, `course_equivalencies`, `student_status_history` revisi, `permission_verb`).
+- [x] API_SPEC §4.6: pola CRUD seragam, 23 objek, transisi status periode, aksi massal, impor & rekonsiliasi, 12 kode error baru.
+- [x] UI_UX_DESIGN §9: IA Area Admin + pola daftar→drawer + kontrak visual 8 gugus + i18n kunci `admin.*`.
+- [x] SECURITY_COMPLIANCE §3.3: matriks izin Admin 6 aksi + 4 lapis penegakan `/admin/*` + aturan impersonation & reset kredensial (anti-pattern Sevima).
+- [x] TECH_CONVENTIONS §1.1.1: pohon file & aturan penamaan kode Area Admin (disesuaikan realita `(dashboard)/`, bukan pohon target yang masih drift).
+- [x] **RBAC_MATRIX.md diadopsi & didaftarkan** sebagai dokumen #19 (sumber kebenaran hak akses, 22 peran + ~160 permission); §11 rekonsiliasi ditambahkan; **G-08 CLOSED** (`.cursor/rules/02-security.mdc` disinkron EdDSA→RS256).
+- [ ] **Celah `G-01`–`G-07` (RBAC_MATRIX §8.2) menjadi pekerjaan ADM-1/ADM-8** — terverifikasi di kode: substring `isAdminRole` [guards.ts:6-11](file:///C:/SICA/apps/web/src/modules/entitlement/guards.ts#L6-L11), `TODO` verifikasi role ADVISER [krs/approve/route.ts:31](file:///C:/SICA/apps/web/src/app/api/v1/academic/krs/approve/route.ts#L31), top-nav statis [top-nav.tsx:89-112](file:///C:/SICA/apps/web/src/components/layout/top-nav.tsx#L89-L112).
+- [ ] **AUD-09 (blocking, harus selesai sebelum migrasi ADM):** refactor `graduation_records` yang terdefinisi dua kali di [DATA_MODEL.md](file:///c:/SICA/docs/DATA_MODEL.md) (baris ±811 dan ±872).
+
+#### 2.5.1 Slice ADM-1 — Kerangka Admin (fondasi semua slice)
+- [ ] Skema + migrasi `0012_audit_outbox.sql`: `audit_logs` (partisi, hash-chain), `audit_chain_head`, `outbox`, `idempotency_keys`, `login_events`.
+- [ ] Guard rute `/admin/*` 4 lapis: JWT → role+scope → `withModule` → `withTenantContext` (helper `requireAdmin(ctx, resource, verb, scope)`).
+- [ ] Kontrak Zod `packages/contracts/src/admin-shell.ts` (list query, `IdempotencyKey`, envelope error admin) + `master-data.ts` (kerangka).
+- [ ] Layout `/admin` (sub-nav grouped collapsible + context strip Periode/Prodi/Status) Velzon horizontal; filter menu dari entitlement aktif (menutup ROADMAP §1.5 item "sidebar disaring").
+- [ ] Komponen `empty-state.tsx` (sebab + tautan perbaikan) & `impact-dialog.tsx` (pratinjau dependensi sebelum hapus).
+- [ ] i18n `admin.menu.*`, `admin.errors.*` di `id.json` + `en.json` (bentuk identik).
+- [ ] Unit + integration test: tolak akses lintas tenant & lintas scope; `VALIDATE` tidak bisa dipakai `UPDATE`.
+
+#### 2.5.2 Slice ADM-2 — Tahun Akademik · Periode · Kalender
+- [ ] Skema Drizzle `academic_calendar_events` + migrasi `0007_admin_calendar_reference.sql` + RLS generator §6.2.
+- [ ] Kontrak Zod + OpenAPI untuk `academic-years`, `academic-periods`, `calendar-events` (enum `kind` termasuk `PDDIKTI_*_DUE`).
+- [ ] API CRUD seragam §4.6 + `POST /admin/periode/:id/status` dengan matriks transisi (DRAFT/OPEN/CLOSED) + `403 CALENDAR_REGULATORY_EVENT` + `403 REOPEN_REQUIRES_APPROVAL`.
+- [ ] Penegakan `423 PERIOD_CLOSED` pada **semua** rute tulis domain (middleware/helper satu titik, bukan cek tersebar).
+- [ ] UI: 3 halaman master (daftar→drawer), tab `Band`/`Libur`, kolom Status, nonaktif-soft dulu.
+- [ ] Test: buka periode belum siap → `422 PERIOD_NOT_READY` lengkap dengan sebab; tutup lalu tulis → `423`; hapus agenda wajib → `403`.
+
+#### 2.5.3 Slice ADM-3 — Struktur & Kurikulum
+- [ ] CRUD `organizations` (hierarki, tolak siklus) & `study_programs` (validasi plafon nasional BR-R2/R3/R4; `422 NATIONAL_CAP_TIGHTEN_ONLY`).
+- [ ] CRUD `curricula`, `courses` (SKS pecah), `grade_scales` + `grade_scale_bands` (`422 BAND_OVERLAP`), `grade_components` (`422 WEIGHT_SUM_NOT_100`, AC-NIL-4).
+- [ ] Tabel + migrasi `0008_curriculum_prereq_equivalency.sql`: `course_prerequisites` (anti self/siklus) & `course_equivalencies`.
+- [ ] Kamus `reference_kinds`/`reference_items` + layar "Data Referensi" bertab (menggantikan ±30 layar master Sevima).
+- [ ] UI + test: prodi tanpa fakultas induk; matakuliah duplikat kode per kurikulum; prasyarat melingkar ditolak.
+
+#### 2.5.4 Slice ADM-4 — Ruang
+- [ ] CRUD `rooms` (+ `capacity > 0`, `roomType`, fasilitas, nonaktif-soft) + `GET /admin/ruang/:id/utilisasi` pratinjau bentrok.
+- [ ] Test: hapus ruang yang dipakai jadwal → `409 REFERENCE_IN_USE`.
+
+#### 2.5.5 Slice ADM-5 — Kelas, Pengampu, Jadwal, Pertemuan
+- [ ] `POST /admin/kelas/generate` (idempoten, nama A/B/C, hormati `maxParallelClasses`) + salin kelas antar periode.
+- [ ] Penugasan dosen + `422 LECTURER_WORKLOAD_EXCEEDED` (BR-A11, maks 16 SKS) memakai `schedule-conflict-detector` yang sudah teruji.
+- [ ] Jadwal mingguan + matriks hari×jam + `POST /admin/jadwal/validate` (AC-JDW-1, hard block).
+- [ ] `POST /admin/pertemuan/generate` melewati hari libur dari kalender; `PATCH` sesi tunggal.
+- [ ] Integrasi live: generate 12 kelas × 16 pertemuan = 192 sesi, jalankan ulang → `created:0, skipped:192`.
+
+#### 2.5.6 Slice ADM-6 — Pengaturan Akademik (objek paling menentukan di multi-tenant)
+- [ ] Tabel `academic_rules` + `blockades` + `enrollment_schemes` + `tenant_settings` (migrasi `0009_…`, `0010_…`).
+- [ ] Skema `params` jsonb berversi + validasi Zod (plafon nasional tak terlampaui — NFR-R2 uji properti) + simpan sebagai versi baru (bukan `UPDATE` in-place).
+- [ ] Wizard 4 langkah + diff + pratinjau dampak (menggantikan 9 tab switch Sevima).
+- [ ] Gerbang ditegakkan di service (bukan UI): jendela KRS, `min_attendance_pct_for_exam` (BR-A15), cekal 4 dimensi (FR-AKA-10/AC-CEK-1), `late_krs_mode`, kuesioner pra-KHS (BR-A8).
+- [ ] `tenant_settings.nim_format` untuk pencetakan/pembangkitan NIM; `document_numbering` (dipakai FR-DOC-02 nanti).
+
+#### 2.5.7 Slice ADM-7 — Personel
+- [ ] CRUD `students` + biodata feeder + `student_addresses` + `student_guardians` (layar bertab; masking PII per izin).
+- [ ] CRUD `lecturers`/`staff` (NIDN/NUPTK unik per tenant; `Dosen Non-NIDN` didukung, padanan Sevima).
+- [ ] `student_status_history` + `POST /admin/status-mahasiswa/change|bulk` (alasan wajib + approval + empat-mata).
+- [ ] Pasang dosen-wali per angkatan/prodi (syarat loop approval KRS yang kini masih mock).
+- [ ] Ekspor/impor tunggal + `Login As` berjustifikasi (FR-ADM-13) **dengan** audit.
+
+#### 2.5.8 Slice ADM-8 — Pengguna & Hak Akses
+- [ ] Migrasi `0011_rbac_scoped.sql`: `permissions` (+`resource`, `verb permission_verb`), `roles`, `role_permissions`, `user_role_assignments` (scope prodi/periode/kelas/org), `access_change_requests`.
+- [ ] Matriks izin `resource × verb` (6 aksi) + penugasan ber-scope + riwayat izin (FR-IDT-04).
+- [ ] Ganti pemindaian enum 5 nilai di `apps/web/src/lib/*` dengan resolver izin (satu titik).
+- [ ] Viewer `audit_logs` + filter aktor/entitas/periode (read-only mutlak, AC-AUD-1).
+
+#### 2.5.9 Slice ADM-9 — Impor massal & Kesehatan Data
+- [ ] `POST /admin/impor/validate|commit` + `GET /admin/impor/:id` (templat per objek, batch 500 baris/transaksi, tanpa state setengah-jadi — NFR-U1).
+- [ ] Panel **Kesehatan Data** (FR-ADM-10): NIM duplikat, dosen tanpa NIDN, prodi tanpa akreditasi/masa akreditasi habis (BR-R7), matakuliah tanpa kurikulum, kelas tanpa jadwal/jam, mahasiswa tanpa dosen-wali, komposisi bobot ≠ 100%.
+- [ ] Gerbang status tenant `LIVE` tidak boleh aktif sebelum panel bersih (PRD J1, metrik ≤ 14 hari kerja).
+
+#### 2.5.10 Definition of Done per slice (berulang, wajib)
+- [ ] Kontrak Zod di `packages/contracts` + OpenAPI ter-generate (AGENTS §3.3).
+- [ ] RLS: `tenant_id` + ENABLE/FORCE + policy + **uji 2-tenant silang ditolak** (NFR-S1).
+- [ ] `tsc` 0 error · `lint --max-warnings 0` · `vitest` hijau (unit + integrasi Supabase live, self-cleaning).
+- [ ] Audit event tercatat untuk tiap tulis; idempotensi terbukti untuk aksi massal.
+- [ ] UI Velzon (UI_UX §2.0 & §9) terverifikasi di browser; i18n `id`+`en` bentuk identik.
+- [ ] ROADMAP (file ini) + [PROGRESS_REPORT.md](file:///c:/SICA/docs/PROGRESS_REPORT.md) diperbarui pada commit yang sama.
 
 ---
 

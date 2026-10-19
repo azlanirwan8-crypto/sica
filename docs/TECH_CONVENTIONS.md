@@ -54,6 +54,50 @@ apps/web/
 └─ styles/                             # tokens.css, globals.css (Tailwind CSS)
 ```
 
+### 1.1.1 Konvensi penempatan kode Area Admin (ADM-1…ADM-9)
+> Disesuaikan dengan **kenyataan pohon kode saat ini** (`apps/web/src/app/(dashboard)/…`, `apps/web/src/modules/…`) — pohon di §1.1 di atas adalah model target dan **masih drift** (mis. `(portal)/[tenant]/` belum ada). Jangan membuat pola baru untuk Admin; pakai pola yang sudah terbukti di `modules/academic`.
+
+```
+apps/web/src/app/(dashboard)/admin/
+├─ layout.tsx                        # sub-nav Admin + context strip (Periode/Prodi/Status)
+├─ page.tsx                          # Kesehatan Data & ringkasan tenant
+├─ master/{tahun-akademik,periode,kalender,organisasi,prodi,kurikulum,
+│          matakuliah,prasyarat,skala-nilai,komposisi-nilai,ruang,referensi}/page.tsx
+├─ personel/{mahasiswa,dosen,staf,status-mahasiswa,dosen-wali}/page.tsx
+├─ penyelenggaraan/{kelas,pengampu,jadwal,pertemuan}/page.tsx
+├─ pengaturan/{akademik,cekal,tenant,modul}/page.tsx
+├─ pengguna/{index,hak-akses,sesi}/page.tsx
+├─ impor/page.tsx
+└─ audit/page.tsx
+
+apps/web/src/app/api/v1/admin/<objek>/route.ts            # list + create (pattern API_SPEC §4.6)
+apps/web/src/app/api/v1/admin/<objek>/[id]/route.ts       # detail + PATCH + DELETE
+apps/web/src/app/api/v1/admin/<objek>/[id]/{impact,deactivate}/route.ts
+apps/web/src/app/api/v1/admin/<objek>/generate/route.ts   # aksi massal idempoten (bila ada)
+
+apps/web/src/modules/admin/
+├─ components/     # master-drawer.tsx, master-form-*.tsx, impact-dialog.tsx, health-panel.tsx
+├─ services/       # <objek>.service.ts  ← satu-satunya tempat aturan bisnis & transaksi
+├─ repository/     # <objek>.repository.ts ← signature wajib (ctx, …), tanpa ctx = compile error
+├─ guards/         # require-admin.ts (JWT→role+scope→withModule→withTenantContext)
+└─ types.ts        # tipe turunan (`$inferSelect`/`$inferInsert`) + DTO lokal
+
+packages/contracts/src/master-data.ts   # SEMUA skema Zod CRUD master (satu sumber kebenaran)
+packages/database/src/schema/academic-master.ts | reference.ts (baru) | settings.ts (baru)
+```
+
+**Aturan penamaan & struktur (mengikat):**
+1. **Satu objek master = satu pasangan kontrak + service + repository + 2 file rute.** Tidak ada service anonim di dalam `page.tsx` (RSC hanya memanggil service, tidak menulis SQL).
+2. Nama rute URL memakai **bahasa Indonesia** (`matakuliah`, `tahun-akademik`) karena menjadi menu yang dibaca staf kampus; **nama simbol kode tetap Inggris** (`courses`, `academicYears`) — AGENTS §3.6. Pemetaan dua bahasa ini disimpan di `admin/menu.ts` sebagai satu tabel, bukan tersebar di JSX.
+3. Kontrak Zod CRUD wajib berformat seragam: `XSchema` (bentuk penuh), `XUpsertSchema` (create), `XUpdateSchema = XUpsertSchema.partial()`, `XListQuerySchema` (memakai `PaginationQuerySchema` yang sudah ada). Tidak ada skema "khusus halaman".
+4. Service mengembalikan **discriminated union outcome** (`{ok:true,…} | {ok:false,kind:'…'}`) seperti `krs.service.ts` hari ini; rute hanya memetakan `kind` → HTTP + kode error (API_SPEC §4.6.5). Rute **tidak** berisi logika bisnis.
+5. Aksi massal wajib menerima `Idempotency-Key` dan menulis hasil `{created, skipped}`; generator harus aman dijalankan ulang (pola AC-KEU-2).
+6. Setiap mutasi service memanggil `emitAdminAudit(...)` (satu helper) alih-alih menulis baris audit manual, supaya bentuk `audit_logs` tidak bercabang.
+7. Komponen UI admin **hanya** dari primitif Velzon (`components/ui/*`) + `VelzonDataGrid`; tidak ada kelas Tailwind lokal untuk warna/radius (UI_UX_DESIGN §2.0 & §9.1 butir 5).
+8. Semua teks layar lewat `locales/{id,en}.json` dengan kunci `admin.*`; bentuk kedua file wajib identik (dijaga `tsc` lewat tipe kamus, seperti kegagalan `TS2719` yang sudah pernah terjadi).
+
+---
+
 ### 1.2 Manajemen State: Pemisahan Server State vs Client State
 
 SICA secara ketat membedakan antara **Server State** (data yang bersumber dari database API) dan **Client State** (status UI murni):

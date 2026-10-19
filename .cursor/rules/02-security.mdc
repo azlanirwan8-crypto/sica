@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
 
 | Token | Penyimpanan | TTL | Keamanan |
 |-------|-------------|-----|----------|
-| **Access Token** (JWT EdDSA) | Memory (Web), Secure Storage (Mobile) | 10 menit | Klaim: `sub`, `tid`, `rc`, `sid`, `scope` |
+| **Access Token** (JWT RS256) | Memory (Web), Secure Storage (Mobile) | 10 menit | Klaim: `sub`, `tid`, `rc`, `sid`, `scope` |
 | **Refresh Token** (opaque) | HttpOnly Secure Cookie (Web), Secure Storage (Mobile) | 14 hari | Rotasi setiap penggunaan, deteksi reuse (family) |
 | **Session** | Server-side (PostgreSQL + Redis) | 14 hari | Dapat dicabut secara instan |
 

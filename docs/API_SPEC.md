@@ -611,6 +611,112 @@ export const ActivateModuleRequestSchema = z.object({
 
 ---
 
+### 4.6 Modul Administrasi & Data Master (`/api/v1/admin/*`)
+> Rujukan kebutuhan: [PRD §5.8](file:///c:/SICA/docs/PRD.md) · objek & DDL: [DATA_MODEL §14](file:///c:/SICA/docs/DATA_MODEL.md) · struktur menu: [BENCHMARK_SEVIMA.md §4.1](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md) · padanan layar Sevima: §2.3/§2.4. **Status: dispesifikasi, belum diimplementasi.**
+
+**Kontrak silang yang berlaku untuk SEMUA rute `/admin/*` (tidak boleh dilanggar):**
+1. **4 lapis penegakan** di tiap handler: (a) verifikasi JWT RS256 (`extractRequestContext`), (b) role + **scope** (`user_role_assignments`), (c) `withModule(code)` gerbang entitlement, (d) `withTenantContext` → `set_config('app.current_tenant', …)` sebelum query apa pun. Menambah data tanpa keempatnya = temuan audit.
+2. **Envelope standar** §2.1/§2.2; list memakai `PaginationQuery` (`page`, `pageSize`, `sort`, `q`) + `meta.total`.
+3. **Mutasi hanya ke Primary**; list yang dibaca segera setelah tulis (read-your-writes) **tidak boleh** ke replica (AGENTS §3.7).
+4. **Idempotensi** untuk aksi massal: header `Idempotency-Key` (tabel `idempotency_keys` §4) — `Generate Kelas`/`Generate Pertemuan` yang dijalankan ulang tidak boleh menghasilkan baris ganda.
+5. **Audit** setiap tulis: `audit_logs(actor, action, resource, before, after, reason)` + pantulkan `auditId` di `meta` respons.
+6. Delete master **selalu** lewat dua langkah: `POST …/impact` (baca dependensi) lalu `DELETE`/`PATCH {isActive:false}`. Server menolak `409 REFERENCE_IN_USE` bila ada rujukan (FR-ADM-12).
+
+**Pola CRUD seragam untuk tiap objek master** (diwajibkan agar kontrak, UI, dan generator OpenAPI konsisten):
+| Metode & rute | Fungsi | Izin (`resource:verb`) | Modul |
+|---|---|---|---|
+| `GET /api/v1/admin/<objek>` | list + filter + paginasi | `admin.<objek>:READ` | `academic` |
+| `POST /api/v1/admin/<objek>` | buat | `admin.<objek>:INSERT` | `academic` |
+| `GET /api/v1/admin/<objek>/:id` | detail | `…:READ` | `academic` |
+| `PATCH /api/v1/admin/<objek>/:id` | ubah sebagian (Zod partial) | `…:UPDATE` | `academic` |
+| `POST /api/v1/admin/<objek>/:id/deactivate` | nonaktif-soft (preferensi alih-alih hapus) | `…:UPDATE` | `academic` |
+| `DELETE /api/v1/admin/<objek>/:id` | hapus keras **hanya** bila belum dirujuk | `…:DELETE` | `academic` |
+| `POST /api/v1/admin/<objek>/:id/impact` | pratinjau dependensi sebelum hapus/ubah kunci | `…:READ` | `academic` |
+
+**Rute objek master (nama path final):**
+| # | `<objek>` | Catatan khusus |
+|---|---|---|
+| 1 | `tahun-akademik` (`academic-years`) | label unik per tenant |
+| 2 | `periode` (`periods`) | + aksi status di §4.6.2 |
+| 3 | `kalender` (`calendar-events`) | `kind` terbatas; `is_mandatory` → `403 CALENDAR_REGULATORY_EVENT` bila dihapus |
+| 4 | `organisasi` (`organizations`) | hierarki `parentId`; tolak siklus |
+| 5 | `prodi` (`study-programs`) | validasi plafon BR-R2/R3/R4; **hanya boleh mengencangkan** (`422 NATIONAL_CAP_TIGHTEN_ONLY`) |
+| 6 | `kurikulum` (`curricula`) | berversi; `gradeScaleId` wajib sebelum kelas dibuat |
+| 7 | `matakuliah` (`courses`) | `sks = sksTeori+sksPraktik(+…)`, `CHECK` di kontrak |
+| 8 | `prasyarat` (`course-prerequisites`) | anti self-prerequisite, anti siklus |
+| 9 | `ekivalensi` (`course-equivalencies`) | butuh `VALIDATE` (persetujuan) |
+| 10 | `skala-nilai` (`grade-scales`) + `skala-nilai/:id/bands` | band tumpang tindih → `422 BAND_OVERLAP` |
+| 11 | `komposisi-nilai` (`grade-components`) | jumlah bobot ≠ 100 → `422 WEIGHT_SUM_NOT_100` (AC-NIL-4) |
+| 12 | `ruang` (`rooms`) | `capacity > 0`; `roomType` enum |
+| 13 | `referensi` (`reference-kinds`, `reference-items`) | kamus §14.2; `isSystem` tak boleh hapus |
+| 14 | `skema-enrollment` (`enrollment-schemes`) | padanan "Sistem Kuliah" Sevima |
+| 15 | `mahasiswa` (`students`) | + `student-biodata` ( alamat/ortu ) — PII, respons ter-masking sesuai peran |
+| 16 | `dosen` (`lecturers`), `tendik` (`staff`) | NIDN/NUPTK unik per tenant (bukan global) |
+| 17 | `status-mahasiswa` (`student-status`) | `POST …/change` (alasan wajib + approval) & `POST …/bulk` (set semester) |
+| 18 | `pengaturan-akademik` (`academic-rules`) | `PUT /admin/pengaturan-akademik` body = `{programId, periodId, params}`; simpan versi baru, jangan `UPDATE` in-place |
+| 19 | `pengaturan-tenant` (`tenant-settings`) | format NIM, penomoran, blok tanda tangan, allowlist IP presensi |
+| 20 | `pengguna` (`users`), `hak-akses` (`role-assignments`), `sesi` (`sessions`) | perubahan izin → `access_change_requests` (empat-mata) |
+| 21 | `audit` (`audit-logs`) | **READ-only**; tak ada rute tulis/ubah (AC-AUD-1) |
+| 22 | `impor` (`imports`) | §4.6.4 |
+| 23 | `kelas` (`classes`), `pengampu` (`class-assignments`), `jadwal` (`schedules`), `pertemuan` (`sessions-generation`) | §4.6.3, domain `teaching` |
+
+#### 4.6.1 Contoh — list data master (seragam untuk 23 objek)
+`GET /api/v1/admin/prodi?page=1&pageSize=25&q=si&jenjang=S1`
+```json
+{ "success": true,
+  "data": [ { "id":"…","code":"IF","name":"S1 Teknik Informatika","level":"S1",
+              "pddiktiCode":"12345","accreditationStatus":"UNGGUL","accreditationExpiresOn":"2028-12-01",
+              "minTotalSks":"144.0","maxStudySemesters":16,"deliveryMode":"ONSITE","isActive":true } ],
+  "meta": { "page":1, "pageSize":25, "total":61, "auditId":null } }
+```
+
+#### 4.6.2 Transisi status periode (gerbang semua operasi tulis)
+`POST /api/v1/admin/periode/:id/status` body `{ "status": "OPEN" | "CLOSED", "reason": "…" }`
+| Dari → Ke | Aturan | Error bila dilanggar |
+|---|---|---|
+| `DRAFT → OPEN` | kalender + prodi + kurikulum + minimal 1 kelas siap | `422 PERIOD_NOT_READY` (daftar penyebab dari §14 FR-ADM-10) |
+| `OPEN → CLOSED` | tidak ada nilai `DRAFT` tertinggal **atau** disertai `reason` + `acknowledge` | `409 PERIOD_HAS_OPEN_DRAFT_GRADES` |
+| `CLOSED → OPEN` | **wajib** `period_reopen_requests` di-approve (BR-A9/R10) | `403 REOPEN_REQUIRES_APPROVAL` |
+> Setelah `CLOSED`, seluruh rute tulis domain menolak `423 PERIOD_CLOSED` (bukan hanya menyembunyikan tombol — PRD P5).
+
+#### 4.6.3 Aksi massal khas Admin (benchmark §2.4c/d/e)
+| Rute | Aksi | Jaminan |
+|---|---|---|
+| `POST /api/v1/admin/kelas/generate` | buat N kelas paralel dari (periode, prodi, kurikulum/matakuliah, daya tampung) | idempoten + nama kelas A/B/C deterministik; `409` bila `maxParallelClasses` terlampaui |
+| `POST /api/v1/admin/pertemuan/generate` | buat `class_sessions` 1..n, **lewati hari libur** dari `academic_calendar_events` | satu transaksi per kelas; hasil `{created, skipped}` |
+| `POST /api/v1/admin/jadwal/validate` | uji bentrok dosen+ruang tanpa menyimpan (AC-JDW-1) | kembalikan daftar irisan (nama, rentang) |
+| `POST /api/v1/admin/pengampu` | `bulk` penugasan dosen | tolak `422 LECTURER_WORKLOAD_EXCEEDED` (BR-A11 maks 16 SKS) |
+| `POST /api/v1/admin/status-mahasiswa/bulk` | aktif/cuti/non-aktif set per semester | alasan wajib + approval + audit |
+| `POST /api/v1/admin/nilai/kunci` / `/umumkan` | kunci/membuka & umumkan massal | membuka kunci nilai `EFFECTIVE` butuh `VALIDATE` + alasan |
+| `POST /api/v1/admin/nilai/hitung-ulang` | recalc IP/IPS/IPK/transkrip kelas | tulis snapshot baru, **bukan** `UPDATE` diam-diam (P3) |
+
+#### 4.6.4 Impor & rekonsiliasi master data (FR-ADM / AC-MIG-1)
+```
+POST /api/v1/admin/impor/validate     (multipart: file, objek, dryRun=true)
+POST /api/v1/admin/impor/commit       (body: {importId, mode:"CREATE|UPSERT"})
+GET  /api/v1/admin/impor/:id          → { barisSumber, terimpor, ditolak, alasan[] , deviasiIpk }
+```
+- Urutan dependensi dipaksakan server: prodi → kurikulum → matakuliah → prasyarat → dosen → mahasiswa → kelas → jadwal.
+- Batas: ≤ 20.000 baris/berkas; prosess per-batch 500 baris dalam transaksi terpisah; gagal total tidak meninggalkan state setengah-jadi (NFR-U1).
+- File disimpan di object storage dengan akses sementara; **PII tidak pernah masuk log** (Pino redaction, AGENTS/SECURITY).
+
+#### 4.6.5 Kode error baru khas administrasi (melengkapi §2.3)
+| HTTP | Kode | Makna |
+|---|---|---|
+| 403 | `ADMIN_SCOPE_MISMATCH` | role ada, tapi scope (prodi/periode/kelas) tidak mencakup objek |
+| 403 | `CALENDAR_REGULATORY_EVENT` | mencoba menghapus agenda wajib BR-R9 |
+| 403 | `REOPEN_REQUIRES_APPROVAL` | membuka kembali periode tertutup tanpa persetujuan |
+| 409 | `REFERENCE_IN_USE` | master dirujuk transaksi; tawarkan `deactivate` |
+| 409 | `MAX_PARALLEL_CLASSES_EXCEEDED` | melebihi plafon kelas paralel prodi |
+| 422 | `NATIONAL_CAP_TIGHTEN_ONLY` | mencoba melonggarkan plafon SKS/masa studi nasional (NFR-R2) |
+| 422 | `BAND_OVERLAP` | band skala nilai tumpang tindih |
+| 422 | `WEIGHT_SUM_NOT_100` | komposisi bobot bukan 100% (AC-NIL-4) |
+| 422 | `LECTURER_WORKLOAD_EXCEEDED` | penugasan melewati beban mengajar maks (BR-A11) |
+| 423 | `PERIOD_CLOSED` | operasi tulis pada periode terkunci (BR-A9) |
+| 424 | `MODULE_INACTIVE` | modul entitlement belum aktif (padanan `MODULE_DEPENDENCY_UNMET` §4.5) |
+
+---
+
 ## 5. Ringkasan Koleksi Endpoint Lengkap
 
 ```

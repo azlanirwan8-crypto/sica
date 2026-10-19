@@ -340,3 +340,56 @@ Refactor "Principal Lead UI/UX Engineer" menetapkan kelas Tailwind eksplisit (bu
 - Toasts appear in the top‑right (Web) or bottom‑center (Mobile) and auto‑dismiss after 4 s.
 
 ---
+
+## 9. Arsitektur Informasi Area Admin & Pola Halaman (Web)
+> Dasar: [BENCHMARK_SEVIMA.md](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md) §2.1–§2.4 (struktur menu Sevima) + §2.8/§2A.8 (kelemahan yang harus kita hindari: menu overflow, duplikasi jalur, "kenapa tidak muncul") + kebutuhan [PRD §5.8](file:///c:/SICA/docs/PRD.md). Berlaku untuk seluruh layar `/admin/**`. **Status: spesifikasi, belum dibangun.**
+
+### 9.1 Prinsip IA Area Admin (anti-pattern yang kita tolak)
+1. **Satu jalur per objek.** Objek master hanya punya satu alamat kanonik (`/admin/master/prodi`). Duplikasi ala Sevima (`Data Kelas > Tahun Ajaran` vs `Data Kurikulum > Tahun Ajaran` vs `Setting > Periode Akademik`) dilarang; halaman lain menautkan, bukan menyalin layar.
+2. **Menu = peran × entitlement × status data.** Item yang tidak boleh tampil karena modul belum dibeli **tidak** muncul (bukan sekadar di-disable) — sesuai guard `withModule` di API (API_SPEC §4.6 butir 1c). Item yang belum punya halaman memakai badge "Segera" seperti navigasi saat ini.
+3. **Konteks kerja terlihat.** Setiap halaman Admin menampilkan strip konteks: `Periode aktif` + `Prodi scope` + `Status periode (DRAFT/OPEN/CLOSED)`. Penyebab utama kebingungan di SIAKAD lama adalah filter periode yang diam (bukti: artikel troubleshooting Sevima, §2.8 D-4).
+4. **Kosong bukan berarti diam.** `EmptyState` wajib menyebut **sebab** dan **tautan perbaikan** (mis. "Belum ada kelas karena kurikulum 2026 belum punya mata kuliah -> Tambah mata kuliah"). Komponen `components/ui/empty-state.tsx` disebut §8.2 tetapi **belum ada di kode** -> masuk slice ADM-1.
+5. **Velzon, selalu** (§2.0). Tidak ada gaya lokal: `rounded-md` 8px, tombol datar, input putih, label normal-case, primary hijau `#0ab39c`.
+
+### 9.2 Kerangka halaman
+```
++-----------------------------------------------------------------------------------+
+| header 2 baris Velzon horizontal (components/layout/top-nav.tsx - sudah ada)       |
+| baris 2 + "context strip": Periode v | Prodi v | Status: OPEN                      |
++----------------+------------------------------------------------------------------+
+| sub-nav Admin  | judul H1 + aksi primer kanan (Tambah / Import / Generate)         |
+| (grouped,      +------------------------------------------------------------------+
+|  collapsible)  | [tab bila objek punya anak: mis. Skala Nilai | Band]              |
+|                | VelzonDataGrid (cari, sorting, paginasi 25, aksi baris)           |
++----------------+------------------------------------------------------------------+
+   form = Side Drawer kanan 60% | destructive = Modal (2.4) | dampak = Drawer "Kesehatan Data"
+```
+- **Daftar lalu drawer form** (bukan halaman baru) untuk semua CRUD master: memotong 23 objek menjadi 1 pola; deep-link `/admin/master/prodi?edit=<id>` tetap bisa dibagikan.
+- Drawer form bertab untuk objek lebar (`Prodi`: Identitas | Kurikulum & Plafon | Akreditasi | Feeder; `Matakuliah`: SKS & Tipe | Prasyarat | Ekivalensi).
+- **Dirty-state guard**: menutup drawer dengan perubahan wajib dikonfirmasi; jangan pernah menghilangkan isian panjang secara diam-diam.
+- Field wajib ditandai `*` + pesan Zod **di bawah field** (bukan toast saja); error 422 server menempel ke field terkait (`error.details[].path`).
+
+### 9.3 Kontrak visual tiap gugus menu
+| Gugus | Komponen wajib | Catatan |
+|---|---|---|
+| **A. Umum / Kesehatan Data** | kartu kelompok masalah (Kritis / Perlu Tindakan / Info) + CTA "perbaiki" | gerbang sebelum tenant `LIVE` (FR-ADM-10) |
+| **B. Data Master** | `VelzonDataGrid` + drawer + kolom `Status` (aktif/nonaktif) + aksi `Nonaktifkan` sebelum `Hapus` | `409 REFERENCE_IN_USE` -> tampilkan daftar rujukan di modal |
+| **C. Personel** | grid + tab detail (Biodata | Alamat | Wali | Dokumen | Riwayat status) | PII ter-masking untuk peran non-pemegang `INSERT`/`UPDATE` |
+| **D. Penyelenggaraan** | grid + **matriks jadwal** (hari x jam) dengan sel bentrok merah + drawer "Generate Kelas" | conflict-detector service sudah ada; tampilkan konflik per sel |
+| **E. Pengaturan Akademik** | **wizard 4 langkah** (Jendela -> Kuota & Prasyarat -> Gerbang & Cecal -> Nilai & Kuesioner) + **diff sebelum simpan** + pratinjau dampak | pengganti langsung 9 tab kali puluhan switch Sevima (§2.8 D-6) |
+| **F. Pengguna & Hak Akses** | matriks `resource x verb` (6 aksi, FR-IDT-04) + penugasan ber-scope + riwayat izin | setiap simpan -> `access_change_requests` (empat-mata) |
+| **G. Impor** | stepper Unggah -> Validasi -> Rekonsiliasi -> Terapkan + unduh templat per objek | tampilkan deviasi IP/IPK <= 0,00 (AC-MIG-1) |
+| **H. Feeder** | kartu pemetaan 20 sumber daya + pra-validasi inline + log kirim per periode | error feeder ditampilkan **saat input**, bukan saat kirim (D-5) |
+
+### 9.4 Aturan micro-interaction Admin
+- Aksi massal (`Generate Kelas`, `Generate Pertemuan`, `Kunci Nilai massal`) -> modal konfirmasi berisi **angka dampak** ("12 kelas x 16 pertemuan = 192 baris") + `Idempotency-Key` di belakang; hasil = toast + ringkasan `created/skipped`, bukan hanya "sukses".
+- Simpan master: optimistic UI **dilarang** (sumber kebenaran = aturan nasional + dependensi); tunggu 201, sisipkan baris, perbarui `meta.total`.
+- Semua tabel memberi tautan "Lihat juga di..." bila objek dipakai domain lain (satu jalur kanonik, tetap dapat dinavigasi).
+- `prefers-reduced-motion` tetap dihormati; animasi drawer 180-220 ms ease-out, tidak lebih.
+
+### 9.5 i18n & penamaan
+- Seluruh label menu/kolom/aksi dari `locales/id.json` & `en.json` (AGENTS §3.5); kunci baru: `admin.menu.*`, `admin.master.<objek>.title/columns/actions`, `admin.rules.wizard.*`, `admin.errors.<KODE>`.
+- Istilah Indonesia konsisten: **Periode**, **Mata Kuliah**, **Ruang**, **Pengaturan Akademik**, **Cegal**, **Presensi**, **Nilai**, **Yudisium** — selaras [GLOSSARY.md](file:///c:/SICA/docs/GLOSSARY.md). Padanan istilah Sevima dicatat agar admin yang pindah tidak bingung (`Sistem Kuliah` -> *Skema Penerimaan*; `Unsur Nilai` -> *Komponen Nilai*; `Status Semester` -> *Status Akademik per Semester*).
+
+### 9.6 Paritas Mobile (AGENTS §3.4)
+Admin tidak perlu layar penuh di Flutter, tetapi tiga aksi wajib ada di mobile (kasus nyata: kaprodi/dekan bergerak): (1) **persetujuan** (KRS, koreksi nilai, perubahan status, keringanan), (2) **monitoring pengisian nilai** per kelas, (3) **buka/tutup presensi** dan QR sesi. Data hanya lewat rute `/api/v1/*` yang sama; tidak ada endpoint khusus mobile.

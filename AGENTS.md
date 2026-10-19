@@ -38,8 +38,10 @@ Gunakan tabel ini untuk menentukan dokumen mana yang harus dibaca berdasarkan ko
 | **Pengujian** | `TESTING_STRATEGY.md` | `TECH_CONVENTIONS.md`, `DATA_MODEL.md` |
 | **Penanganan Insiden** | `ISSUE_RESOLUTION.md` | `DEPLOYMENT_DEVOPS.md`, `SECURITY_COMPLIANCE.md` |
 | **Infrastruktur & High-Concurrency / HA** | `ARCHITECTURE.md` (§9–10) | `DEPLOYMENT_DEVOPS.md` (§4), `DATA_MODEL.md` (§13) |
+| **Otorisasi, Peran & Hak Akses** | `RBAC_MATRIX.md` | `SECURITY_COMPLIANCE.md` (§3), `DATA_MODEL.md` (§3/§14.4) |
+| **Area Admin, Data Master & Benchmark Kompetitor** | `BENCHMARK_SEVIMA.md` | `PRD.md` (§5.8), `DATA_MODEL.md` (§14), `API_SPEC.md` (§4.6), `UI_UX_DESIGN.md` (§9), `ROADMAP_TASKS.md` (§2.5) |
 
-### 2.2 Daftar Lengkap 18 Dokumen
+### 2.2 Daftar Lengkap 20 Dokumen
 
 | # | Dokumen | Lokasi | Deskripsi Singkat |
 |---|---------|--------|-------------------|
@@ -61,6 +63,8 @@ Gunakan tabel ini untuk menentukan dokumen mana yang harus dibaca berdasarkan ko
 | 16 | `TESTING_STRATEGY.md` | `/docs/TESTING_STRATEGY.md` | Piramida testing, cakupan, strategi mock |
 | 17 | `DEPLOYMENT_DEVOPS.md` | `/docs/DEPLOYMENT_DEVOPS.md` | Pipeline CI/CD, infrastruktur, rollout |
 | 18 | `ISSUE_RESOLUTION.md` | `/docs/ISSUE_RESOLUTION.md` | SLA insiden, klasifikasi, penanganan |
+| 19 | `RBAC_MATRIX.md` | `/docs/RBAC_MATRIX.md` | **Sumber kebenaran hak akses**: 22 peran ber-scope, katalog ~160 permission, matriks Role × Modul × Menu × Aksi, aturan SoD/ABAC/PII, celah G-01…G-08 |
+| 20 | `BENCHMARK_SEVIMA.md` | `/docs/BENCHMARK_SEVIMA.md` | Hasil studi dokumentasi Sevima (peran, menu, modul, data master, flow) + kondisi SICA + peta selisih + urutan pengerjaan Area Admin |
 
 ---
 

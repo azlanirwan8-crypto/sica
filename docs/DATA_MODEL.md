@@ -1382,4 +1382,162 @@ Prinsip urutan kolom indeks: **kolom equality → range → ORDER/cover**; `INCL
 ### 13.4 Kuota atomic di Redis (ringkas) — lihat ARCHITECTURE §10
 Kapasitas kursi/kuota SKS saat OW **tidak** dibaca/ditulis per-request ke DB (mencegah row-lock). Sumber kebenaran runtime = Redis Lua atomic; DB (`enrollments`, `classes.enrolled_count`) hanyalah **finalis** via worker. `enrolled_count` dijaga `CHECK (enrolled_count <= capacity)` + job reconcile periodik (proyeksi konsisten).
 
+---
+
+## 14. Addendum Administrasi & Data Master (implementasi) — 2026-10-19
+
+Rujukan kebutuhan: [PRD §5.8](file:///c:/SICA/docs/PRD.md) dan [BENCHMARK_SEVIMA.md](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md) §2.3/§2A.6/§5. Bagian ini **tidak mengubah** §5; bagian ini menetapkan (a) objek mana yang sudah didokumenkan tapi belum menjadi kode, dan (b) objek **baru** yang muncul dari benchmark Sevima, lengkap dengan DDL pengikat.
+
+### 14.1 Matriks status objek yang dibutuhkan Area Admin
+| Objek | Spesifikasi DDL | Kode Drizzle | Migrasi | Slice |
+|---|---|---|---|---|
+| `academic_calendar_events` | §5 (ada) | ❌ | `0007_admin_calendar_reference.sql` | ADM-2 |
+| `course_prerequisites` | §5 (ada) | ❌ | `0008_curriculum_prereq_equivalency.sql` | ADM-3 |
+| `course_equivalencies` | **§14.3 baru** | ❌ | `0008_…` | ADM-3 |
+| `grade_components` | §5 (ada) | ✅ (`enrollments.ts`) | — | ADM-3 |
+| `blockades` | §5 (ada) | ❌ | `0009_rules_blockades_status.sql` | ADM-6 |
+| `academic_rules` | §5 (ada) | ❌ | `0009_…` | ADM-6 |
+| `student_status_history` | §5 (ada) | ❌ | `0009_…` | ADM-7 |
+| `enrollment_schemes` | **§14.3 baru** | ❌ | `0010_admin_misc.sql` | ADM-6 |
+| `reference_items` (+`reference_kinds`) | **§14.3 baru** | ❌ | `0007_…` | ADM-3/ADM-7 |
+| `tenant_settings` | **§14.3 baru** | ❌ | `0010_…` | ADM-2 |
+| `document_templates` / `document_number_sequences` | **§14.3 baru** (FR-DOC-02) | ❌ | backlog Phase 2 | — |
+| `permissions`, `roles`, `role_permissions`, `user_role_assignments`, `access_change_requests` | §3 (ada) | ❌ | `0011_rbac_scoped.sql` | ADM-8 |
+| `audit_logs` (+`audit_chain_head`), `outbox`, `idempotency_keys`, `login_events` | §4 / §3 (ada) | ❌ | `0012_audit_outbox.sql` | ADM-1 |
+| Gugus keuangan (`fee_*`, `invoices`, `payments`, `ledger`, `payment_waivers`, `clearances`) | §5 (ada) | ❌ | backlog Sprint 4 | — |
+| Gugus feeder (`pddikti_mappings`, `pddikti_sync_runs`, `period_reopen_requests`, `pddikti_correction_requests`) | §5 (ada) | ❌ | backlog Sprint 8 | — |
+| `graduation_records` | §5 (**duplikat baris 811 & 872 — defek AUD-09**) | ❌ | **WAJIB refactor sebelum migrasi** | — |
+
+> **Aturan:** setiap objek baru **di commit yang sama** wajib membawa `tenant_id`, `ENABLE/FORCE ROW LEVEL SECURITY`, dan policy `tenant_isolation` dari generator §6.2 (PRD P1, AGENTS §3.2). Tidak ada tabel domain tanpa RLS.
+
+### 14.2 Keputusan model: kamus data referensi (meniru daya ungkit Sevima, memperbaiki kelemahannya)
+Sevima memelihara **±30 layar master kecil** (`Agama`, `Pekerjaan`, `Suku`, `Penghasilan`, `Jenis Matakuliah`, `Status Hadir`, `Slot Waktu`, `Kebutuhan Khusus`, `Transportasi`, dst.). Mewariskan pola itu sebagai 30 tabel terpisah = 30 migrasi + 30 kontrak + 30 layar. SICA memakai **satu tabel kamus ber-`kind`** sehingga Admin memperoleh satu layar "Data Referensi" dengan tab, dan aplikasi tetap dapat memvalidasi kode secara ketat.
+
+```sql
+CREATE TYPE reference_domain AS ENUM (
+  'BIODATA','AKADEMIK','PEKULIAHAN','KEPEGAWAIAN','WILAYAH','KEUANGAN','KEMAHASISWAAN');
+
+-- Jenis kamus (metadata, bukan nilai) — global boleh, tapi tenant dapat menambah sendiri.
+CREATE TABLE reference_kinds (
+  kind        text PRIMARY KEY,                 -- 'agama','pekerjaan','penghasilan','suku',
+                                                -- 'jenis_matakuliah','kelompok_matakuliah','bidang_ilmu',
+                                                -- 'status_hadir','jenis_pertemuan','slot_waktu',
+                                                -- 'kegiatan_akademik','kebutuhan_khusus','jenis_tinggal',
+                                                -- 'transportasi','jalur_masuk','sekolah_asal','bahasa'
+  label       text NOT NULL,
+  domain      reference_domain NOT NULL,
+  is_system   boolean NOT NULL DEFAULT true,    -- true = dibatasi edit (dipakai pemetaan feeder)
+  feeder_code text,                             -- kode sumber daya Neo Feeder bila ada (§2.5 benchmark)
+  has_external_dictionary boolean NOT NULL DEFAULT false  -- true = disinkron dari Kamdagri/PDDikti
+);
+
+-- Nilai kamus per tenant (tenant-scoped → RLS + FORCE).
+CREATE TABLE reference_items (
+  id         uuid PRIMARY KEY,
+  tenant_id  uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind       text NOT NULL REFERENCES reference_kinds(kind),
+  code       text NOT NULL,        -- kode lokal / kode nasional (mis. kode kecamatan 7 digit)
+  name       text NOT NULL,
+  name_en    text,
+  parent_id  uuid REFERENCES reference_items(id),   -- hierarki wilayah & kelompok matakuliah
+  extra      jsonb NOT NULL DEFAULT '{}'::jsonb,    -- { "pddikti_id":"", "points": 0, "color":"#..." }
+  sort_order int  NOT NULL DEFAULT 100,
+  is_active  boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, kind, code)
+);
+CREATE INDEX idx_ref_items_lookup ON reference_items(tenant_id, kind, is_active, sort_order);
+CREATE INDEX idx_ref_items_parent ON reference_items(tenant_id, parent_id);
+```
+Penegakan:
+1. `reference_items` dengan `is_system=true` **tidak boleh dihapus** bila sudah dirujuk — dilayani **impact analysis** (FR-ADM-12) sebelum hapus; fallback = `is_active=false`.
+2. `extra->'points'` dipakai untuk **poin kemahasiswaan** & basis UKT/KIP (Sevima: "Fungsi Poin Pada Referensi Penghasilan") — nilai tersimpan sebagai data, bukan kode (PRD P4).
+3. **Kamus wilayah Indonesia** (negara→provinsi→kota→kecamatan→kelurahan + kodepos) adalah data eksternal berukuran besar: dimuat sebagai seed terpisah & di-*version*, **tidak** diimpor per tenant. Kesalahan `Kecamatan tidak sama dengan database` (error feeder Sevima, §2.5) menjadi validasi inline saat input biodata (D-5), bukan saat kirim.
+4. Enum lama tetap hidup (`sex_type`, `income_band`, `course_type`, `attendance_status`) untuk kolom yang **wajib** typed; `reference_items` untuk kamus yang **dapat dirawat** kampus. Ini mencegah dua sumber kebenaran: kolom enum = tetap; kamus = dapat ditambah.
+
+### 14.3 Objek baru lainnya
+```sql
+-- Pengaturan tenant yang tidak masuk academic_rules (bukan per prodi/periode).
+CREATE TABLE tenant_settings (
+  tenant_id          uuid PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+  locale             text NOT NULL DEFAULT 'id',
+  timezone           text NOT NULL DEFAULT 'Asia/Jakarta',
+  academic_calendar_style text NOT NULL DEFAULT 'SEMESTER',   -- SEMESTER | TRIWIDASAKI | QUARTER
+  nim_format         jsonb NOT NULL DEFAULT '{}'::jsonb,      -- {"pattern":"{kodeFak}{tahun}{seq4}","perProdi":false}
+  document_numbering jsonb NOT NULL DEFAULT '{}'::jsonb,      -- pola nomor SK/surat
+  signature_blocks   jsonb NOT NULL DEFAULT '{}'::jsonb,      -- Rektor/Warek1..4 (padanan Sevima)
+  transscript_policy jsonb NOT NULL DEFAULT '{}'::jsonb,      -- matakuliah/nilai yang ditampilkan di transkrip
+  attendance_ip_allowlist inet[] NOT NULL DEFAULT '{}',        -- padanan "Daftar IP Address Untuk Presensi"
+  feature_flags      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_by         uuid, updated_at timestamptz NOT NULL DEFAULT now()
+);
+-- 1-tenant-1-baris → TIDAK perlu policy per-baris selain pencocokan tenant_id (§6.2 tetap dipakai).
+
+-- Skema enrollment ("sistem kuliah" Sevima): mengikat aturan KRS & tarif.
+CREATE TABLE enrollment_schemes (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  code text NOT NULL, name text NOT NULL,
+  entry_year_from int, entry_year_to int,           -- biasanya per angkatan
+  delivery_mode text NOT NULL DEFAULT 'ONSITE' CHECK (delivery_mode IN ('ONSITE','ONLINE','HYBRID')),
+  packed_first_semester boolean NOT NULL DEFAULT false,   -- FR-AKA-16 pemaketan KRS maba
+  fee_tariff_group_id uuid,                          -- FK ditambahkan bersama gugus keuangan
+  is_active boolean NOT NULL DEFAULT true,
+  UNIQUE (tenant_id, program_id, code)
+);
+
+-- Ekivalensi & konversi (FR-KUR-02): pindah prodi, RPL, MBKM.
+CREATE TABLE course_equivalencies (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  source_course_id uuid NOT NULL REFERENCES courses(id),
+  target_course_id uuid NOT NULL REFERENCES courses(id),
+  scheme_id uuid REFERENCES enrollment_schemes(id),
+  min_letter_code text NOT NULL DEFAULT 'C',
+  recognition_pct numeric(5,2) NOT NULL DEFAULT 100.00 CHECK (recognition_pct BETWEEN 1 AND 100),
+  evidence text,                                     -- berkas/surat keputusan
+  approved_by uuid, approved_at timestamptz,
+  UNIQUE (tenant_id, source_course_id, target_course_id),
+  CHECK (source_course_id <> target_course_id)
+);
+
+-- Status mahasiswa bersejarah (menutup P-10). VERSI §14 INI MENGGANTIKAN bentuk ringkas di §5
+-- (baris ±580, 6 kolom) — saat migrasi `0009` ditulis, blok §5 dicabut agar tidak ada
+-- dua definisi satu tabel (pengulangan yang sama dengan defek AUD-09 pada graduation_records).
+CREATE TABLE student_status_history (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  period_id uuid REFERENCES academic_periods(id),
+  from_status student_status, to_status student_status NOT NULL,
+  feeder_status_code text NOT NULL DEFAULT '1',      -- 1 AKTIF..5 LULUS (kamus feeder §2.5)
+  reason text NOT NULL CHECK (length(reason) >= 5),
+  evidence_url text,
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  effective_from date NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)   -- empat-mata, BR/PRD P2
+);
+```
+
+### 14.4 Matriks izin (FR-IDT-04) — padanan konkret dari model Sevima
+Sevima menyimpan hak akses per **(aplikasi, role)** dengan 6 aksi: `Read, Insert, Update, Delete, Validate, Other` (§2A.6). SICA memakai verb yang sama agar setara daya ungkap, **ditambah scope** agar lebih presisi:
+
+```sql
+CREATE TYPE permission_verb AS ENUM ('READ','INSERT','UPDATE','DELETE','VALIDATE','OTHER');
+
+-- permissions (katalog global) diberi kolom tambahan:
+--   resource text NOT NULL        -- 'admin.master.prodi', 'academic.krs.submit', …
+--   verb permission_verb NOT NULL -- gabungan resource:verb = satu izin atomik
+-- role_permissions(role_id, permission_id)  seperti §3
+-- user_role_assignments memakai:
+--   scope_program_id uuid, scope_period_id uuid, scope_class_id uuid, scope_org_id uuid
+```
+Pemetaan semantik `VALIDATE`: persetujuan KRS oleh Dosen PA, approval koreksi nilai oleh Kaprodi, approval perubahan status, approval keringanan/void (BR-K2). Pemetaan `OTHER`: aksi khusus non-CRUD yang terdaftar eksplisit (generate kelas, buka-tutup periode, ekspor feeder, impersonation) — **bukan** tempat "apa saja yang tersisa".
+
+### 14.5 Konsekuensi kontrak & UI
+1. **Kontrak Zod** baru di `packages/contracts/src/master-data.ts`: `ReferenceKindSchema`, `ReferenceItemUpsertSchema`, `AcademicYearUpsertSchema`, `AcademicPeriodUpsertSchema` (+ `status` transisi), `CalendarEventUpsertSchema`, `OrganizationUpsertSchema`, `StudyProgramUpsertSchema` (dengan validasi plafon BR-R2/R3/R4), `CurriculumUpsertSchema`, `CourseUpsertSchema` (pecah SKS), `RoomUpsertSchema`, `TenantSettingsSchema`, `EnrollmentSchemeSchema`, `CourseEquivalencySchema` — dipakai **dua arah** (Web & Flutter, AGENTS §3.4).
+2. Aturan wajib di kontrak, bukan hanya di UI: prodi **tidak boleh** melonggarkan plafon nasional (hanya mengencangkan, NFR-R2); `sks_teori + sks_praktik ≤ sks_total`; `ends_on > starts_on`; `weight_pct` komposisi = 100 (AC-NIL-4).
+3. Layar Admin memakai `VelzonDataGrid` + **satu pola daftar→drawer form** (lihat UI_UX_DESIGN §9) supaya 12 objek master tidak jadi 12 gaya halaman.
+4. Setiap tulis Admin memancarkan event `audit_logs` + (bila relevan) `outbox` untuk notifikasi.
+
+
 
