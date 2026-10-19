@@ -1,15 +1,50 @@
-import React from 'react';
-import { CalendarCheck, QrCode, Star, Users } from 'lucide-react';
+'use client';
+
+import React, { useRef } from 'react';
+import { BookOpen, CalendarCheck, QrCode, Star, Users } from 'lucide-react';
 
 /**
  * Ilustrasi produk untuk panel kiri login (ala "cover" Velzon).
- * Disusun dengan flow normal: kartu dashboard memberi tinggi intrinsik, lalu kartu
- * melayang diposisikan absolut RELATIF ke kartu itu — sehingga tidak pernah collapse
- * atau terpotong saat zoom/tinggi viewport berubah. Warna murni token Velzon.
+ * Kartu dashboard memberi tinggi intrinsik; kartu melayang absolut RELATIF ke kartu
+ * itu (tidak collapse/terpotong saat zoom). Warna murni token Velzon.
+ *
+ * Efek: kartu melayang ber-parallax mengikuti kursor (via CSS var --mx/--my),
+ * nonaktif otomatis bila pengguna memilih `prefers-reduced-motion: reduce`.
  */
+
+/** Style parallax: geser kartu sejauh (dx, dy) px mengikuti posisi kursor (-1..1). */
+function float(dx: number, dy: number): React.CSSProperties {
+  return {
+    transform: `translate3d(calc(var(--mx, 0) * ${dx}px), calc(var(--my, 0) * ${dy}px), 0)`,
+    transition: 'transform 220ms ease-out',
+    willChange: 'transform',
+  };
+}
+
 export function LoginShowcase() {
+  const ref = useRef<HTMLDivElement>(null);
+
+  function handleMove(e: React.MouseEvent<HTMLDivElement>) {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const mx = ((e.clientX - r.left) / r.width - 0.5) * 2;
+    const my = ((e.clientY - r.top) / r.height - 0.5) * 2;
+    el.style.setProperty('--mx', mx.toFixed(3));
+    el.style.setProperty('--my', my.toFixed(3));
+  }
+
+  function handleLeave() {
+    const el = ref.current;
+    if (!el) return;
+    el.style.setProperty('--mx', '0');
+    el.style.setProperty('--my', '0');
+  }
+
   return (
-    <div className="relative mx-auto w-full max-w-[460px]">
+    <div ref={ref} onMouseMove={handleMove} onMouseLeave={handleLeave} className="relative mx-auto w-full max-w-[460px]">
       {/* Bayangan dasar */}
       <div className="absolute inset-x-6 bottom-1 h-8 rounded-full bg-black/30 blur-2xl" aria-hidden />
 
@@ -46,7 +81,7 @@ export function LoginShowcase() {
             <div className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-3 shadow-sm">
               <div
                 className="h-16 w-16 shrink-0 rounded-full"
-                style={{ background: 'conic-gradient(#3577f1 0 45%, #0ab39c 45% 70%, #f7b84b 70% 88%, #e9ebec 88% 100%)' }}
+                style={{ background: 'conic-gradient(#0ab39c 0 45%, #299cdb 45% 70%, #f7b84b 70% 88%, #e9ebec 88% 100%)' }}
               >
                 <div className="grid h-full w-full place-items-center">
                   <div className="h-9 w-9 rounded-full bg-white" />
@@ -55,7 +90,7 @@ export function LoginShowcase() {
               <div className="space-y-1.5">
                 {[
                   { c: 'bg-velzon-primary', w: 'w-16' },
-                  { c: 'bg-velzon-success', w: 'w-12' },
+                  { c: 'bg-velzon-info', w: 'w-12' },
                   { c: 'bg-velzon-warning', w: 'w-10' },
                 ].map((l, i) => (
                   <div key={i} className="flex items-center gap-1.5">
@@ -100,8 +135,8 @@ export function LoginShowcase() {
         </div>
       </div>
 
-      {/* Kartu melayang: IPK (kiri-atas, sedikit keluar tepi) */}
-      <div className="absolute -left-6 top-8 w-36 rounded-xl bg-white p-3 shadow-xl ring-1 ring-black/5 sm:-left-10">
+      {/* Kartu melayang: IPK (kiri-atas) */}
+      <div className="absolute -left-6 top-8 w-36 rounded-xl bg-white p-3 shadow-xl ring-1 ring-black/5 sm:-left-10" style={float(16, 12)}>
         <div className="flex items-center gap-2">
           <span className="grid h-8 w-8 place-items-center rounded-lg bg-velzon-primary/10 text-velzon-primary">
             <Star className="h-4 w-4" />
@@ -116,8 +151,24 @@ export function LoginShowcase() {
         </div>
       </div>
 
+      {/* Kartu melayang: Aktivitas Belajar (kiri, di bawah IPK — seukuran kartu Kehadiran) */}
+      <div className="absolute -left-6 top-32 w-32 rounded-xl bg-white p-3 shadow-xl ring-1 ring-black/5 sm:-left-9" style={float(10, 16)}>
+        <div className="flex items-center gap-2">
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-velzon-info/10 text-velzon-info">
+            <BookOpen className="h-4 w-4" />
+          </span>
+          <span className="leading-tight">
+            <span className="block text-[10px] font-medium text-slate-400">Aktivitas</span>
+            <span className="block text-base font-extrabold text-slate-900">6 sesi</span>
+          </span>
+        </div>
+        <div className="mt-2 h-1.5 w-full rounded-full bg-slate-100">
+          <div className="h-full w-[62%] rounded-full bg-velzon-info" />
+        </div>
+      </div>
+
       {/* Kartu melayang: Kehadiran (kanan-bawah) */}
-      <div className="absolute -right-5 bottom-16 w-32 rounded-xl bg-white p-3 shadow-xl ring-1 ring-black/5 sm:-right-8">
+      <div className="absolute -right-5 bottom-16 w-32 rounded-xl bg-white p-3 shadow-xl ring-1 ring-black/5 sm:-right-8" style={float(-14, -10)}>
         <div className="flex items-center gap-2">
           <span className="grid h-8 w-8 place-items-center rounded-lg bg-velzon-success/10 text-velzon-success">
             <Users className="h-4 w-4" />
@@ -135,7 +186,14 @@ export function LoginShowcase() {
       </div>
 
       {/* Ponsel pemindai QR (bawah-tengah, keluar tepi bawah) */}
-      <div className="absolute -bottom-8 left-1/2 w-[92px] -translate-x-1/2 rounded-[1.3rem] border-[3px] border-slate-800 bg-slate-900 p-1.5 shadow-2xl">
+      <div
+        className="absolute -bottom-8 left-1/2 w-[92px] rounded-[1.3rem] border-[3px] border-slate-800 bg-slate-900 p-1.5 shadow-2xl"
+        style={{
+          transform: 'translate3d(calc(-50% + var(--mx, 0) * 8px), calc(var(--my, 0) * 6px), 0)',
+          transition: 'transform 220ms ease-out',
+          willChange: 'transform',
+        }}
+      >
         <div className="mx-auto mb-1 h-1 w-7 rounded-full bg-slate-700" />
         <div className="rounded-xl bg-white p-2">
           <div className="mb-1 flex items-center gap-1">
@@ -148,13 +206,13 @@ export function LoginShowcase() {
                 <span key={i} className={`rounded-[1px] ${[0, 1, 3, 4, 6, 9, 10, 12, 15].includes(i) ? 'bg-slate-900' : 'bg-transparent'}`} />
               ))}
             </div>
-            <span className="absolute inset-x-2 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-velzon-primary shadow-[0_0_8px_2px_rgba(53,119,241,0.6)]" />
+            <span className="absolute inset-x-2 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-velzon-primary shadow-[0_0_8px_2px_rgba(10,179,156,0.6)]" />
           </div>
         </div>
       </div>
 
       {/* Chip kecil jadwal (kiri-bawah) */}
-      <div className="absolute -left-4 bottom-2 flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 shadow-lg ring-1 ring-black/5">
+      <div className="absolute -left-4 bottom-2 flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 shadow-lg ring-1 ring-black/5" style={float(6, 6)}>
         <CalendarCheck className="h-3.5 w-3.5 text-velzon-info" />
         <span className="text-[10px] font-semibold text-slate-600">Jadwal Hari Ini</span>
       </div>

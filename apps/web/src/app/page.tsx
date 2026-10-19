@@ -21,12 +21,10 @@ import {
   MapPin,
   Timer,
   Zap,
-  Server,
   FileText,
   Headset,
   CheckCircle2,
   ArrowRight,
-  Sparkles,
   Quote,
   Star,
 } from 'lucide-react';
@@ -39,6 +37,7 @@ import { ModuleCatalog } from '@/components/landing/module-catalog';
 import { BenchmarkSection } from '@/components/landing/benchmark';
 
 const PROBLEM_ICONS = [Zap, ScanLine, FileText, Lock];
+const STRENGTH_ICONS = [Workflow, GraduationCap, MapPin, CreditCard, Fingerprint, ScrollText];
 const SECURITY_ICONS = [ShieldCheck, KeyRound, Fingerprint, ScrollText, Lock, Landmark];
 const INTEGRATION_ICONS = [Database, CreditCard, MessageCircle, Globe, ScanLine, Smartphone];
 
@@ -84,12 +83,7 @@ export default function HomePage() {
         </div>
         <div className="mx-auto max-w-7xl px-5 pb-16 pt-14 lg:px-8 lg:pb-24 lg:pt-20">
           <div className="mx-auto max-w-3xl text-center">
-            <span className="sica-anim sica-fade-up inline-flex items-center gap-2 rounded-full border border-velzon-primary/20 bg-velzon-primary-light px-3.5 py-1.5 text-xs font-semibold text-velzon-primary">
-              <Sparkles className="h-3.5 w-3.5" />
-              {t.hero.badge}
-            </span>
-
-            <h1 className="sica-anim sica-fade-up mt-6 text-[2rem] font-extrabold leading-[1.15] tracking-tight text-slate-900 sm:text-5xl lg:text-[3.4rem]" style={{ animationDelay: '120ms' }}>
+            <h1 className="sica-anim sica-fade-up text-[2rem] font-extrabold leading-[1.15] tracking-tight text-slate-900 sm:text-5xl lg:text-[3.4rem]" style={{ animationDelay: '120ms' }}>
               {t.hero.titleA}{' '}
               <span className="bg-gradient-to-r from-velzon-primary to-velzon-info bg-clip-text text-transparent">
                 {t.hero.titleHighlight}
@@ -184,6 +178,28 @@ export default function HomePage() {
                   </span>
                   <h3 className="mt-4 text-base font-bold text-slate-900">{p.title}</h3>
                   <p className="mt-2 text-sm leading-relaxed text-slate-600">{p.desc}</p>
+                </article>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── STRENGTHS (solusi & validasi otomatis) ───────────────────────── */}
+      <section className="border-t border-slate-200 bg-white py-16 lg:py-24">
+        <div className="mx-auto max-w-7xl px-5 lg:px-8">
+          <Reveal className="mx-auto max-w-2xl text-center">
+            <span className="text-xs font-bold uppercase tracking-[0.16em] text-velzon-primary">{t.strengths.eyebrow}</span>
+            <h2 className="mt-3 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl">{t.strengths.title}</h2>
+            <p className="mt-4 text-[15px] leading-relaxed text-slate-600">{t.strengths.subtitle}</p>
+          </Reveal>
+          <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {t.strengths.items.map((s, i) => (
+              <Reveal key={s.title} delay={(i % 3) * 80}>
+                <article className="sica-lift h-full rounded-2xl border border-slate-200 bg-white p-6 hover:border-velzon-primary/30 hover:shadow-xl hover:shadow-slate-900/5">
+                  <IconTile Icon={STRENGTH_ICONS[i] ?? CheckCircle2} tone="bg-velzon-primary-light text-velzon-primary" />
+                  <h3 className="mt-4 text-base font-bold text-slate-900">{s.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-600">{s.desc}</p>
                 </article>
               </Reveal>
             ))}
@@ -484,12 +500,6 @@ export default function HomePage() {
 
           <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-slate-200 pt-6 text-xs text-slate-500 sm:flex-row">
             <div>© 2026 PT SICA Solusi Akademik Indonesia. {t.footer.copyright}</div>
-            <div className="flex items-center gap-2">
-              <Server className="h-3.5 w-3.5 text-velzon-success" />
-              <span>SICA v1.0 Enterprise</span>
-              <Timer className="ml-2 h-3.5 w-3.5 text-slate-400" />
-              <span>Uptime target 99,9%</span>
-            </div>
           </div>
         </div>
       </footer>
@@ -551,10 +561,10 @@ function AttendanceVisual() {
         </div>
         <div className="space-y-2 text-[12px]">
           {[
-            { label: 'Tanda tangan HMAC', ok: true },
-            { label: 'Masa berlaku QR', ok: true },
-            { label: 'Geofencing 50 m', ok: true },
-            { label: 'Mock location', ok: false },
+            { label: 'Kode anti-pemalsuan', ok: true },
+            { label: 'QR masih berlaku', ok: true },
+            { label: 'Dalam radius 50 m', ok: true },
+            { label: 'Lokasi palsu', ok: false },
           ].map((row) => (
             <div key={row.label} className="flex items-center gap-2">
               <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full ${row.ok ? 'bg-velzon-success/15 text-velzon-success' : 'bg-velzon-danger/15 text-velzon-danger'}`}>

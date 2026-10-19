@@ -102,7 +102,7 @@ export function ModuleCatalog({ copy }: { copy: CatalogCopy }) {
   return (
     <div>
       {/* Counter + filter */}
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Saring berdasarkan peran">
           <FilterChip active={role === 'all'} onClick={() => setRole('all')}>
             {copy.allRoles}
@@ -115,7 +115,11 @@ export function ModuleCatalog({ copy }: { copy: CatalogCopy }) {
             </FilterChip>
           ))}
         </div>
-        <div className="flex shrink-0 gap-2" role="group" aria-label="Saring berdasarkan kategori">
+        <div
+          className="inline-flex shrink-0 items-center gap-1 self-start rounded-full border border-slate-200 bg-slate-50 p-1 lg:self-auto"
+          role="group"
+          aria-label="Saring berdasarkan kategori"
+        >
           <SegChip active={cat === 'all'} onClick={() => setCat('all')}>{copy.allTab}</SegChip>
           <SegChip active={cat === 'CORE'} onClick={() => setCat('CORE')}>{copy.coreTab} ({coreCount})</SegChip>
           <SegChip active={cat === 'ADDON'} onClick={() => setCat('ADDON')}>{copy.addonTab} ({addonCount})</SegChip>
@@ -212,8 +216,8 @@ function SegChip({ active, onClick, children }: { active: boolean; onClick: () =
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-lg px-3 py-1.5 text-[12.5px] font-semibold transition-colors ${
-        active ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:text-slate-900'
+      className={`rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors ${
+        active ? 'bg-white text-velzon-primary shadow-sm' : 'text-slate-500 hover:text-slate-800'
       }`}
     >
       {children}

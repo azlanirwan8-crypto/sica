@@ -91,6 +91,14 @@ SICA mengadopsi tema **Velzon Theme Suite** dengan penyesuaian khusus untuk doma
 
 ## 2. Standar Komponen Web (Next.js / Velzon Suite)
 
+### 2.0 ATURAN WAJIB — Seluruh UI Wajib Memakai Design System Velzon
+> **Setiap komponen antarmuka (tombol, input, kartu, badge, form, navigasi, dsb.) WAJIB memakai design system Velzon** — token warna/radius/shadow di `styles/velzon-theme.css` + primitif bersama `components/ui/*` (`Button`, `Input`, `Card`) — **bukan** gaya Tailwind mentah hasil "AI look" (mis. `rounded-xl shadow-lg`, label `uppercase tracking-wider` yang dipaksakan). Bila butuh varian baru, tambah ke primitif/token Velzon, jangan mengarang kelas lokal.
+- **Radius kanonik Velzon**: `rounded-md` = **8px** (tombol & input). Bukan 12/16px.
+- **Tombol primer** (`.btn-primary` / `Button variant="default|success"`): datar (`shadow-sm`), `font-semibold`, `active:scale-[0.98]`, focus-ring lembut.
+- **Input** (`.velzon-input`): latar **putih**, border tipis `#e9ebec`, radius 8px, `padding 10px 14px`, fokus = border primary + ring `0 0 0 3px` warna primary @15%.
+- **Label form**: `text-sm font-semibold`, **normal-case** (BUKAN uppercase), warna `slate-700`.
+- **🎨 Warna PRIMARY Velzon = HIJAU TEAL `#0ab39c`** (dibuktikan halaman `auth-signin-cover` resmi Velzon: tombol "Sign In" hijau). **✅ RESOLVED (2026-10-19):** token `--sica-color-primary` & `velzon.primary` **sudah dipindah ke hijau `#0ab39c`** (hover `#089e85`) menyeluruh — dashboard, header, tautan, fokus, tombol, `themeColor` — agar 100% Velzon. Biru `#299cdb` kini dipertahankan hanya sebagai aksen **info** sekunder.
+
 ### 2.1 Kartu Statistik Indikator (*Stat Cards with Delta*)
 Digunakan pada dashboard Mahasiswa, Dosen, Kaprodi, dan Pimpinan untuk menyajikan KPI ringkas.
 

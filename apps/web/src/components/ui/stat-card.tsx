@@ -28,7 +28,7 @@ export function StatCard({
     primary: {
       bg: 'var(--sica-color-primary-light)',
       text: 'var(--sica-color-primary)',
-      iconBg: 'rgba(53, 119, 241, 0.15)',
+      iconBg: 'rgba(10, 179, 156, 0.15)',
     },
     success: {
       bg: 'var(--sica-color-success-light)',

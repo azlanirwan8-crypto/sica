@@ -23,7 +23,7 @@ export function HeroMockup({
   return (
     <figure className="relative mx-auto mt-14 w-full max-w-5xl">
       <div className="absolute -inset-4 -z-10 rounded-[28px] bg-gradient-to-tr from-velzon-primary/15 via-velzon-info/10 to-velzon-success/15 blur-2xl" />
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/10">
+      <div className="sica-drift overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/10">
         <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
           <span className="h-2.5 w-2.5 rounded-full bg-velzon-danger/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-velzon-warning/80" />

@@ -55,7 +55,6 @@
       "demo": "Book a Demo"
     },
     "hero": {
-      "badge": "Multi-Tenant SaaS · Built Around National Academic Information Standards",
       "titleA": "One Campus Platform,",
       "titleHighlight": "Every Academic Process Covered",
       "subtitle": "SICA connects registration, course enrollment, attendance, grading, finance and PDDikti reporting in one secure multi-tenant platform. Designed so enrollment day stays smooth while thousands of students access it at once.",
@@ -73,6 +72,19 @@
         { "value": "1,000+", "label": "Concurrent users as the design target" },
         { "value": "30 sec", "label": "Rotating attendance QR against proxy check-in" },
         { "value": "2 languages", "label": "Indonesian & English, switchable" }
+      ]
+    },
+    "strengths": {
+      "eyebrow": "How SICA Solves It",
+      "title": "Every Problem Has an Automatic Answer",
+      "subtitle": "SICA does more than record — it validates, locks and calculates automatically, so campus rules are enforced by the system, not by human memory.",
+      "items": [
+        { "title": "Automatic, safe enrollment at peak", "desc": "Credit limits are derived from GPA, course prerequisites are checked, schedule/room/lecturer clashes are detected, and each seat is locked per student so quotas are never exceeded." },
+        { "title": "Smart, fair grading", "desc": "Numbers convert to letter grades and GPA automatically per curriculum scale; total weights are validated to 100%, and grade corrections require an approved, logged workflow." },
+        { "title": "Honest attendance", "desc": "30-second QR with an anti-forgery code, location verification, and instant rejection of fake locations. Attendance recaps automatically become an exam gate." },
+        { "title": "Finance that runs itself", "desc": "Invoices are generated automatically, virtual-account/QRIS payments are reconciled, and enrollment is held until paid — no manual matching." },
+        { "title": "Anomaly detection for leaders", "desc": "Unusual patterns such as sudden grade spikes or suspicious attendance are flagged early, so decisions rest on clean data." },
+        { "title": "PDDikti & audit ready", "desc": "Data completeness and mapping follow national reporting rules from the start, with an audit trail for every important change." }
       ]
     },
     "problem": {
@@ -198,6 +210,7 @@
     "roles": {
       "eyebrow": "Roles",
       "title": "A Different View for Every Stakeholder",
+      "subtitle": "SICA serves every role on campus — from students to leadership — with a tailored view and access rights for each.",
       "tabs": [
         {
           "key": "mahasiswa",

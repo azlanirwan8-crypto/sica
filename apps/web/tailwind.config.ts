@@ -17,9 +17,9 @@ const config: Config = {
         // Velzon Design Tokens
         velzon: {
           primary: {
-            DEFAULT: '#3577f1',
-            hover: '#2960c9',
-            light: 'rgba(53, 119, 241, 0.1)',
+            DEFAULT: '#0ab39c',
+            hover: '#089e85',
+            light: 'rgba(10, 179, 156, 0.1)',
           },
           secondary: {
             DEFAULT: '#405189',

@@ -90,7 +90,7 @@ export default async function DashboardPage() {
                   height: '36px',
                   flexShrink: 0,
                   borderRadius: '8px',
-                  backgroundColor: 'rgba(53, 119, 241, 0.08)',
+                  backgroundColor: 'rgba(10, 179, 156, 0.08)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',

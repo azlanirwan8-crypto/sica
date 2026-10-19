@@ -159,6 +159,11 @@ button {
   50%      { transform: translate3d(0, -14px, 0); }
 }
 
+@keyframes sica-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(0, -8px, 0); }
+}
+
 @keyframes sica-blob {
   0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
   33%      { transform: translate3d(24px, -16px, 0) scale(1.08); }
@@ -184,6 +189,7 @@ button {
 .sica-fade-up { animation-name: sica-fade-up; }
 .sica-fade-in { animation-name: sica-fade-in; animation-duration: 900ms; }
 .sica-float   { animation: sica-float 7s ease-in-out infinite; }
+.sica-drift   { animation: sica-drift 6s ease-in-out infinite; }
 .sica-blob    { animation: sica-blob 18s ease-in-out infinite; }
 
 .sica-marquee-track {
@@ -228,6 +234,7 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .sica-anim,
   .sica-float,
+  .sica-drift,
   .sica-blob,
   .sica-marquee-track,
   .sica-sheen::after {

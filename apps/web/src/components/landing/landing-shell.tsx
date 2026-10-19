@@ -79,7 +79,7 @@ export function LandingNav({ links, loginLabel, demoLabel }: { links: NavLink[];
                 key={l.href}
                 href={l.href}
                 className="group relative rounded-md px-3 py-2 text-sm font-medium transition-colors hover:text-velzon-primary"
-                style={{ color: active ? 'var(--velzon-primary, #3577f1)' : undefined }}
+                style={{ color: active ? 'var(--sica-color-primary, #0ab39c)' : undefined }}
               >
                 <span className={active ? 'text-velzon-primary' : 'text-slate-600 group-hover:text-velzon-primary'}>{l.label}</span>
                 <span

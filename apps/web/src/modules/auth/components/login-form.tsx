@@ -3,16 +3,18 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Building2, User, Lock, ShieldCheck, ArrowRight, Loader2, Eye, EyeOff } from 'lucide-react';
+import { Loader2, ArrowRight, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import type { LoginResponseEnvelope, MfaVerifyResponseEnvelope, ErrorEnvelope } from '@sica/contracts';
+import { Button } from '@/components/ui/button';
 
 interface LoginFormProps {
   tenantSlug?: string;
 }
 
-const LABEL = 'mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-700';
+// Gaya field/label meniru input Velzon: latar putih, border tipis, radius 8px, focus-ring lembut.
+const LABEL = 'mb-1.5 block text-sm font-semibold text-slate-700';
 const FIELD =
-  'w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm font-medium text-slate-900 placeholder:text-slate-400 transition-all duration-200 focus:border-velzon-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-velzon-primary/20';
+  'w-full rounded-md border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 shadow-sm transition focus:border-velzon-success focus:outline-none focus:ring-[3px] focus:ring-velzon-success/15';
 
 export function LoginForm({ tenantSlug = 'demo' }: LoginFormProps) {
   const router = useRouter();
@@ -90,41 +92,33 @@ export function LoginForm({ tenantSlug = 'demo' }: LoginFormProps) {
   }
 
   return (
-    <div className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-8 shadow-xl shadow-slate-200/50">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-          {isMfaStep ? 'Verifikasi Dua Faktor (2FA)' : 'Masuk ke Portal Akademik'}
-        </h2>
-        <p className="mb-6 mt-1 text-sm font-medium text-slate-600">
-          {isMfaStep
-            ? 'Masukkan 6 digit kode dari aplikasi Authenticator Anda'
-            : 'Sistem Informasi Kampus Terpadu (SICA Multi-Tenant)'}
-        </p>
-      </div>
+    <div className="w-full max-w-md rounded-xl border border-slate-100 bg-white p-6 shadow-lg shadow-slate-200/60 sm:p-7">
+      <h2 className="text-xl font-bold text-slate-800">
+        {isMfaStep ? 'Verifikasi Dua Faktor (2FA)' : 'Selamat Datang Kembali!'}
+      </h2>
+      <p className="mb-5 mt-1 text-sm text-slate-500">
+        {isMfaStep
+          ? 'Masukkan 6 digit kode dari aplikasi Authenticator Anda'
+          : 'Masuk untuk melanjutkan ke portal akademik SICA.'}
+      </p>
 
       {!isMfaStep ? (
         <>
-          <form onSubmit={handleLoginSubmit} className="space-y-4">
+          <form onSubmit={handleLoginSubmit} className="space-y-3.5">
             <div>
-              <label className={LABEL}>
-                <span className="mr-1 inline-flex align-middle text-velzon-primary"><Building2 className="h-3.5 w-3.5" /></span>
-                Institusi Kampus
-              </label>
+              <label className={LABEL}>Institusi Kampus</label>
               <input
                 type="text"
                 required
                 value={tenantIdentifier}
                 onChange={(e) => setTenantIdentifier(e.target.value)}
-                placeholder="Slug tenant (contoh: demo atau untar)"
+                placeholder="Slug tenant (contoh: demo)"
                 className={FIELD}
               />
             </div>
 
             <div>
-              <label className={LABEL}>
-                <span className="mr-1 inline-flex align-middle text-velzon-primary"><User className="h-3.5 w-3.5" /></span>
-                NIM / NIDN / Email
-              </label>
+              <label className={LABEL}>NIM / NIDN / Email</label>
               <input
                 type="text"
                 required
@@ -138,17 +132,14 @@ export function LoginForm({ tenantSlug = 'demo' }: LoginFormProps) {
 
             <div>
               <div className="mb-1.5 flex items-center justify-between">
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-700">
-                  <span className="mr-1 inline-flex align-middle text-velzon-primary"><Lock className="h-3.5 w-3.5" /></span>
-                  Kata Sandi
-                </label>
+                <label className={LABEL}>Kata Sandi</label>
                 <a
                   href="#forgot-password"
                   onClick={(e) => {
                     e.preventDefault();
                     toast.info('Silakan hubungi Biro Administrasi Akademik (BAAK) kampus untuk reset kata sandi.');
                   }}
-                  className="text-xs font-semibold text-velzon-primary hover:underline"
+                  className="mb-1.5 text-sm font-medium text-velzon-success hover:underline"
                 >
                   Lupa sandi?
                 </a>
@@ -180,55 +171,53 @@ export function LoginForm({ tenantSlug = 'demo' }: LoginFormProps) {
                 type="checkbox"
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 accent-velzon-primary"
+                className="h-4 w-4 rounded border-slate-300 accent-velzon-success"
               />
-              <label htmlFor="rememberMe" className="cursor-pointer select-none text-xs font-medium text-slate-600">
-                Ingat sesi saya di perangkat ini
+              <label htmlFor="rememberMe" className="cursor-pointer select-none text-sm font-medium text-slate-600">
+                Ingat saya
               </label>
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-velzon-primary px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-velzon-primary/30 transition-all duration-200 hover:bg-velzon-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
-            >
+            <Button type="submit" variant="success" disabled={loading} className="mt-2 h-11 w-full">
               {loading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Memverifikasi Akun...</span>
+                  <span>Memverifikasi…</span>
                 </>
               ) : (
                 <>
-                  <span>Masuk ke Akun</span>
+                  <span>Masuk</span>
                   <ArrowRight className="h-4 w-4" />
                 </>
               )}
-            </button>
+            </Button>
           </form>
 
-          <div className="my-6 flex items-center gap-3">
+          <div className="my-5 flex items-center gap-3">
             <span className="h-px flex-1 bg-slate-200" />
-            <span className="text-[11px] font-medium text-slate-400">Atau masuk dengan SSO Kampus</span>
+            <span className="text-xs font-medium text-slate-400">Atau masuk dengan SSO</span>
             <span className="h-px flex-1 bg-slate-200" />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              className="h-11 w-full gap-2"
               onClick={() => toast.info('SSO Google Workspace belum aktif pada versi demo.')}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition-all duration-200 hover:bg-slate-50"
             >
               <GoogleIcon />
-              Google Workspace
-            </button>
-            <button
+              Google
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              className="h-11 w-full gap-2"
               onClick={() => toast.info('SSO Microsoft 365 belum aktif pada versi demo.')}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition-all duration-200 hover:bg-slate-50"
             >
               <MicrosoftIcon />
-              Microsoft 365
-            </button>
+              Microsoft
+            </Button>
           </div>
         </>
       ) : (
@@ -247,15 +236,11 @@ export function LoginForm({ tenantSlug = 'demo' }: LoginFormProps) {
               className={`${FIELD} text-center font-mono text-xl tracking-[0.3em]`}
             />
           </div>
-          <button
-            type="submit"
-            disabled={loading || totpCode.length !== 6}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-velzon-primary px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-velzon-primary/30 transition-all duration-200 hover:bg-velzon-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <Button type="submit" variant="success" disabled={loading || totpCode.length !== 6} className="h-11 w-full gap-2">
             {loading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Memverifikasi TOTP...</span>
+                <span>Memverifikasi TOTP…</span>
               </>
             ) : (
               <>
@@ -263,16 +248,16 @@ export function LoginForm({ tenantSlug = 'demo' }: LoginFormProps) {
                 <span>Verifikasi &amp; Lanjutkan</span>
               </>
             )}
-          </button>
+          </Button>
           <button
             type="button"
             onClick={() => {
               setIsMfaStep(false);
-              setTotpCode('');
+            setTotpCode('');
             }}
-            className="w-full text-center text-xs font-medium text-slate-500 transition-colors hover:text-slate-700"
+            className="w-full text-center text-sm font-medium text-slate-500 transition-colors hover:text-slate-700"
           >
-            Kembali ke Login Username
+            Kembali ke Login
           </button>
         </form>
       )}

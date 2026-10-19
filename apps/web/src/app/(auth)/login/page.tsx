@@ -26,11 +26,11 @@ export default function LoginPage() {
           <LoginShowcase />
         </div>
 
-        <div className="relative z-10 shrink-0">
-          <h1 className="max-w-lg text-3xl font-extrabold leading-tight tracking-tight text-white lg:text-4xl">
+        <div className="relative z-10 flex shrink-0 flex-col items-center text-center">
+          <h1 className="mx-auto max-w-md text-xl font-semibold leading-relaxed tracking-tight text-slate-100 lg:text-2xl">
             Pengelolaan Akademik Kampus Modern &amp; Terintegrasi PDDIKTI
           </h1>
-          <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3">
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
             <TrustBadge icon={<ShieldCheck className="h-4 w-4 text-velzon-success" />} title="ISO 27001" sub="Certified" />
             <TrustBadge icon={<BadgeCheck className="h-4 w-4 text-velzon-info" />} title="Permendikbudristek" sub="No. 39/2025" />
             <TrustBadge icon={<Gauge className="h-4 w-4 text-velzon-warning" />} title="SLA 99,9%" sub="Uptime" />
@@ -46,7 +46,7 @@ export default function LoginPage() {
           </Link>
         </div>
 
-        <div className="flex flex-1 items-center justify-center overflow-y-auto p-8 lg:p-12">
+        <div className="flex flex-1 items-center justify-center overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
           <LoginForm tenantSlug="demo" />
         </div>
 
@@ -69,7 +69,7 @@ function TrustBadge({ icon, title, sub }: { icon: React.ReactNode; title: string
     <div className="flex items-center gap-2.5">
       <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/10 ring-1 ring-white/15">{icon}</span>
       <span className="leading-tight">
-        <span className="block text-[13px] font-bold text-white">{title}</span>
+        <span className="block text-[13px] font-semibold text-slate-100">{title}</span>
         <span className="block text-[11px] font-medium text-slate-300">{sub}</span>
       </span>
     </div>
