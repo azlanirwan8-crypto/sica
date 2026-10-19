@@ -1,21 +1,16 @@
 /**
  * POST /api/v1/academic/krs/submit
  *
- * Submit pengajuan KRS mahasiswa. Melakukan validasi:
- * 1. Kuota SKS mahasiswa (berdasarkan IPS semester sebelumnya)
- * 2. Kapasitas kelas (sisa slot)
- * 3. Deteksi bentrok jadwal mahasiswa
- * 4. Atomic enrollment creation
+ * Submit pengajuan KRS mahasiswa — kini DB-backed (lihat `krs.service.ts`):
+ * kuota SKS nyata, kapasitas kelas atomik (advisory lock), deteksi bentrok jadwal,
+ * dan idempotensi. Rute ini hanya menegakkan auth + validasi Zod lalu memetakan
+ * hasil service ke HTTP baku.
  *
  * Body: { periodId: UUID, classIds: UUID[] }
- * Response: Standard Envelope + enrollment results
+ * Response: Standard Envelope + enrollment results + quotaSummary
  */
 import type { NextRequest } from 'next/server';
 import { KrsSubmitRequestSchema } from '@sica/contracts';
-import {
-  validateBatchEnrollment,
-} from '@/modules/academic/services/sks-quota-validator.service';
-import type { ProgramSksConfig, StudentContext } from '@/modules/academic/services/sks-quota-validator.service';
 import {
   extractRequestContext,
   successResponse,
@@ -25,112 +20,72 @@ import {
   conflict,
   internalError,
 } from '@/lib/api-response';
+import { submitKrs } from '@/modules/academic/services/krs.service';
 
-export async function POST(request: NextRequest) {
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+export async function POST(request: NextRequest): Promise<Response> {
   const ctx = extractRequestContext(request);
 
   try {
-    // 1. Cek autentikasi
     if (!ctx.tenantId || !ctx.userId) {
       return unauthorized(ctx);
     }
 
-    // 2. Parse & validasi body
     const body: unknown = await request.json();
     const parsed = KrsSubmitRequestSchema.safeParse(body);
-
     if (!parsed.success) {
       return validationFailed(
         ctx,
         parsed.error.issues.map((issue) => ({
           field: issue.path.join('.'),
           message: issue.message,
-        }))
+        })),
       );
     }
 
     const { periodId, classIds } = parsed.data;
+    const result = await submitKrs(ctx.tenantId, ctx.userId, { periodId, classIds });
 
-    // 3. Mock: ambil data mahasiswa & konfigurasi prodi
-    // TODO: Ganti dengan query Drizzle ORM
-    const studentCtx: StudentContext = {
-      status: 'ACTIVE',
-      currentSemester: 3,
-      lastIps: 3.25,
-      periodTerm: 'GANJIL',
-      currentPeriodSks: 6, // Sudah 6 SKS terpakai
-    };
-
-    const programConfig: ProgramSksConfig = {
-      sksCapLowerSemesters: 20,
-      sksCapUpperSemesters: 24,
-      sksCapBetweenTerm: 9,
-    };
-
-    // 4. Mock: ambil SKS per kelas yang dipilih
-    // TODO: Query dari database berdasarkan classIds
-    const classSksMap = new Map<string, number>();
-    for (const classId of classIds) {
-      classSksMap.set(classId, 3); // Mock: semua kelas 3 SKS
-    }
-
-    const courseSksArray = classIds.map((id) => classSksMap.get(id) ?? 3);
-
-    // 5. Validasi kuota SKS batch
-    const quotaResult = validateBatchEnrollment(studentCtx, programConfig, courseSksArray);
-
-    if (!quotaResult.isValid) {
-      return badRequest(quotaResult.message, ctx, [
-        {
-          field: 'classIds',
-          message: `Kuota terlampaui: maks ${quotaResult.maxAllowedSks} SKS, ` +
-            `terpakai ${quotaResult.usedSks} SKS, ` +
-            `tambahan ${courseSksArray.reduce((a, b) => a + b, 0)} SKS.`,
-        },
-      ]);
-    }
-
-    // 6. Mock: cek kapasitas kelas
-    // TODO: Query database dan lakukan atomic decrement
-    const fullClasses: string[] = [];
-    for (const classId of classIds) {
-      // Simulasi: 10% kemungkinan kelas penuh
-      if (Math.random() < 0.1) {
-        fullClasses.push(classId);
+    if (!result.ok) {
+      switch (result.kind) {
+        case 'STUDENT_NOT_FOUND':
+          return badRequest('Akun ini tidak tertaut pada profil mahasiswa aktif.', ctx);
+        case 'PERIOD_NOT_OPEN':
+          return badRequest('Periode akademik tidak ditemukan atau tidak sedang dibuka.', ctx, [
+            { field: 'periodId', message: 'Periode harus berstatus OPEN.' },
+          ]);
+        case 'CLASS_INVALID':
+          return badRequest(result.message, ctx, [{ field: 'classIds', message: result.message }]);
+        case 'QUOTA_EXCEEDED':
+          return badRequest(result.message, ctx, [
+            {
+              field: 'classIds',
+              message: `Kuota terlampaui: maks ${result.quota.maxAllowedSks} SKS, terpakai ${result.quota.usedSks} SKS.`,
+            },
+          ]);
+        case 'SCHEDULE_CONFLICT':
+          return conflict(ctx, 'Jadwal bentrok dengan kelas yang sudah diambil.', [
+            { field: 'classIds', message: result.message },
+          ]);
+        case 'CLASS_FULL':
+          return conflict(ctx, 'Beberapa kelas sudah penuh.', result.fullClassIds.map((id) => ({
+            field: `classIds.${id}`,
+            message: 'Kapasitas kelas sudah terisi penuh.',
+          })));
       }
     }
-
-    if (fullClasses.length > 0) {
-      return conflict(ctx, 'Beberapa kelas sudah penuh.', [
-        ...fullClasses.map((id) => ({
-          field: `classIds.${id}`,
-          message: 'Kapasitas kelas sudah terisi penuh.',
-        })),
-      ]);
-    }
-
-    // 7. Buat enrollment records
-    // TODO: INSERT ke tabel enrollments dengan status SUBMITTED
-    const enrollments = classIds.map((classId) => ({
-      enrollmentId: crypto.randomUUID(),
-      classId,
-      status: 'SUBMITTED' as const,
-      sks: classSksMap.get(classId) ?? 3,
-      submittedAt: ctx.timestamp,
-    }));
 
     return successResponse(
       {
         periodId,
-        enrollments,
-        quotaSummary: {
-          maxAllowedSks: quotaResult.maxAllowedSks,
-          usedSks: quotaResult.usedSks + courseSksArray.reduce((a, b) => a + b, 0),
-          remainingSks: quotaResult.remainingSks,
-        },
+        enrollments: result.created,
+        alreadyEnrolled: result.alreadyEnrolled,
+        quotaSummary: result.quota,
       },
       ctx,
-      201
+      result.created.length > 0 ? 201 : 200,
     );
   } catch (error) {
     return internalError(ctx, error);

@@ -21,6 +21,10 @@ import {
   unauthorized,
   internalError,
 } from '@/lib/api-response';
+import { recordAttendance } from '@/modules/academic/services/attendance.service';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 const ScanAttendanceRequestSchema = z.object({
   qrPayload: z.string().min(10, 'QR Payload tidak valid.'),
@@ -182,21 +186,40 @@ export async function POST(request: NextRequest) {
       ]);
     }
 
-    // 8. Sukses: Catat Kehadiran Mahasiswa
-    const attendanceId = crypto.randomUUID();
-    const recordedAt = new Date().toISOString();
+    // 8. Catat Kehadiran Mahasiswa ke DB (idempoten; cek sesi terbuka + enrollment)
+    const result = await recordAttendance(ctx.tenantId, studentId, {
+      sessionId: decoded.sId,
+      classId: decoded.cId,
+      distanceMeters,
+      latitude: studentLatitude,
+      longitude: studentLongitude,
+    });
+
+    if (!result.ok) {
+      switch (result.kind) {
+        case 'STUDENT_NOT_FOUND':
+          return validationFailed(ctx, [{ field: 'student', message: 'Akun ini tidak tertaut pada profil mahasiswa.' }]);
+        case 'SESSION_INVALID':
+          return validationFailed(ctx, [{ field: 'qrPayload', message: 'Sesi tidak ditemukan atau presensi sudah ditutup.' }]);
+        case 'NOT_ENROLLED':
+          return validationFailed(ctx, [{ field: 'qrPayload', message: 'Anda tidak terdaftar pada kelas sesi ini.' }]);
+      }
+    }
 
     return successResponse(
       {
-        attendanceId,
+        attendanceId: result.attendanceId,
         studentId,
         status: 'PRESENT',
         sessionId: decoded.sId,
         classId: decoded.cId,
         distanceMeters,
         accuracyVerified: true,
-        recordedAt,
-        message: 'Presensi perkuliahan berhasil diverifikasi. Kehadiran Anda telah dicatat resmi.',
+        alreadyPresent: result.alreadyPresent,
+        recordedAt: ctx.timestamp,
+        message: result.alreadyPresent
+          ? 'Kehadiran Anda sudah tercatat untuk sesi ini (scan ulang diabaikan).'
+          : 'Presensi perkuliahan berhasil diverifikasi. Kehadiran Anda telah dicatat resmi.',
       },
       ctx,
       200
