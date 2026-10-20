@@ -550,3 +550,157 @@ Sebelum proses cutover data dan onboarding operasional tenant dimulai, keputusan
 6. **Integrasi Provider TTE Tersertifikasi**: Pemilihan vendor PSrE mitra kampus (BSrE BSSN, Peruri, atau Privy) untuk penerbitan sertifikat digital penandatangan dokumen resmi.
 7. **SK Operator Neo Feeder**: Pengangkatan resmi operator pangkalan data oleh Pimpinan Perguruan Tinggi sebagai prasyarat pemegang kredensial sinkronisasi PDDIKTI.
 8. **Standar Penomoran Dokumen Institusi**: Konvensi format penomoran NIM mahasiswa, nomor surat keputusan, dan nomor sertifikat kelulusan lokal.
+
+---
+
+<!-- SICA-47:BEGIN enterprise-47 -->
+
+## 10. Cakupan Enterprise Smart Campus: 47 Modul + SuperApp (dikunci 2026-10-20)
+
+### 10.1 Posisi terhadap Ruang Lingkup MVP
+
+§5 (MVP/Phase 2) tetap menjadi **urutan rilis awal**; §10 adalah **cakupan produk penuh** yang menjadi acuan desain data, API, RBAC, dan UI sejak sekarang agar tidak ada refaktor besar ketika modul berikutnya dibangun. Setiap modul dijual/diaktifkan per tenant melalui entitlement ([DATA_MODEL.md §15.5](file:///c:/SICA/docs/DATA_MODEL.md)). Prinsip yang mengikat seluruh modul:
+
+- **SSOT & zero re-entry** — satu pemilik per entitas, aliran lintas modul via event ([ARCHITECTURE.md §11](file:///c:/SICA/docs/ARCHITECTURE.md)).
+- **Zero-hardcoding** — semua pilihan & aturan = data berversi dengan CRUD + `TOGGLE_ACTIVE` (DATA_MODEL §15.1–15.2).
+- **RBAC 11 aksi** — `CREATE, READ, UPDATE, DELETE, APPROVE, REJECT, EXPORT, LOCK, UNLOCK, PARAM_EDIT, TOGGLE_ACTIVE` per role × modul × resource × parameter ([SECURITY_COMPLIANCE.md §10](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md), [RBAC_MATRIX.md §12](file:///c:/SICA/docs/RBAC_MATRIX.md)).
+- **Engine lokal tanpa API key berbayar** — registri di ARCHITECTURE §11.4.
+- **Multi-moda** — luring (TOTP QR 5 s + geofence ≤ 30 m), daring (SCORM/xAPI, rapat daring, proctoring lokal), hybrid (rekonsiliasi ganda, join ≥ 75%, tag feeder `F`/`O`/`M`) — M-15/M-16/M-17/M-18.
+
+Semua angka regulasi di katalog (mis. 144 SKS, 7 tahun, 60 SKS MBKM, kategori TER PPh 21) adalah **nilai default parameter** dengan `regulatory_floor`, bukan konstanta — regulasi berubah, data mengikuti.
+
+
+### 10.2 Katalog Modul (sumber kanonik daftar modul)
+
+| Kode | Modul | Grup | Entitlement | Role target (kode RBAC) | Menu | Sub-menu / CRUD | Dasar regulasi |
+|---|---|---|---|---|---|---|---|
+| M-01 | SaaS Foundation | G1 | `platform_saas` | `PLATFORM_OPERATOR`, `COMPLIANCE_OFFICER` | Tenant Mgmt, SaaS Licensing, SLA, Global Audit | Tenant Provisioning, RLS Isolation, SLA Monitor | UU PDP 27/2022 (peran processor), PP 71/2019 PSTE (penyelenggara sistem elektronik), ISO/IEC 27001:2022 |
+| M-02 | Master Parameter | G1 | `identity` | `TENANT_ADMIN`, `IT_ADMIN` | Master Lookups, System Params, Dynamic EAV, Auto-NIM | Generic Lookup CRUD, Rule Parameter Config, Custom Attributes | Permendikbudristek 53/2023 jo. SN-Dikti terbaru (aturan akademik terparameter), kamus Neo Feeder PDDikti |
+| M-03 | Hak Akses & RBAC | G1 | `identity` | `TENANT_ADMIN`, `IT_ADMIN` | Role Mgmt, Permission Grid, Parameter Restrictions | Role Creator, Action Matrix Grid, RLS Mapping | UU PDP 27/2022 Ps. 35-39 (keamanan pemrosesan), ISO 27001 A.5.15-5.18 |
+| M-04 | IT Helpdesk | G1 | `helpdesk` | `IT_ADMIN`, `ALL_USERS` | Service Desk Portal, Ticket Mgmt, SLA Rules | Submit Ticket, Queue Manager, Escalation Tier 1-3 | ITIL 4 (praktik service desk), ISO/IEC 20000-1 |
+| M-05 | Keamanan & Audit | G1 | `audit` | `COMPLIANCE_OFFICER`, `IT_ADMIN` | Hash Chain Audit Log, PII Masking, Security Violations | SHA-256 Log Viewer, PII Field Masking Rules, PDP Manager | UU PDP 27/2022 (Ps. 46 notifikasi kegagalan 3×24 jam), PP 71/2019, UU 43/2009 Kearsipan |
+| M-06 | HRIS & Payroll | G2 | `hr_bkd` | `HR_ADMIN`, `ADMIN_FINANCE`, `LECTURER`, `EMPLOYEE` | Data Pegawai, Presensi/Cuti, KPI, Remunerasi | Directory Pegawai, Cuti Approval, PPh 21 Tax Calculator | UU 13/2003 jo. UU 6/2023 Cipta Kerja, PP 58/2023 & PMK 168/2023 (TER PPh 21), UU 14/2005 Guru & Dosen, Permenpan-RB jabatan fungsional dosen |
+| M-07 | BKD Dosen | G2 | `hr_bkd` | `LECTURER`, `HEAD_OF_PROGRAM`, `BKD_ASSESSOR`, `HR_BKD_OFFICER` | BKD Portfolio, Overlap Detector, EWMP Rubric | Rencana/Laporan BKD, Interval Tree Log, Asesor Assessment | Kepmendikbudristek 500/M/2022 jo. pedoman operasional BKD terbaru, UU 14/2005 (beban kerja 12–16 SKS), Permenpan-RB 1/2023 |
+| M-08 | SISTER Sync | G2 | `hr_bkd` | `LECTURER`, `HR_BKD_OFFICER` | Sync Dashboard, Schema Mapping, Push Queue | SISTER Adapter Config, Push Tridharma Queue, Delta Viewer | Pedoman SISTER Kemdikbudristek (layanan web service SISTER), Permendikbudristek 44/2024 profesi/karier dosen |
+| M-09 | PMB & OCR | G3 | `pmb` | `PMB_OPERATOR`, `APPLICANT` | Portal Camaba, Jalur PMB, Verification, CBT Exam | Dynamic Form, Local Tesseract OCR Parser, CBT Question Bank | Permendikbudristek 48/2022 (penerimaan mahasiswa baru S1/D), Permendikbudristek 41/2021 RPL, UU PDP 27/2022 |
+| M-10 | Keuangan & Billing | G3 | `finance` | `ADMIN_FINANCE`, `TREASURER`, `STUDENT`, `LEADER` | Tariff Component Master, Billing Generator, Reconciler | UKT/SPI Rules, Invoice Queue, VA Webhook Reconciler | Permendikbudristek 2/2024 (SSBOPT/UKT PTN; acuan PTS via statuta), PSAK 72/73, PMK 168/2023 (pajak), SNAP BI (VA) |
+| M-11 | KIP-K & Beasiswa | G3 | `scholarship` | `SCHOLARSHIP_ADMIN`, `STUDENT` | Application Verification, IPK Monitor, Allowance | Economic Scorer, Auto-Freeze Warning Rules, Account Tracker | Permendikbudristek 10/2020 jo. pedoman KIP Kuliah terbaru (Puslapdik), Permendikbudristek 2/2024 |
+| M-12 | Kurikulum OBE | G4 | `academic` | `HEAD_OF_PROGRAM`, `DEAN`, `LECTURER` | Kurikulum Master, Profil Lulusan & CPL, CPMK Mapping | RPS Structuring, Rubrik OBE, CPL Attainment Matrix | Permendikbudristek 53/2023 (SN-Dikti, OBE, CPL), Perpres 8/2012 KKNI, instrumen LAM/BAN-PT |
+| M-13 | KRS Online & Perwalian | G4 | `enrollment` | `ADVISER`, `STUDENT`, `ADMIN_ACADEMIC` | Sesi Perwalian Akademik, Bimbingan DPA, KRS Portal, KRS War Queue | Advising Log, SKS Limits, Approval Perwalian Dosen Wali, Redis Redlock KRS War Execution | Permendikbudristek 53/2023 (beban belajar, maks SKS), pedoman akademik tenant |
+| M-14 | Jadwal & Ruang | G4 | `scheduling` | `SCHEDULER`, `LAB_STAFF` | Timetabling Generator, Facility Master, CSP Solver | CSP Constraint Rules, Schedule Solver Engine, Lab Allocator | SN-Dikti (1 SKS = 50 menit tatap muka + penugasan + mandiri), pedoman akademik tenant |
+| M-15 | Moda Perkuliahan | G4 | `teaching` | `ADMIN_ACADEMIC`, `LECTURER` | Learning Mode Control, Shift Allocator, Lecture Session | Mode Selector Luring/Daring/Hybrid, Shift A/B, Feeder Tag | Permendikbudristek 53/2023 (pembelajaran jarak jauh/bauran), kamus Neo Feeder (mode kuliah F/O/M) |
+| M-16 | LMS Digital | G4 | `lms` | `LECTURER`, `STUDENT` | Course Classroom, SCORM/Video Material, Discussion | Video Progress Tracker, SCORM 2004 Parser, Async Quiz Engine | SN-Dikti (pembelajaran daring), standar ADL SCORM 2004 4th Ed. & xAPI 1.0.3, UU 28/2014 Hak Cipta |
+| M-17 | Ujian & Proctoring | G4 | `cbt` | `INVIGILATOR`, `LECTURER`, `STUDENT` | Online Exam Portal, Proctoring Rules, Incident Feed | Browser Lockdown, Local Face Check, Realtime Flagging Log | UU PDP 27/2022 (data biometrik = data spesifik, Ps. 4; wajib persetujuan eksplisit & DPIA Ps. 34), SN-Dikti penilaian |
+| M-18 | Presensi Smart | G4 | `attendance` | `LECTURER`, `STUDENT`, `ADMIN_ACADEMIC` | Presensi Kelas, Dynamic QR Generator, Geofence Master | Dynamic Projector QR 5s, GPS Geofence <30m, Dual-Reconciliation | SN-Dikti (kehadiran minimum mengikuti pedoman akademik tenant), UU PDP (data lokasi) |
+| M-19 | Nilai & KHS | G4 | `assessment` | `LECTURER`, `HEAD_OF_PROGRAM`, `STUDENT` | Gradebook Entry, Grading Scale, AST Evaluator, KHS | Formatif/UTS/UAS Weights, AST Math Rules, RPS vs KHS Normalizer | Permendikbudristek 53/2023 (penilaian), pedoman akademik tenant (skala nilai) |
+| M-20 | Tugas Akhir & RAMA | G5 | `thesis` | `STUDENT`, `THESIS_SUPERVISOR`, `EXAMINER`, `HEAD_OF_PROGRAM` | Pengajuan TA/Skripsi, Bimbingan TA Digital, Pendaftaran Sidang, Repositori RAMA | Proposal Approval, Logbook Bimbingan Pembimbing, Plotting Penguji, Rubrik Nilai Sidang, OAI-PMH RAMA Exporter | Permendikbudristek 53/2023 (tugas akhir dapat berbentuk proyek/prototipe), Permendikbud 17/2010 pencegahan plagiat, ketentuan Repositori Ilmiah Nasional (RAMA) |
+| M-21 | Jurnal & OJS | G5 | `journal` | `JOURNAL_MANAGER`, `LECTURER` | Journal Directory, APC Billing, Article Indexing | OAI-PMH Harvester, APC Invoice Generator, SINTA/ARJUNA Sync | Permendikbudristek terkait akreditasi jurnal ilmiah (ARJUNA), pedoman SINTA |
+| M-22 | Inkubator & HAKI | G5 | `ipr_incubator` | `IPR_MANAGER`, `LECTURER`, `STUDENT` | HAKI Portal, DJKI Integration, Startup Milestones | DJKI Patent Filing Tracker, Seed Funding, IKU 5 Aggregator | UU 13/2016 Paten jo. UU 65/2024, UU 28/2014 Hak Cipta, Kepmendikbudristek 210/M/2023 (IKU 5) |
+| M-23 | Wisuda & Toga | G5 | `graduation` | `GRADUATION_COMMITTEE`, `STUDENT`, `ADMIN_ACADEMIC` | Convocation Register, Seating Plotter, Stage Call Queue | Stage Call QR Trigger, Seating Grid Solver, Logistik Toga | Pedoman akademik tenant; ijazah mengikuti Permendikbudristek 6/2022 (ijazah, sertifikat, gelar) |
+| M-24 | Kemahasiswaan & SKKM | G6 | `student_affairs` | `STUDENT_AFFAIRS_ADMIN`, `STUDENT` | Pengajuan SKKM, SIMKATMAWA Scorer, Prestasi | Certificate Verification, SKKM Weight Rules, Auto-SKPI Builder | Pedoman SIMKATMAWA Kemdikbudristek, Permendikbud 81/2014 (SKPI), Kepmendikbudristek 210/M/2023 (IKU 2 prestasi) |
+| M-25 | KKN, PKL & Magang | G6 | `fieldwork` | `STUDENT`, `FIELD_SUPERVISOR`, `PARTNER_MENTOR`, `LPPM_ADMIN` | Alokasi Lokasi KP/PKL/KKN, Penugasan DPL, Bimbingan & Logbook Geofenced, Penilaian Mitra | Geographic & Group Allocator, Daily Logbook Bimbingan DPL, Form Nilai Mitra, Credit Conversion Engine to KHS | Permendikbudristek 53/2023 (bentuk pembelajaran: KKN, magang, praktik kerja), Pedoman MBKM |
+| M-26 | Simulasi Lulus | G6 | `academic` | `STUDENT`, `ADVISER` | Graduation Simulator, Prerequisite Graph, CPM Analysis | Remainder SKS Calculator, DAG Viewer, Critical Path Engine | Batas masa studi Permendikbudristek 53/2023 (S1 maks 7 tahun) — sebagai parameter |
+| M-27 | Tracer Study | G6 | `tracer_iku` | `ALUMNI_ADMIN`, `ALUMNI` | Survey Tracer, Blast Communication, Alumni Directory | Longitudinal Survey Form, Auto WA Blaster, Alignment Chart | Pedoman Tracer Study Kemdikbudristek (kuesioner inti), Kepmendikbudristek 210/M/2023 (IKU 1), UU PDP |
+| M-28 | Career Center | G6 | `career` | `CAREER_ADMIN`, `ALUMNI`, `EMPLOYER`, `STUDENT` | Employer Portal, Job Vacancy Board, Virtual Career Fair | Bipartite Skill Matcher IKU 1 & 2, Partnership Verification | Kepmendikbudristek 210/M/2023 (IKU 1, IKU 2, IKU 6 kemitraan) |
+| M-29 | KUI & Mobilitas | G6 | `international` | `INTL_OFFICE_ADMIN`, `STUDENT`, `LEADER` | International Mobility, Visa/ITAS Tracker, BIPA Class | Visa Expiry Alert, ECTS/US Credit Conversion Matrix | UU 6/2011 Keimigrasian jo. Permenkumham terkait ITAS pelajar, Permendikbudristek 53/2023 (kredit transfer), Permendikbud 27/2017 BIPA |
+| M-30 | Yudisium & SKPI | G7 | `graduation` | `ADMIN_ACADEMIC`, `DEAN`, `STUDENT`, `UNIT_CLEARANCE_OFFICER` | Clearance Check, DFA Inference Engine, Batch Yudisium | Financial/Library/SKKM Clearance Checker, DFA Rule Engine | Permendikbud 81/2014 (SKPI), Permendikbudristek 6/2022 (ijazah), pedoman akademik tenant |
+| M-31 | Akreditasi LKPS | G7 | `accreditation` | `HEAD_OF_PROGRAM`, `DEAN`, `QUALITY_OFFICER`, `LEADER` | LKPS Data Extractor, LED Report Builder, Compliance | 9-Criteria Data Tables, Ratio Checker, 1-Click Export Word/Excel | Peraturan BAN-PT 2/2024 & instrumen IAPS/LAM terkait (9 kriteria), Permendikbudristek 53/2023 |
+| M-32 | Dashboard IKU | G7 | `tracer_iku` | `LEADER`, `DEAN`, `QUALITY_OFFICER` | Executive Dashboard, IKU Metric Detail 1-8, Reports | Realtime IKU 1-8 Calculator, Threshold Alert, Board Generator | Kepmendikbudristek 210/M/2023 (IKU PTN) & penyesuaian berikutnya — definisi IKU sebagai data berversi |
+| M-33 | Jadwal Darurat | G7 | `scheduling` | `SCHEDULER`, `SARPRAS_ADMIN` | Incident Room Manager, Re-Routing Solver, Distance | Max-Flow Min-Cut Solver, Room Lockout, Emergency Push Alert | Permen PUPR 14/2017 kemudahan bangunan gedung, pedoman K3 kampus |
+| M-34 | Feeder PDDikti | G7 | `feeder_pddikti` | `FEEDER_OPERATOR`, `IT_ADMIN` | Staging Buffer Manager, Error Validation, Sync Queue | Pre-Sync Rules Engine, Fuzzy Auto-Corrector, Async Retry Queue | Permendikbudristek 61/2016 jo. ketentuan PDDikti/Neo Feeder terbaru (pelaporan wajib) |
+| M-35 | PIN & SIVIL | G7 | `graduation` | `ADMIN_ACADEMIC`, `FEEDER_OPERATOR`, `PUBLIC` | PIN Reservation, SIVIL Adapter, E-Ijazah Generator | PIN Quota Checker, Public SIVIL Dynamic QR Verification | Permendikbudristek 6/2022 (ijazah), ketentuan PIN (Penomoran Ijazah Nasional) & SIVIL Kemdikbudristek |
+| M-36 | Portal PPKS | G7 | `ppks` | `PPKS_TASKFORCE`, `PPKS_REPORTER`, `LEADER` | Encrypted Whistleblower, Case Mgmt, Counseling | Anonymous Encrypted Submission, Case Timeline, Ministry Report | Permendikbudristek 55/2024 (Pencegahan dan Penanganan Kekerasan di Lingkungan Perguruan Tinggi, menggantikan Permendikbudristek 30/2021), UU 12/2022 TPKS, UU PDP |
+| M-37 | SPMI & Quality | G7 | `spmi` | `QUALITY_OFFICER`, `INTERNAL_AUDITOR`, `HEAD_OF_PROGRAM`, `LEADER` | Mutu Repository, Audit Mutu Internal, Temuan/RTL | PPEPP Rules, Auditor Assignment, AMI Checklist Form | Permendikbudristek 53/2023 (SPMI, siklus PPEPP), Peraturan BAN-PT tentang SPMI |
+| M-38 | Kampus Merdeka / MBKM | G7 | `mbkm` | `HEAD_OF_PROGRAM`, `STUDENT`, `MBKM_SUPERVISOR` | Program MBKM Portal, Bimbingan MBKM, Kampus Merdeka Sync | API MSIB/PMM Sync Adapter, Weekly Logbook Importer, DAG Credit Conversion to KHS | Permendikbudristek 53/2023 (hak belajar di luar prodi hingga 3 semester/ setara 60 SKS — sebagai parameter), pedoman MBKM |
+| M-39 | e-Library | G8 | `library` | `LIBRARIAN`, `STUDENT`, `LECTURER` | OPAC Catalog Master, Circulation & Fines, Repository | Dublin Core MARC21 Parser, SLiMS/KOHA Adapter, Bebas Pustaka | UU 43/2007 Perpustakaan, SNI 7330:2009 perpustakaan perguruan tinggi, standar MARC21/Dublin Core |
+| M-40 | Aset & Inventaris | G8 | `assets` | `ASSET_ADMIN`, `IT_ADMIN` | Asset Directory, Tagging & Barcoding, Depreciation | Asset QR Tagging, Straight-Line Depreciation Engine | PP 27/2014 jo. PP 28/2020 Pengelolaan BMN, PMK 181/2016 Penatausahaan BMN, PMK 65/2023 (masa manfaat & penyusutan), PSAK 16 (PTS) |
+| M-41 | Klinik Kampus | G8 | `clinic` | `CLINIC_DOCTOR`, `COUNSELOR`, `STUDENT` | Encrypted Health Records, Virtual Clinic Queue, Bimbingan Konseling | AES-256 Encrypted Record Form, Virtual Queue Engine, Booking Konseling | UU 17/2023 Kesehatan, Permenkes 24/2022 Rekam Medis (elektronik, retensi), UU PDP (data kesehatan = data spesifik) |
+| M-42 | Asrama & Kantin | G8 | `dormitory` | `DORM_MANAGER`, `STUDENT` | Dormitory Allocation, Shuttle Transport, E-Wallet | Multi-Dimensional Bin Packing Allocator, E-Wallet Reconciler | PBI 22/23/2020 sistem pembayaran (e-wallet closed-loop di bawah ambang izin) — sebagai batasan parameter |
+| M-43 | Humas & Event | G8 | `events` | `PR_EVENT_ADMIN`, `EVENT_PARTICIPANT`, `STUDENT` | Event Management, Gate Check-in QR, Digital Signage | Event Registration Scorer, Gate QR Scanner, Digital Display Scheduler | UU PDP (data peserta), UU 14/2008 KIP (informasi publik kampus) |
+| M-44 | SIM-LPPM / LITABMAS | G2 | `litabmas` | `LECTURER`, `GRANT_REVIEWER`, `LPPM_ADMIN`, `ADMIN_FINANCE`, `LEADER` | Skema Hibah, Selection, Contract, Monev & Luaran | Blind Reviewer Scoring, Grant Disbursement Approval, Auto-Feed BKD/SISTER/IKU 5 | Panduan Penelitian & Pengabdian DRTPM terbaru, Kepmendikbudristek 210/M/2023 (IKU 5), PMK SBM (standar biaya), UU 11/2019 Sisnas Iptek |
+| M-45 | CRM PMB & Marketing | G3 | `crm_marketing` | `MARKETING_PMB`, `PMB_AGENT`, `SCHOOL_COUNSELOR`, `LEADER` | Leads Management, School Roadshow, Referral/Agent Network, Drip Campaign | Dynamic Funnel Rules, Expo Activity Scheduler, Commission Config, CAC Analytics | UU PDP 27/2022 (dasar persetujuan pemasaran, Ps. 20), UU ITE 19/2016, Permendikbudristek 48/2022 (penerimaan mahasiswa baru) |
+| M-46 | E-Procurement PBJ | G3 | `procurement` | `PROCUREMENT_COMMITTEE`, `PPK_OFFICER`, `VENDOR`, `ADMIN_FINANCE` | Pengajuan PBJ, Tender/RFQ, E-Katalog Kampus, Kontrak | Vendor Directory, HPS Evaluator, Multi-Level PPK Approval, Auto-Aset Link | Perpres 16/2018 jo. Perpres 12/2021 & 46/2025 (PBJ), Peraturan LKPP terkait (PTN-BH/BLU memakai peraturan rektor), PMK 181/2016 BMN |
+| M-47 | Endowment Fund | G6 | `endowment` | `ENDOWMENT_MANAGER`, `DONOR`, `ADMIN_FINANCE`, `LEADER` | Donor Campaign, Fund Portfolio, Investment Return, Grant Allocator | Donor Directory, Asset Yield Tracker, Auto-Allocation Beasiswa & Riset | PP 26/2015 jo. regulasi dana abadi perguruan tinggi (PTN-BH), PSAK 109/ISAK 35 (entitas nirlaba), UU PDP (data donatur) |
+| APP | SuperApp Mobile | G9 | `mobile_superapp` | `STUDENT`, `LECTURER` | Mobile Dashboard, Fast KRS War, Dynamic QR Attendance, LMS, Bimbingan Logbook Mobile | Flutter Cross-Platform Engine, Offline-First SQLite Sync, Push Alert | UU PDP (data lokasi & perangkat), pedoman keamanan aplikasi mobile OWASP MASVS |
+
+### 10.3 Profil Dashboard per Role (seed `dashboard_profiles`)
+
+| Profil | Label | Role yang memakai profil | Kartu modul (urutan seed) |
+|---|---|---|---|
+| `DOSEN` | Dosen | `LECTURER`, `ADVISER`, `THESIS_SUPERVISOR`, `EXAMINER`, `ALL_USERS` | M-04, M-06, M-07, M-08, M-13, M-16, M-18, M-19, M-20, M-21, M-22, M-39, M-44 |
+| `MAHASISWA` | Mahasiswa | `STUDENT`, `ALL_USERS` | M-04, M-10, M-11, M-13, M-16, M-17, M-18, M-19, M-20, M-24, M-25, M-26, M-27, M-28, M-38, M-39, M-41, M-42, M-43, APP |
+| `PIMPINAN_AKADEMIK` | Kaprodi/Dekan | `HEAD_OF_PROGRAM`, `DEAN` | M-07, M-12, M-13, M-14, M-19, M-20, M-25, M-30, M-31, M-37, M-38, M-44 |
+| `STAF_OPERASIONAL` | Staff BAAK/BAUK/Sarpras | `ADMIN_ACADEMIC`, `ADMIN_FINANCE`, `PMB_OPERATOR`, `SCHOLARSHIP_ADMIN`, `SCHEDULER`, `GRADUATION_COMMITTEE`, `SARPRAS_ADMIN`, `ASSET_ADMIN`, `PROCUREMENT_COMMITTEE`, `FEEDER_OPERATOR` | M-09, M-10, M-11, M-14, M-15, M-23, M-30, M-33, M-35, M-40, M-46 |
+| `EKSEKUTIF` | Rektorat/Eksekutif | `LEADER` | M-10, M-29, M-31, M-32, M-36, M-37, M-44, M-45, M-47 |
+| `ADMIN_IT` | Super Admin/Admin IT | `PLATFORM_OPERATOR`, `TENANT_ADMIN`, `IT_ADMIN`, `ALL_USERS` | M-01, M-02, M-03, M-04, M-05, M-34, M-35, M-40 |
+
+Aturan render: `kartu = (modul profil ∪ modul lain ber-izin READ) ∩ entitlement tenant aktif ∩ izin READ efektif user`. Modul profil tampil di grid utama sesuai urutan seed; modul ber-izin lain tampil di grup "Modul Lain". Profil, urutan, dan isi kartu adalah data (CRUD di M-03 → *Dashboard Profiles*), bukan konstanta UI.
+
+
+### 10.4 Rantai Integrasi Wajib (Zero Re-Entry)
+
+| # | Rantai | Event penghubung (ARCHITECTURE §11.5) | Hasil tanpa input ulang |
+|---|---|---|---|
+| I-1 | M-45 → M-09 → M-10 → M-02 → M-13 | `crm.lead.converted` → `pmb.selection.decided` → `finance.invoice.paid` → `pmb.registration.completed` → `academic.student.activated` | data lead mengisi formulir camaba; tagihan daftar ulang terbit otomatis; lunas → NIM terbit (pola parameter) & status aktif → paket KRS semester 1 + dosen wali ter-assign |
+| I-2 | M-25/M-38 → M-19 | `fieldwork.logbook.verified` → `fieldwork.score.submitted` / `mbkm.conversion.approved` | logbook geofenced diverifikasi DPL; nilai mitra + DPL dibobot parameter; dikonversi ke mata kuliah KHS |
+| I-3 | M-20 → M-19 → M-39 → M-30 | `thesis.supervision.logged` → `thesis.defense.scored` → `thesis.repository.published` → `yudisium.clearance.changed` | logbook syarat sidang; nilai sidang masuk KHS; unggah RAMA (OAI-PMH) memenuhi syarat clearance |
+| I-4 | M-44 → M-07 → M-08 → M-32 | `lppm.output.validated` → `bkd.activity.recorded` → `sister.item.pushed` → counter IKU 5 | luaran tervalidasi otomatis menjadi klaim BKD, di-push delta ke SISTER, menaikkan IKU 5 real-time |
+| I-5 | M-46 → M-10 → M-40 | `procurement.request.submitted` → `finance.budget.committed` → `procurement.goods.received` → `asset.registered` | komitmen anggaran saat pengajuan; BAST membuat aset ber-QR & jurnal; penyusutan bulanan otomatis |
+| I-6 | M-47 → M-11/M-44 | `endowment.yield.posted` → `endowment.allocation.approved` | hanya imbal hasil terealisasi yang dialokasikan ke kuota beasiswa & pagu hibah riset |
+| I-7 | M-13 → M-14 → M-18 → M-07 → M-08 | `enrollment.krs.approved` → `schedule.published` → `attendance.lecturer.session_closed` → `bkd.activity.recorded` | KRS menentukan kelas & ruang; presensi dosen per sesi menjadi SKS pengajaran BKD → SISTER |
+| I-8 | M-16/M-18 → M-19 → M-12 | `lms.submission.graded`, `attendance.recorded` → `grading.final.locked` → `obe.plo.computed` | komponen nilai terisi otomatis; AST menghitung nilai akhir; capaian CPMK→CPL terhitung; KHS & transkrip |
+| I-9 | M-30 → M-35 → M-27 | `yudisium.batch.approved` → `pin.reserved` → `diploma.issued` → survei tracer gelombang 1 | PIN direservasi dari batch terkunci; e-ijazah bertanda tangan + QR SIVIL publik; alumni otomatis masuk kohort tracer |
+| I-10 | Semua → M-34/M-31/M-32 | seluruh event domain → read-model | staging Feeder, tabel LKPS 9 kriteria, dan IKU 1–8 selalu mutakhir; ekspor tanpa rekap manual |
+
+### 10.5 Simulasi Bisnis Real Lintas Modul (skenario uji penerimaan)
+
+Setiap skenario adalah **tes E2E wajib** (TESTING_STRATEGY) dan dijalankan pada data seed realistis (SEED_DATA). Kolom "Efek real-time" adalah perubahan UI yang wajib terjadi tanpa reload di role penerima.
+
+**S-1 Mahasiswa Reguler (lifecycle penuh)**
+
+| Langkah | Role | Modul | Aksi | Event | Efek real-time |
+|---|---|---|---|---|---|
+| 1 | Tim Marketing | M-45 | lead dari expo dikonversi | `crm.lead.converted` | Admin PMB melihat camaba baru dengan data prefilled |
+| 2 | Camaba | M-09 | isi form dinamis, unggah ijazah → OCR lokal + Levenshtein ≥ 0.85 | `pmb.applicant.submitted` | antrean verifikasi Admin PMB bertambah |
+| 3 | Admin PMB | M-09 | verifikasi & keputusan lulus | `pmb.selection.decided` | tagihan daftar ulang muncul di portal camaba (M-10) |
+| 4 | Sistem/Bank | M-10 | webhook VA lunas | `finance.invoice.paid` | status camaba → daftar ulang selesai |
+| 5 | Sistem | M-02 | NIM terbit (pola parameter) & status aktif | `academic.student.activated` | dashboard berubah dari profil `APPLICANT` ke `MAHASISWA`; Feeder staging terisi |
+| 6 | Mahasiswa / Dosen Wali | M-13 | KRS war (Redlock) → submit → ACC | `enrollment.krs.approved` | kursi tersisa berkurang live; kelas LMS & jadwal muncul |
+| 7 | Dosen / Mahasiswa | M-16/M-18 | materi, tugas, presensi QR 5 s + geofence | `attendance.recorded`, `lms.submission.graded` | daftar hadir live di layar dosen |
+| 8 | Dosen / Kaprodi | M-19/M-12 | hitung AST → kunci → publikasi KHS | `grading.khs.published`, `obe.plo.computed` | KHS mahasiswa & capaian CPL Kaprodi terbarui |
+| 9 | Mahasiswa / Pembimbing | M-20 | logbook ≥ parameter → sidang → nilai → RAMA | `thesis.repository.published` | clearance M-30 bertransisi |
+| 10 | Pustakawan / BAUK / Kemahasiswaan | M-39/M-10/M-24 | bebas pustaka, lunas, SKKM cukup | `library.clearance.granted`, `finance.hold.changed`, `skkm.claim.approved` | status DFA mahasiswa → `LAYAK_YUDISIUM` di layar BAAK |
+| 11 | BAAK / Dekan | M-30 | batch yudisium → approve → lock | `yudisium.batch.approved` | PIN M-35 dapat direservasi |
+| 12 | BAAK | M-35 | reservasi PIN, tanda tangan e-ijazah | `diploma.issued` | QR SIVIL publik aktif |
+| 13 | Panitia | M-23 | Hungarian seating, stage call QR | `graduation.stage_called` | layar panggung & ponsel wisudawan |
+| 14 | Alumni | M-27 | tracer gelombang 1 | `tracer.response.submitted` | IKU 1 M-32 bergerak |
+
+**S-2 Mahasiswa Konversi (RPL Tipe A)** — M-09 OCR transkrip asal → baris `rpl_conversions` (Levenshtein nama MK + DAG prasyarat M-12) → Kaprodi `APPROVE` (`rpl.conversion.approved`) → M-19 mencatat SKS transfer (nilai asal ternormalisasi skala tenant) → M-10 menghitung billing matrikulasi dari matriks (dimensi `rpl_type`, sisa SKS) → transkrip kumulatif gabungan → M-24/M-30 menyusun SKPI & DFA clearance. Batas SKS RPL = parameter berbasis Permendikbudristek 41/2021.
+
+**S-3 Dosen & Riset** — M-44 dosen mengajukan proposal → reviewer buta menilai (skor Naive Bayes hanya pendamping) → LPPM `APPROVE` → kontrak → BAUK `APPROVE` termin (`lppm.disbursement.approved` → jurnal M-10) → luaran SINTA/HAKI divalidasi (`lppm.output.validated`) → M-07 klaim BKD otomatis (interval tree menolak bentrok) → M-08 push delta SISTER → M-32 IKU 5 naik real-time di dashboard Rektorat.
+
+**S-4 Sarpras & Keuangan** — M-46 unit mengajukan PBJ (`finance.budget.committed` mengurangi sisa pagu live) → AHP evaluasi vendor & cek HPS → approval berjenjang PPK (jenjang dari parameter nilai) → kontrak → BAST (`procurement.goods.received`) → M-40 aset ber-QR, kategori menentukan masa manfaat → penyusutan garis lurus bulanan + jurnal.
+
+**S-5 Interaksi Multi-Role Real-Time** — (a) Dosen membuka presensi → kartu mahasiswa kelas itu berubah "Check-in tersedia" ≤ 2 s; (b) Pustakawan memberi bebas pustaka → mahasiswa mendapat notifikasi & BAAK melihat status DFA berubah; (c) Insiden ruang (M-33) → max-flow memindahkan kelas → jadwal mahasiswa & dosen terbarui + push alert; (d) Kaprodi `UNLOCK` nilai → dosen melihat gradebook terbuka kembali; (e) BAUK menandai lunas → blokir KRS hilang dari layar mahasiswa.
+
+**S-6 Cakupan modul tersisa** — skenario pendukung wajib: M-01 provisioning tenant baru → seed lookup/role; M-03 perubahan izin empat-mata; M-04 tiket melewati SLA naik tier; M-05 verifikasi rantai hash & DSR PDP; M-06 payroll lock → jurnal; M-11 AHP beasiswa → diskon tagihan → freeze otomatis IPK < parameter; M-14 solver CSP → publish; M-15 ganti moda sesi → tag feeder; M-17 ujian dengan flag face check → review pengawas; M-21 harvest OJS → klaim BKD; M-22 HAKI granted → IKU 5; M-26 simulasi CPM; M-28 matching lowongan → IKU 1; M-29 konversi ECTS & alert visa; M-31 snapshot LKPS; M-36 laporan anonim terenkripsi → kasus; M-37 siklus AMI PPEPP; M-41 rekam medis terenkripsi & antrean; M-42 bin packing asrama → tagihan; M-43 registrasi event → gate QR; M-47 alokasi imbal hasil; APP check-in offline → sinkron diferensial.
+
+### 10.6 Acceptance Criteria Lintas Modul (enterprise)
+
+1. Tidak ada `ENUM`/`CHECK IN (...)` bisnis di migrasi baru (`pnpm db:lint` aturan kustom) dan tidak ada string pilihan bisnis di kode (lint `no-restricted-syntax` untuk literal status).
+2. Setiap resource memiliki 6 endpoint standar + aksi alur kerja (API_SPEC §6.5) dan tombol UI yang hanya muncul bila izin ada; deny diuji per role.
+3. Setiap rantai I-1…I-10 lulus tes E2E tanpa langkah input manual di modul hilir.
+4. Latensi propagasi event → UI p95 ≤ 2 s pada 1.000 koneksi WS.
+5. Semua engine §11.4 memiliki golden dataset & hasil deterministik (seed acak tetap).
+6. Parameter regulasi tidak dapat diset di bawah `regulatory_floor`.
+
+### 10.7 Keputusan Produk Terbuka (tidak memblokir R1)
+
+| ID | Keputusan | Default sementara |
+|---|---|---|
+| PD-01 | `ppks` inti atau addon | **inti** (kewajiban regulasi) |
+| PD-02 | Provider rapat daring default | Jitsi self-hosted; Zoom/Meet via OAuth milik tenant |
+| PD-03 | Warna header | header biru (`--sica-topbar-bg`, default `#405189`) dengan aksen primer hijau `#0ab39c` (UI_UX §10.1) |
+| PD-04 | Face check proctoring | opsional per ujian, wajib persetujuan biometrik & alternatif pengawas manusia |
+
+<!-- SICA-47:END enterprise-47 -->

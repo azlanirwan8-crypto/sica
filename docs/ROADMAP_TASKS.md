@@ -1,7 +1,7 @@
 # SICA Implementation Roadmap & Engineering Task Tracker
 **Status:** Active Execution Plan  
 **Architecture Reference:** [ARCHITECTURE.md](file:///c:/SICA/docs/ARCHITECTURE.md), [PRD.md](file:///c:/SICA/docs/PRD.md), [TECH_CONVENTIONS.md](file:///c:/SICA/docs/TECH_CONVENTIONS.md)  
-**Methodology:** Checklist Task Berurutan (Phase 1 s.d. Phase 4)  
+**Methodology:** Top-Down Role-Based Development (R0–R9, §0) — Phase 1–4 menjadi Lampiran A (riwayat)  
 **Baseline Kompetitif:** [BENCHMARK_SEVIMA.md](file:///c:/SICA/docs/BENCHMARK_SEVIMA.md) — hasil studi dokumentasi Sevima (peran, menu, modul, data master, flow) + peta selisih SICA
 
 > **⚠️ KOREKSI STATUS — Audit Principal Lead Architect (2026-10-18).** Centang `[x]` di bawah sebelumnya menandai "kerangka/placeholder selesai", bukan "fitur production". Berdasarkan verifikasi `tsc` & `vitest`: **kontrak Zod, UI Velzon/shadcn, dan engine aturan bisnis (GPA/IPS, SKS-quota, conflict-detector) nyata & teruji**; namun **route handler backend masih mock** (tanpa DB/RLS runtime, `Math.random()`), **login & middleware auth belum memverifikasi JWT**, dan **dependensi belum ter-install penuh** (proyek gagal build sampai `pnpm install`). Item mock kini ditandai `[~]` (partial). Detail: [PROGRESS_REPORT.md §5](file:///c:/SICA/docs/PROGRESS_REPORT.md) & [ISSUE_RESOLUTION.md](file:///c:/SICA/docs/ISSUE_RESOLUTION.md).
@@ -9,6 +9,456 @@
 > **🔁 Aturan Berkelanjutan (Standing DoD) — diberlakukan Principal Lead Architect.** Setiap task yang dikerjakan **WAJIB** (1) memperbarui status `[ ]`/`[~]`/`[x]` di file ini, (2) menambah baris di [PROGRESS_REPORT.md](file:///c:/SICA/docs/PROGRESS_REPORT.md), dan (3) menuangkan **detail spesifikasi** ke dokumen terkait (DATA_MODEL/API_SPEC/SECURITY/UI_UX/TECH_CONVENTIONS) — karena aplikasi ini sangat besar, spesifikasi field-level, kontrak Zod, aturan bisnis (BR-*), dan traceability test harus lengkap **sebelum** kode. Tidak ada progress tanpa catatan dokumen.
 
 ---
+
+<!-- SICA-47:BEGIN roadmap -->
+
+## 0. Urutan Eksekusi Top-Down Role-Based (berlaku mulai 2026-10-20)
+
+> Cakupan: 47 modul + SuperApp ([PRD.md §10](file:///c:/SICA/docs/PRD.md)). Urutan dibangun dari role tertinggi ke role layanan mandiri: setiap gelombang menyiapkan data/konfigurasi yang dibutuhkan gelombang berikutnya. Phase 1–4 di bawah tetap dipertahankan sebagai **Lampiran A — Riwayat & status implementasi** (tidak dihapus agar jejak audit utuh). Setiap sub-task mengikuti aturan AGENTS.md: dokumen dulu, lalu kode, lalu tes, lalu update ROADMAP + PROGRESS_REPORT.
+
+### R0. Penguncian Dokumentasi (selesai pada PR audit 47 modul)
+
+- [x] R0.1 Audit 360° seluruh `/docs`; temuan ARC-01…ARC-07 ([ARCHITECTURE.md §11.6](file:///c:/SICA/docs/ARCHITECTURE.md)).
+- [x] R0.2 Katalog 47 modul + APP, rantai integrasi I-1…I-10, simulasi S-1…S-6 (PRD §10).
+- [x] R0.3 Model data per modul + kebijakan zero-hardcoding + AUD-09 diselesaikan (DATA_MODEL §15, §5).
+- [x] R0.4 Endpoint per modul + kontrak WebSocket (API_SPEC §6).
+- [x] R0.5 Ontologi 11 aksi + matriks role × modul (SECURITY_COMPLIANCE §10, RBAC_MATRIX §12).
+- [x] R0.6 Dashboard grid dinamis per role (UI_UX_DESIGN §10); integrasi & kebijakan zero paid API key (INTEGRATIONS §5).
+- [ ] R0.7 Sign-off pemilik produk atas keputusan PD-01…PD-04 (PRD §10.7) — tidak memblokir R1.
+
+### R1.0 Fondasi Lintas Modul (prasyarat semua gelombang)
+
+- [ ] **R1.0.1 (SUB-TASK PERTAMA SIAP EKSEKUSI)** Konversi ENUM/CHECK bisnis → lookup dinamis: tulis migrasi `0007_dynamic_lookups` yang membuat `lookup_categories`, `lookup_values`, `parameter_definitions`, `system_parameters`, `parameter_restrictions` (DATA_MODEL §15.1–15.3 & §15.6.2) + RLS, seed kategori dari enum lama dengan kode identik, backfill kolom `*_id`, lalu drop enum. **Definisi selesai:** `pnpm db:lint` hijau; kueri verifikasi §8 = 0 pelanggaran; tes RLS lintas-tenant 0 baris bocor; tidak ada `CREATE TYPE ... AS ENUM` bisnis tersisa.
+- [ ] R1.0.2 Rule Parameter Resolver + cache Redis + event `parameter.versioned` (M-02).
+- [ ] R1.0.3 Ontologi 11 aksi: kategori sistem `permission_action`, kolom `role_permissions.action_mask`, guard `<Can>`/`requirePermission` (SECURITY §10.1).
+- [ ] R1.0.4 Outbox relay → Redis Streams + `processed_events` + `dead_letter_events` (ARCHITECTURE §11.2).
+- [ ] R1.0.5 Layanan `apps/realtime` (WebSocket) + kontrak API_SPEC §6.3 + kontrak event Zod `packages/contracts/src/events`.
+- [ ] R1.0.6 Shell dashboard: `GET /me/dashboard`, tabel `dashboard_profiles` + seed 6 profil, grid kartu Velzon (UI_UX §10.1–10.3).
+- [ ] R1.0.7 Pulihkan `scripts/validate-roadmap.js` (dirujuk `package.json`, berkas hilang — ARC-07).
+- [ ] R1.0.8 Selaraskan dokumen lama: ARCHITECTURE §3/§5 (RS256, Next route handlers), GUC `app.current_tenant`.
+
+
+### R1. Super Admin & Admin IT — fondasi platform
+
+- [ ] **R1.1 M-01 SaaS Foundation** — role: `PLATFORM_OPERATOR`, `COMPLIANCE_OFFICER`
+  - [ ] Migrasi + RLS: `tenants`, `tenant_subscriptions`, `sla_policies`, `sla_measurements`, `tenant_shard_map` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (tenant_status, billing_cycle, sla_metric, sla_window) & parameter (platform.ring.virtual_nodes, platform.sla.availability_target, platform.provision.default_modules).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT, LOCK, UNLOCK.
+  - [ ] Engine lokal: Consistent Hashing (ring 256 virtual node) untuk penempatan tenant ke shard/pool koneksi + Redis keyspace — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `tenant.provisioned`, `tenant.suspended`, `sla.breached`; konsumen idempoten untuk `*.audit.appended`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Tenant aktif, SLA bulan ini, Insiden terbuka, Pemakaian seat; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:platform_saas`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R1.2 M-02 Master Parameter** — role: `TENANT_ADMIN`, `IT_ADMIN`
+  - [ ] Migrasi + RLS: `lookup_categories`, `lookup_values`, `system_parameters`, `parameter_definitions`, `eav_attributes`, `eav_values`, `nim_sequences` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (lookup_domain, data_type, scope_level, entity_type) & parameter (nim.pattern, nim.reset_scope, param.cache_ttl_seconds).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, PARAM_EDIT, READ, TOGGLE_ACTIVE, UPDATE.
+  - [ ] Engine lokal: Rule Parameter Resolver (hierarki TENANT→ORG→PROGRAM→PERIOD, effective-dated) + NIM Pattern Compiler (tokenizer {kodeFak}{tahun}{seq}) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `parameter.versioned`, `lookup.changed`, `nim.generated`, `academic.student.activated`, `academic.student.status_changed`; konsumen idempoten untuk `pmb.registration.completed`, `finance.invoice.paid`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Kategori lookup, Parameter berubah 7 hari, NIM terbit periode ini, Atribut EAV; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:identity`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R1.3 M-03 Hak Akses & RBAC** — role: `TENANT_ADMIN`, `IT_ADMIN`
+  - [ ] Migrasi + RLS: `roles`, `permissions`, `role_permissions`, `user_role_assignments`, `parameter_restrictions`, `rls_policy_map`, `access_change_requests` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (permission_action, scope_kind, policy_kind, dashboard_profile) & parameter (rbac.cache_ttl_seconds, rbac.four_eyes_required).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, READ, REJECT.
+  - [ ] Engine lokal: Bitwise Permission Masking (10-bit action mask per resource; 64-bit word per 6 resource) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `rbac.assignment.changed`, `rbac.role.changed`; konsumen idempoten untuk `hr.employee.terminated`, `academic.student.status_changed`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Role aktif, Permintaan akses menunggu, Assignment kedaluwarsa 30 hari, Pelanggaran SoD; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:identity`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R1.4 M-05 Keamanan & Audit** — role: `COMPLIANCE_OFFICER`, `IT_ADMIN`
+  - [ ] Migrasi + RLS: `audit_logs`, `audit_anchors`, `pii_masking_rules`, `security_violations`, `data_subject_requests` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (mask_strategy, violation_kind, severity, dsr_type, dsr_status) & parameter (audit.anchor_cron, pdp.breach_notify_hours, pii.default_mask).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, READ.
+  - [ ] Engine lokal: Merkle Tree SHA-256 + Hash Chaining (hash_n = SHA256(hash_{n-1} || canonical_json(row))) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `security.violation.detected`, `audit.chain.broken`, `pdp.dsr.due`; konsumen idempoten untuk `*.* (semua event domain via outbox)`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Integritas rantai, Pelanggaran 24 jam, DSR jatuh tempo, Kolom PII ter-mask; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:audit`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R1.5 M-04 IT Helpdesk** — role: `IT_ADMIN`, `ALL_USERS`
+  - [ ] Migrasi + RLS: `helpdesk_tickets`, `helpdesk_ticket_events`, `helpdesk_sla_rules` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (ticket_category, ticket_priority, ticket_status, ticket_event_type) & parameter (helpdesk.max_tier, helpdesk.auto_close_days).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, UNLOCK, UPDATE.
+  - [ ] Engine lokal: Priority Queue (binary heap) dengan skor = bobot_prioritas × sisa_SLA + Escalation Timer (timing wheel) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `helpdesk.ticket.created`, `helpdesk.ticket.escalated`, `helpdesk.sla.breached`; konsumen idempoten untuk `sla.breached`, `security.violation.detected`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Tiket saya, Tiket terbuka, SLA breach, Rata-rata resolusi; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:helpdesk`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+
+### R2. Rektorat/Eksekutif — konfigurasi tata kelola & target
+
+- [ ] **R2.1 M-32 Dashboard IKU** — role: `LEADER`, `DEAN`, `QUALITY_OFFICER`
+  - [ ] Migrasi + RLS: `iku_definitions`, `iku_counters`, `iku_targets`, `iku_alerts` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (alert_level) & parameter (iku.full_recompute_cron).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: EXPORT, READ, UPDATE.
+  - [ ] Engine lokal: Incremental IKU Calculator — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `iku.threshold.breached`; konsumen idempoten untuk `tracer.response.submitted`, `career.hired`, `mbkm.conversion.approved`, `lppm.output.validated`, `ipr.granted`, `intl.conversion.approved`, `achievement.recorded`, `hr.employee.hired`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu IKU 1–8, Alert ambang, Capaian vs target, Tren 3 tahun; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:tracer_iku`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R2.2 M-47 Endowment Fund** — role: `ENDOWMENT_MANAGER`, `DONOR`, `ADMIN_FINANCE`, `LEADER`
+  - [ ] Migrasi + RLS: `donors`, `donor_campaigns`, `donations`, `fund_instruments`, `fund_yields`, `fund_allocation_rules`, `fund_allocations` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (instrument_type, compounding, restricted_purpose, allocation_target) & parameter (endowment.spend_rate_max_bp).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, REJECT, UPDATE.
+  - [ ] Engine lokal: Compound Investment Yield Engine — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `endowment.yield.posted`, `endowment.allocation.approved`; konsumen idempoten untuk —.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Total pokok, Imbal hasil YTD, Alokasi tertunda, Donasi kampanye; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:endowment`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R2.3 M-45 CRM PMB & Marketing** — role: `MARKETING_PMB`, `PMB_AGENT`, `SCHOOL_COUNSELOR`, `LEADER`
+  - [ ] Migrasi + RLS: `crm_leads`, `crm_lead_activities`, `crm_funnel_rules`, `crm_campaigns`, `crm_events`, `crm_agents`, `crm_commission_rules`, `crm_commissions` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (lead_source, lead_stage, marketing_channel, crm_activity_type, agent_type, commission_basis) & parameter (crm.lead_dedupe_threshold, crm.score.retrain_cron, crm.consent_required).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, REJECT, UPDATE.
+  - [ ] Engine lokal: Probabilistic Lead Funnel Scorer — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `crm.lead.created`, `crm.lead.converted`, `crm.commission.approved`; konsumen idempoten untuk `pmb.registration.completed`, `finance.invoice.paid`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Lead baru 7 hari, Konversi funnel, CAC per kanal, Komisi tertunda; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:crm_marketing`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+
+### R3. Kaprodi/Dekan — kurikulum, mutu, akreditasi
+
+- [ ] **R3.1 M-12 Kurikulum OBE** — role: `HEAD_OF_PROGRAM`, `DEAN`, `LECTURER`
+  - [ ] Migrasi + RLS: `curricula`, `graduate_profiles`, `plos`, `courses`, `course_prerequisites`, `clos`, `clo_plo_maps`, `rps_documents`, `obe_rubrics`, `plo_attainments`, `rpl_conversions` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (plo_domain, course_type, prereq_rule_type, rps_status) & parameter (obe.plo_pass_threshold, curriculum.min_total_sks).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, READ, REJECT, UNLOCK.
+  - [ ] Engine lokal: DAG Topological Sort (Kahn) atas prasyarat mata kuliah + CPL Attainment Matrix (CPMK→CPL berbobot) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `curriculum.locked`, `rps.approved`, `obe.plo.computed`, `rpl.conversion.approved`; konsumen idempoten untuk `grading.khs.published`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Kurikulum aktif, RPS menunggu, Capaian CPL rata-rata, Mata kuliah tanpa CPMK; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:academic`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R3.2 M-37 SPMI & Quality** — role: `QUALITY_OFFICER`, `INTERNAL_AUDITOR`, `HEAD_OF_PROGRAM`, `LEADER`
+  - [ ] Migrasi + RLS: `quality_standards`, `ami_cycles`, `ami_assignments`, `ami_checklists`, `ami_findings`, `ami_corrective_actions` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (ppepp_stage, finding_category, finding_status) & parameter (ami.rtl_due_days).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, REJECT.
+  - [ ] Engine lokal: PPEPP Audit State Machine (Penetapan→Pelaksanaan→Evaluasi→Pengendalian→Peningkatan) dengan guard transisi berbasis bukti — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `spmi.finding.opened`, `spmi.finding.closed`; konsumen idempoten untuk —.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Temuan terbuka, RTL lewat tenggat, Siklus AMI, Standar per tahap PPEPP; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:spmi`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R3.3 M-31 Akreditasi LKPS** — role: `HEAD_OF_PROGRAM`, `DEAN`, `QUALITY_OFFICER`, `LEADER`
+  - [ ] Migrasi + RLS: `lkps_templates`, `lkps_snapshots`, `led_documents`, `ratio_checks` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (accreditation_instrument, ratio_code) & parameter (lkps.ts_years).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT, LOCK.
+  - [ ] Engine lokal: 9-Criteria LKPS Extractor — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `accreditation.snapshot.frozen`; konsumen idempoten untuk `*.read_model.refreshed`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Kelengkapan 9 kriteria, Rasio gagal, Snapshot terakhir, LED progres; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:accreditation`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R3.4 M-38 Kampus Merdeka / MBKM** — role: `HEAD_OF_PROGRAM`, `STUDENT`, `MBKM_SUPERVISOR`
+  - [ ] Migrasi + RLS: `mbkm_programs`, `mbkm_participants`, `mbkm_logbooks`, `mbkm_conversions` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (mbkm_scheme, logbook_source) & parameter (mbkm.max_sks_outside).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, REJECT.
+  - [ ] Engine lokal: DAG Credit Conversion — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `mbkm.conversion.approved`; konsumen idempoten untuk `fieldwork.score.submitted`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Peserta MBKM, Logbook terverifikasi, Konversi menunggu, SKS terkonversi; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:mbkm`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+
+### R4. Staff BAAK/BAUK/Sarpras — operasi admisi, keuangan, jadwal, aset
+
+- [ ] **R4.1 M-09 PMB & OCR** — role: `PMB_OPERATOR`, `APPLICANT`
+  - [ ] Migrasi + RLS: `pmb_periods`, `pmb_tracks`, `form_schemas`, `pmb_applicants`, `pmb_documents`, `cbt_question_banks`, `cbt_questions`, `cbt_sessions`, `pmb_selection_results` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (pmb_track_type, pmb_doc_type, applicant_status, selection_decision, rpl_type, question_type) & parameter (pmb.ocr.match_threshold, pmb.ocr.langs, pmb.max_program_choices).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, REJECT, UPDATE.
+  - [ ] Engine lokal: Local Tesseract OCR (tesseract.js WASM / tesseract-ocr worker, traineddata ind+eng dibundel) + Levenshtein Fuzzy Matching terhadap data isian — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `pmb.applicant.submitted`, `pmb.selection.decided`, `pmb.registration.completed`; konsumen idempoten untuk `crm.lead.converted`, `finance.invoice.paid`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Pendaftar per jalur, Dokumen menunggu verifikasi, Lulus seleksi, Daftar ulang; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:pmb`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R4.2 M-10 Keuangan & Billing** — role: `ADMIN_FINANCE`, `TREASURER`, `STUDENT`, `LEADER`
+  - [ ] Migrasi + RLS: `fee_components`, `tariff_rules`, `invoices`, `invoice_lines`, `payments`, `finance_journals`, `finance_journal_lines`, `budget_lines`, `financial_holds` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (payment_channel, invoice_status, hold_reason, ukt_group, gl_account_type) & parameter (finance.va.expiry_hours, finance.hold.krs_block, finance.installment.max).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, UNLOCK.
+  - [ ] Engine lokal: Multi-Variable Billing Matrix — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `finance.invoice.issued`, `finance.invoice.paid`, `finance.hold.changed`, `finance.journal.posted`, `finance.budget.committed`; konsumen idempoten untuk `pmb.selection.decided`, `enrollment.krs.approved`, `scholarship.award.approved`, `procurement.po.approved`, `lppm.disbursement.approved`, `hr.payroll.locked`, `endowment.yield.posted`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Tagihan terbit, Terbayar hari ini, Piutang > 30 hari, Serapan anggaran; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:finance`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R4.3 M-11 KIP-K & Beasiswa** — role: `SCHOLARSHIP_ADMIN`, `STUDENT`
+  - [ ] Migrasi + RLS: `scholarship_programs`, `scholarship_applications`, `scholarship_awards`, `scholarship_monitoring`, `allowance_disbursements` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (sponsor, scholarship_status, warning_level) & parameter (scholarship.min_gpa, scholarship.freeze_after_warnings, scholarship.cr_max).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, REJECT, UNLOCK, UPDATE.
+  - [ ] Engine lokal: Weighted Sum + AHP Economic Scorer — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `scholarship.award.approved`, `scholarship.award.frozen`; konsumen idempoten untuk `grading.khs.published`, `endowment.allocation.approved`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Pendaftar, Penerima aktif, Peringatan IPK, Dana tersalur; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:scholarship`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R4.4 M-46 E-Procurement PBJ** — role: `PROCUREMENT_COMMITTEE`, `PPK_OFFICER`, `VENDOR`, `ADMIN_FINANCE`
+  - [ ] Migrasi + RLS: `procurement_requests`, `procurement_items`, `vendors`, `rfq_bids`, `procurement_approvals`, `procurement_contracts`, `goods_receipts` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (procurement_method, procurement_status, vendor_status, unit_of_measure, approval_decision) & parameter (pbj.approval_levels, pbj.low_price_threshold, pbj.direct_procurement_ceiling_idr).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, REJECT, UPDATE.
+  - [ ] Engine lokal: AHP Vendor Evaluator (harga, kualitas, waktu, rekam jejak, TKDN) + validasi HPS (penawaran ≤ HPS, deteksi harga tidak wajar < 80% HPS) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `procurement.request.submitted`, `procurement.po.approved`, `procurement.goods.received`; konsumen idempoten untuk `finance.budget.committed`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Pengajuan aktif, Menunggu PPK, Nilai kontrak, Barang diterima; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:procurement`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R4.5 M-40 Aset & Inventaris** — role: `ASSET_ADMIN`, `IT_ADMIN`
+  - [ ] Migrasi + RLS: `asset_categories`, `assets`, `asset_depreciations`, `asset_movements` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (asset_status) & parameter (asset.depreciation_cron, asset.tag_prefix).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, UPDATE.
+  - [ ] Engine lokal: Straight-Line Depreciation — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `asset.registered`, `asset.depreciated`; konsumen idempoten untuk `procurement.goods.received`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Total aset, Nilai buku, Belum ter-tag, Penyusutan bulan ini; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:assets`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R4.6 M-14 Jadwal & Ruang** — role: `SCHEDULER`, `LAB_STAFF`
+  - [ ] Migrasi + RLS: `rooms`, `time_slots`, `schedule_constraints`, `schedule_runs`, `class_meetings`, `room_bookings` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (room_type, day_of_week, shift, constraint_kind, constraint_hardness) & parameter (schedule.solver_timeout_seconds, schedule.min_break_minutes).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, UNLOCK.
+  - [ ] Engine lokal: CSP Solver — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `schedule.published`, `schedule.meeting.changed`; konsumen idempoten untuk `enrollment.krs.approved`, `emergency.room.locked_out`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Konflik jadwal, Utilisasi ruang, Run terakhir, Booking hari ini; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:scheduling`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R4.7 M-15 Moda Perkuliahan** — role: `ADMIN_ACADEMIC`, `LECTURER`
+  - [ ] Migrasi + RLS: `learning_modes`, `lecture_sessions`, `online_meetings`, `shift_allocations`, `reconciliation_rules` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (learning_mode, feeder_mode, shift, meeting_provider, evidence_type) & parameter (mode.online_min_join_ratio, mode.meeting_provider).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT, LOCK, UPDATE.
+  - [ ] Engine lokal: Hybrid Reconciliation Matrix — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `teaching.session.mode_changed`, `teaching.session.closed`; konsumen idempoten untuk `schedule.published`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Sesi hari ini per moda, Rapat daring siap, Sesi belum ditutup, Distribusi F/O/M; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:teaching`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R4.8 M-33 Jadwal Darurat** — role: `SCHEDULER`, `SARPRAS_ADMIN`
+  - [ ] Migrasi + RLS: `incidents`, `room_lockouts`, `reroute_plans` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (incident_kind, severity) & parameter (emergency.max_walk_m).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, UNLOCK, UPDATE.
+  - [ ] Engine lokal: Edmonds-Karp max-flow — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `emergency.room.locked_out`, `emergency.reroute.applied`; konsumen idempoten untuk —.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Insiden aktif, Ruang terkunci, Kelas terdampak, Rencana menunggu; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:scheduling`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+
+### R5. Dosen — SDM, pengajaran, penilaian, riset
+
+- [ ] **R5.1 M-06 HRIS & Payroll** — role: `HR_ADMIN`, `ADMIN_FINANCE`, `LECTURER`, `EMPLOYEE`
+  - [ ] Migrasi + RLS: `employees`, `leave_requests`, `employee_attendance`, `kpi_scorecards`, `payroll_runs`, `payroll_lines`, `tax_brackets`, `ptkp_rates` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (employment_type, functional_rank, leave_type, pay_component, tax_scheme, ter_category) & parameter (payroll.cutoff_day, payroll.rounding, leave.annual_quota_days).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, REJECT, UNLOCK, UPDATE.
+  - [ ] Engine lokal: PPh 21 Dynamic Bracket Calculator — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `hr.employee.hired`, `hr.employee.terminated`, `hr.payroll.locked`, `hr.leave.approved`; konsumen idempoten untuk `bkd.report.approved`, `attendance.lecturer.session_closed`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Pegawai aktif, Cuti menunggu, Status payroll bulan ini, KPI rata-rata unit; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:hr_bkd`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.2 M-07 BKD Dosen** — role: `LECTURER`, `HEAD_OF_PROGRAM`, `BKD_ASSESSOR`, `HR_BKD_OFFICER`
+  - [ ] Migrasi + RLS: `bkd_periods`, `bkd_activities`, `bkd_assessments`, `ewmp_rubrics` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (dharma, bkd_activity_type, bkd_verdict) & parameter (bkd.min_sks, bkd.max_sks, bkd.min_dharma_pendidikan_sks).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, READ, REJECT, UPDATE.
+  - [ ] Engine lokal: Interval Tree Overlap Detection pada (start_at, end_at) seluruh kegiatan tridharma + jadwal mengajar — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `bkd.activity.recorded`, `bkd.report.approved`; konsumen idempoten untuk `attendance.lecturer.session_closed`, `lppm.output.validated`, `journal.article.published`, `ipr.granted`, `thesis.supervision.logged`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu SKS terklaim, Bentrok terdeteksi, Asesmen menunggu, Status periode; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:hr_bkd`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.3 M-08 SISTER Sync** — role: `LECTURER`, `HR_BKD_OFFICER`
+  - [ ] Migrasi + RLS: `sister_mappings`, `sister_sync_items`, `sister_sync_runs` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (sister_entity_type, sync_status) & parameter (sister.base_url, sister.batch_size, sister.retry_max).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT, READ, UPDATE.
+  - [ ] Engine lokal: Delta Hash Sync — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `sister.item.pushed`, `sister.item.failed`; konsumen idempoten untuk `bkd.report.approved`, `lppm.output.validated`, `hr.employee.hired`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Antrean push, Gagal 24 jam, Terakhir sinkron, Delta tertunda; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:hr_bkd`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.4 M-16 LMS Digital** — role: `LECTURER`, `STUDENT`
+  - [ ] Migrasi + RLS: `lms_courses`, `lms_materials`, `lms_progress`, `xapi_statements`, `lms_assignments`, `lms_submissions`, `lms_quizzes`, `lms_discussions`, `search_index_terms` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (material_type, xapi_verb) & parameter (lms.video_complete_ratio, lms.max_upload_mb).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT, READ, UPDATE.
+  - [ ] Engine lokal: TF-IDF Local Vector Search (indeks invers + cosine) atas materi/diskusi; xAPI LRS lokal — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `lms.progress.updated`, `lms.submission.graded`, `lms.quiz.completed`; konsumen idempoten untuk `enrollment.krs.approved`, `teaching.session.closed`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Kelas aktif, Tugas jatuh tempo, Progres materi, Diskusi baru; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:lms`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.5 M-18 Presensi Smart** — role: `LECTURER`, `STUDENT`, `ADMIN_ACADEMIC`
+  - [ ] Migrasi + RLS: `geofences`, `attendance_sessions`, `attendance_records`, `attendance_corrections`, `lecturer_attendance` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (attendance_method, attendance_status, feeder_mode) & parameter (attendance.qr_step_seconds, attendance.qr_tolerance_steps, attendance.geofence_radius_m, attendance.min_presence_ratio).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, READ, REJECT.
+  - [ ] Engine lokal: HMAC-SHA256 TOTP (step 5 s, toleransi ±1 step) + Haversine distance ≤ radius geofence (default 30 m) + cek akurasi GPS — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `attendance.session.opened`, `attendance.recorded`, `attendance.lecturer.session_closed`; konsumen idempoten untuk `teaching.session.mode_changed`, `teaching.session.closed`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Sesi terbuka, Kehadiran hari ini, Di bawah 75%, Koreksi menunggu; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:attendance`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.6 M-17 Ujian & Proctoring** — role: `INVIGILATOR`, `LECTURER`, `STUDENT`
+  - [ ] Migrasi + RLS: `exams`, `exam_attempts`, `proctoring_profiles`, `proctoring_flags`, `biometric_consents` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (exam_kind, flag_type, severity) & parameter (proctor.flag_threshold, proctor.face_check_interval_s).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, REJECT, UNLOCK.
+  - [ ] Engine lokal: Local OpenCV / MediaPipe Face Mesh WASM di perangkat — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `cbt.attempt.flagged`, `cbt.attempt.submitted`; konsumen idempoten untuk `finance.hold.changed`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Ujian berlangsung, Flag real-time, Attempt selesai, Persetujuan biometrik; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:cbt`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.7 M-19 Nilai & KHS** — role: `LECTURER`, `HEAD_OF_PROGRAM`, `STUDENT`
+  - [ ] Migrasi + RLS: `grade_scales`, `grade_scale_items`, `grade_components`, `grade_formulas`, `grade_values`, `final_grades`, `khs`, `grade_change_requests` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (grade_component_type, grade_change_status) & parameter (grading.publish_requires_lock, grading.rounding_digits).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, READ, REJECT, UNLOCK, UPDATE.
+  - [ ] Engine lokal: AST Math Evaluator — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `grading.final.locked`, `grading.khs.published`, `grading.transcript.updated`; konsumen idempoten untuk `lms.submission.graded`, `lms.quiz.completed`, `attendance.recorded`, `fieldwork.score.submitted`, `mbkm.conversion.approved`, `rpl.conversion.approved`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Kelas belum kunci nilai, Perubahan menunggu, IPS rata-rata, KHS terbit; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:assessment`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.8 M-20 Tugas Akhir & RAMA** — role: `STUDENT`, `THESIS_SUPERVISOR`, `EXAMINER`, `HEAD_OF_PROGRAM`
+  - [ ] Migrasi + RLS: `theses`, `thesis_supervisors`, `thesis_logbooks`, `thesis_defenses`, `thesis_examiners`, `thesis_scores`, `repository_items` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (thesis_status, supervisor_role, defense_kind, topic_area) & parameter (thesis.min_logbook_entries, thesis.plagiarism_max, thesis.winnow.k).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, READ, REJECT, UPDATE.
+  - [ ] Engine lokal: Winnowing fingerprint (k-gram, window w) + Jaccard similarity terhadap korpus lokal tenant; OAI-PMH 2.0 XML serializer (oai_dc) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `thesis.supervision.logged`, `thesis.defense.scored`, `thesis.repository.published`; konsumen idempoten untuk `grading.khs.published`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Mahasiswa bimbingan, Logbook menunggu tanda tangan, Sidang minggu ini, Terbit di RAMA; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:thesis`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.9 M-44 SIM-LPPM / LITABMAS** — role: `LECTURER`, `GRANT_REVIEWER`, `LPPM_ADMIN`, `ADMIN_FINANCE`, `LEADER`
+  - [ ] Migrasi + RLS: `grant_schemes`, `grant_proposals`, `grant_proposal_members`, `grant_reviews`, `grant_contracts`, `grant_disbursements`, `research_outputs` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (funding_source, grant_member_role, output_type, review_recommendation, grant_status) & parameter (lppm.reviewers_per_proposal, lppm.nb.enabled, lppm.tranches).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, REJECT, UPDATE.
+  - [ ] Engine lokal: Naive Bayes Proposal Scorer (multinomial, dilatih lokal dari proposal historis tenant) sebagai skor pendamping — keputusan tetap oleh reviewer buta — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `lppm.proposal.funded`, `lppm.disbursement.approved`, `lppm.disbursement.paid`, `lppm.output.validated`; konsumen idempoten untuk `endowment.allocation.approved`, `ipr.granted`, `journal.article.published`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Proposal dibuka, Review menunggu, Dana tersalur, Luaran tervalidasi (IKU 5); tombol aksi tergating izin; topik WebSocket `tenant:{tid}:litabmas`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.10 M-21 Jurnal & OJS** — role: `JOURNAL_MANAGER`, `LECTURER`
+  - [ ] Migrasi + RLS: `journals`, `journal_articles`, `article_authors`, `apc_invoices` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (sinta_rank, article_status) & parameter (journal.harvest_cron, journal.apc_default_idr).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT.
+  - [ ] Engine lokal: OAI-PMH Harvester inkremental (resumptionToken, from/until) dari OJS self-hosted + dedupe DOI — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `journal.article.published`; konsumen idempoten untuk `finance.invoice.paid`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Jurnal terkelola, Artikel baru, APC tertunda, Peringkat SINTA; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:journal`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R5.11 M-22 Inkubator & HAKI** — role: `IPR_MANAGER`, `LECTURER`, `STUDENT`
+  - [ ] Migrasi + RLS: `ipr_filings`, `ipr_inventors`, `startups`, `startup_milestones`, `seed_fundings` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (ipr_type, ipr_status, startup_stage, milestone_type) & parameter (ipr.iku5_counted_types).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, REJECT.
+  - [ ] Engine lokal: State machine pendaftaran HAKI + agregator IKU 5 (dedupe per luaran-dosen) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `ipr.granted`, `incubator.milestone.achieved`; konsumen idempoten untuk `lppm.output.validated`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu HAKI diajukan, HAKI granted, Startup aktif, Dana seed; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:ipr_incubator`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+
+### R6. Mahasiswa — layanan mandiri & kemahasiswaan
+
+- [ ] **R6.1 M-13 KRS Online & Perwalian** — role: `ADVISER`, `STUDENT`, `ADMIN_ACADEMIC`
+  - [ ] Migrasi + RLS: `advising_sessions`, `advising_logs`, `krs_headers`, `krs_items`, `krs_war_windows`, `sks_limit_rules` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (krs_status, advising_status) & parameter (krs.reservation_ttl_seconds, krs.war.rate_limit_per_min, krs.require_adviser_approval).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, REJECT, UNLOCK, UPDATE.
+  - [ ] Engine lokal: Redis Redlock + Lua atomic seat decrement (DECR jika >0) dengan token antrean FIFO — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `enrollment.seat.reserved`, `enrollment.krs.submitted`, `enrollment.krs.approved`, `enrollment.krs.rejected`; konsumen idempoten untuk `finance.hold.changed`, `academic.student.activated`, `schedule.published`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu KRS saya / mahasiswa wali, Menunggu ACC, Kursi tersisa, Antrean war; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:enrollment`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R6.2 M-26 Simulasi Lulus** — role: `STUDENT`, `ADVISER`
+  - [ ] Migrasi + RLS: `graduation_simulations` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (tidak ada) & parameter (study.max_semesters, simulation.max_sks_per_term).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT.
+  - [ ] Engine lokal: Critical Path Method di atas DAG prasyarat × ketersediaan penawaran semester (ganjil/genap) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: —; konsumen idempoten untuk `grading.khs.published`, `curriculum.locked`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Sisa SKS, Semester lulus proyeksi, Mata kuliah kritis, Risiko lewat masa studi; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:academic`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R6.3 M-24 Kemahasiswaan & SKKM** — role: `STUDENT_AFFAIRS_ADMIN`, `STUDENT`
+  - [ ] Migrasi + RLS: `skkm_rules`, `skkm_claims`, `achievements`, `student_organizations` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (skkm_activity_type, achievement_level, participation_role, achievement_rank) & parameter (skkm.min_points_graduation, skkm.duplicate_check).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, REJECT.
+  - [ ] Engine lokal: SKKM Rule Scorer — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `skkm.claim.approved`, `achievement.recorded`; konsumen idempoten untuk —.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Klaim menunggu, Poin SKKM saya, Prestasi nasional/internasional, Ormawa aktif; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:student_affairs`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R6.4 M-25 KKN, PKL & Magang** — role: `STUDENT`, `FIELD_SUPERVISOR`, `PARTNER_MENTOR`, `LPPM_ADMIN`
+  - [ ] Migrasi + RLS: `fieldwork_programs`, `fieldwork_sites`, `fieldwork_groups`, `fieldwork_members`, `fieldwork_logbooks`, `fieldwork_scores`, `partners` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (fieldwork_kind, partner_type, scorer_kind) & parameter (fieldwork.logbook_geofence_required, fieldwork.score_weights).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, REJECT, UPDATE.
+  - [ ] Engine lokal: K-Means spatial clustering (koordinat domisili/lokasi, k = jumlah lokasi) + balancing kapasitas + aturan heterogenitas prodi — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `fieldwork.logbook.verified`, `fieldwork.score.submitted`; konsumen idempoten untuk `enrollment.krs.approved`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Peserta aktif, Logbook belum diverifikasi, Nilai mitra masuk, Lokasi terisi; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:fieldwork`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R6.5 M-28 Career Center** — role: `CAREER_ADMIN`, `ALUMNI`, `EMPLOYER`, `STUDENT`
+  - [ ] Migrasi + RLS: `employers`, `job_vacancies`, `job_applications`, `career_fairs` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (application_status, skill_tag) & parameter (career.min_match_score).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, READ.
+  - [ ] Engine lokal: Bipartite graph matching (Hopcroft-Karp) kandidat↔lowongan dengan bobot skor skill (Jaccard tag kompetensi) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `career.hired`; konsumen idempoten untuk `tracer.response.submitted`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Lowongan aktif, Lamaran, Rekrut tercatat, Mitra terverifikasi; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:career`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R6.6 M-29 KUI & Mobilitas** — role: `INTL_OFFICE_ADMIN`, `STUDENT`, `LEADER`
+  - [ ] Migrasi + RLS: `mobility_programs`, `mobility_participants`, `immigration_documents`, `credit_conversion_factors`, `credit_conversions` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (mobility_direction, credit_system, immigration_doc_type) & parameter (intl.visa_alert_days).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, REJECT.
+  - [ ] Engine lokal: ECTS Conversion Matrix — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `intl.conversion.approved`, `intl.visa.expiring`; konsumen idempoten untuk —.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Inbound/outbound, Visa < 30 hari, Konversi menunggu, Kelas BIPA; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:international`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R6.7 M-39 e-Library** — role: `LIBRARIAN`, `STUDENT`, `LECTURER`
+  - [ ] Migrasi + RLS: `library_items`, `library_copies`, `library_loans`, `library_fines`, `library_clearances` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (copy_status, library_location) & parameter (library.loan_days, library.fine_per_day_idr, library.bm25_k1).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, READ.
+  - [ ] Engine lokal: BM25 local ranker (k1, b berparameter) atas indeks invers katalog MARC21/Dublin Core — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `library.clearance.granted`, `library.loan.overdue`; konsumen idempoten untuk `thesis.repository.published`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Pinjaman aktif, Terlambat, Denda tertunggak, Bebas pustaka hari ini; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:library`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R6.8 M-41 Klinik Kampus** — role: `CLINIC_DOCTOR`, `COUNSELOR`, `STUDENT`
+  - [ ] Migrasi + RLS: `clinic_patients`, `medical_records`, `clinic_queue`, `counseling_bookings` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (triage_level, booking_status) & parameter (clinic.record_retention_years).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: EXPORT, UNLOCK, UPDATE.
+  - [ ] Engine lokal: AES-256-GCM envelope encryption per rekam medis (DEK per record, KEK di KMS) + virtual queue (priority queue triase) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `clinic.queue.called`; konsumen idempoten untuk —.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Antrean saat ini, Kunjungan hari ini, Booking konseling, Akses break-glass; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:clinic`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R6.9 M-42 Asrama & Kantin** — role: `DORM_MANAGER`, `STUDENT`
+  - [ ] Migrasi + RLS: `dorm_rooms`, `dorm_allocations`, `shuttle_routes`, `wallet_accounts`, `wallet_ledger` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (gender, wallet_entry_kind) & parameter (wallet.max_balance_idr).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, UPDATE.
+  - [ ] Engine lokal: 3D Bin Packing (First-Fit Decreasing multi-dimensi — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `dorm.allocated`, `wallet.reconciled`; konsumen idempoten untuk `finance.invoice.paid`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Okupansi, Menunggu alokasi, Saldo beredar, Selisih rekonsiliasi; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:dormitory`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R6.10 M-43 Humas & Event** — role: `PR_EVENT_ADMIN`, `EVENT_PARTICIPANT`, `STUDENT`
+  - [ ] Migrasi + RLS: `events`, `event_registrations`, `event_checkins`, `signage_schedules` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (event_status, registration_status) & parameter (event.waitlist_enabled).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT.
+  - [ ] Engine lokal: Event Registration Scorer (prioritas berbobot — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `event.checked_in`; konsumen idempoten untuk `emergency.room.locked_out`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Event mendatang, Registrasi, Check-in live, Signage aktif; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:events`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+
+### R7. Penutupan siklus lintas-role — kelulusan, regulasi, alumni
+
+- [ ] **R7.1 M-30 Yudisium & SKPI** — role: `ADMIN_ACADEMIC`, `DEAN`, `STUDENT`, `UNIT_CLEARANCE_OFFICER`
+  - [ ] Migrasi + RLS: `clearance_rules`, `clearance_states`, `yudisium_batches`, `yudisium_members`, `skpi_documents` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (clearance_requirement, graduation_predicate, yudisium_status) & parameter (yudisium.predicate_rules).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, READ, REJECT.
+  - [ ] Engine lokal: DFA Clearance Engine — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `yudisium.clearance.changed`, `yudisium.batch.approved`; konsumen idempoten untuk `finance.hold.changed`, `library.clearance.granted`, `skkm.claim.approved`, `thesis.repository.published`, `grading.transcript.updated`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Mahasiswa layak, Clearance tertahan, Batch menunggu, SKPI terbit; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:graduation`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R7.2 M-35 PIN & SIVIL** — role: `ADMIN_ACADEMIC`, `FEEDER_OPERATOR`, `PUBLIC`
+  - [ ] Migrasi + RLS: `pin_quotas`, `pin_reservations`, `diplomas`, `signing_keys` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (pin_status) & parameter (diploma.qr_ttl_days, diploma.public_fields).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, READ.
+  - [ ] Engine lokal: RSA-PSS / Ed25519 digital signature atas payload e-ijazah + HMAC token QR verifikasi publik (rotasi kunci berversi) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `pin.reserved`, `diploma.issued`, `diploma.revoked`; konsumen idempoten untuk `yudisium.batch.approved`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Kuota PIN tersisa, Ijazah terbit, Verifikasi publik 7 hari, Pencabutan; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:graduation`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R7.3 M-23 Wisuda & Toga** — role: `GRADUATION_COMMITTEE`, `STUDENT`, `ADMIN_ACADEMIC`
+  - [ ] Migrasi + RLS: `convocations`, `convocation_registrants`, `convocation_seats`, `gown_inventory`, `stage_call_logs` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (gown_size, registrant_status, seating_strategy) & parameter (graduation.guest_max, graduation.seating_strategy).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT, LOCK, UPDATE.
+  - [ ] Engine lokal: Hungarian Algorithm (Kuhn-Munkres) untuk penugasan kursi berdasarkan biaya (urutan prodi, prestasi, aksesibilitas) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `graduation.registered`, `graduation.stage_called`; konsumen idempoten untuk `yudisium.batch.approved`, `pin.reserved`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Pendaftar wisuda, Kursi terplot, Toga terdistribusi, Antrean panggung; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:graduation`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R7.4 M-27 Tracer Study** — role: `ALUMNI_ADMIN`, `ALUMNI`
+  - [ ] Migrasi + RLS: `tracer_surveys`, `tracer_responses`, `alumni_profiles`, `blast_jobs` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (job_field, blast_channel) & parameter (tracer.waves_years, tracer.blast_rate_per_min).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: EXPORT, UPDATE.
+  - [ ] Engine lokal: Survey longitudinal (gelombang 1/3/5 tahun) + alignment chart bidang kerja vs prodi (cosine similarity kode KBLI/KBJI) — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `tracer.response.submitted`; konsumen idempoten untuk `yudisium.batch.approved`, `pin.reserved`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Response rate, Bekerja < 6 bulan (IKU 1), Alumni terdata, Blast berjalan; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:tracer_iku`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R7.5 M-34 Feeder PDDikti** — role: `FEEDER_OPERATOR`, `IT_ADMIN`
+  - [ ] Migrasi + RLS: `feeder_staging`, `feeder_rules`, `feeder_sync_jobs`, `feeder_corrections` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (feeder_entity_type, feeder_status) & parameter (feeder.fuzzy_threshold, feeder.retry_max).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, REJECT, UPDATE.
+  - [ ] Engine lokal: Local Fuzzy String Matcher (Jaro-Winkler + normalisasi) untuk koreksi referensi (wilayah, sekolah, nama ibu) + pre-sync rule engine — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `feeder.item.synced`, `feeder.item.failed`; konsumen idempoten untuk `academic.student.activated`, `enrollment.krs.approved`, `grading.khs.published`, `attendance.lecturer.session_closed`, `yudisium.batch.approved`, `teaching.session.mode_changed`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Staging error, Antrean sync, Sukses 24 jam, Koreksi menunggu; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:feeder_pddikti`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+- [ ] **R7.6 M-36 Portal PPKS** — role: `PPKS_TASKFORCE`, `PPKS_REPORTER`, `LEADER`
+  - [ ] Migrasi + RLS: `ppks_reports`, `ppks_cases`, `ppks_case_events`, `ppks_ministry_reports` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (ppks_case_status, ppks_event_type, risk_level) & parameter (ppks.response_days).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT, LOCK, READ.
+  - [ ] Engine lokal: AES-256-GCM zero-knowledge vault — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `ppks.case.opened`; konsumen idempoten untuk —.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Kasus baru, Melewati batas respon, Kasus ditangani, Konseling terjadwal; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:ppks`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+
+### R8. SuperApp Mobile
+
+- [ ] **R8.1 APP SuperApp Mobile** — role: `STUDENT`, `LECTURER`
+  - [ ] Migrasi + RLS: `devices`, `sync_cursors`, `push_tokens` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Seed lookup (device_platform, push_provider) & parameter (mobile.max_devices_per_user, mobile.offline_checkin_max_minutes, mobile.min_app_version).
+  - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, LOCK, READ.
+  - [ ] Engine lokal: SQLite (Drift) Differential Sync — unit test deterministik + golden dataset.
+  - [ ] Event outbox: `mobile.device.bound`; konsumen idempoten untuk `attendance.session.opened`, `enrollment.krs.approved`, `grading.khs.published`, `finance.invoice.issued`, `thesis.supervision.logged`.
+  - [ ] UI Velzon (UI_UX §10.4): kartu Jadwal hari ini, QR presensi, Tagihan, Notifikasi; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:mobile_superapp`.
+  - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
+
+
+### R9. Hardening Enterprise
+
+- [ ] R9.1 Tes E2E rantai I-1…I-10 & simulasi S-1…S-6 (PRD §10.5) di CI.
+- [ ] R9.2 Uji beban 1.000 koneksi WebSocket + KRS war; p95 event→UI ≤ 2 s.
+- [ ] R9.3 DPIA (biometrik, kesehatan, PPKS, lokasi) & uji penetrasi vault.
+- [ ] R9.4 Golden dataset seluruh engine ARCHITECTURE §11.4.
+
+---
+
+# Lampiran A — Riwayat Phase 1–4 (status implementasi sebelum 2026-10-20)
+
+<!-- SICA-47:END roadmap -->
 
 ## Ringkasan Fase Pengerjaan
 

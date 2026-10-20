@@ -393,3 +393,103 @@ Refactor "Principal Lead UI/UX Engineer" menetapkan kelas Tailwind eksplisit (bu
 
 ### 9.6 Paritas Mobile (AGENTS §3.4)
 Admin tidak perlu layar penuh di Flutter, tetapi tiga aksi wajib ada di mobile (kasus nyata: kaprodi/dekan bergerak): (1) **persetujuan** (KRS, koreksi nilai, perubahan status, keringanan), (2) **monitoring pengisian nilai** per kelas, (3) **buka/tutup presensi** dan QR sesi. Data hanya lewat rute `/api/v1/*` yang sama; tidak ada endpoint khusus mobile.
+
+---
+
+<!-- SICA-47:BEGIN enterprise-47 -->
+
+## 10. Dashboard Grid Dinamis per Role & Layar 47 Modul (dikunci 2026-10-20)
+
+### 10.1 Shell Pasca-Login
+
+```
+┌──────────────────────────── Header biru (--sica-topbar-bg) ────────────────────────────┐
+│ Logo tenant · nama kampus · switcher konteks (periode/prodi)   🔔  Avatar ▾ (Profil, Ganti Role, Logout) │
+├───────────────────────────┬──────────────────────────────────────────────────────────────┤
+│ DAFTAR MODUL (kiri)       │ Area kerja: dashboard modul aktif / ringkasan lintas modul   │
+│ [kartu][kartu][kartu]     │ (KPI widget, tugas menunggu, feed real-time)                 │
+│ [kartu][kartu][kartu]     │                                                              │
+│ ▸ Modul Lain (collapsible)│                                                              │
+└───────────────────────────┴──────────────────────────────────────────────────────────────┘
+```
+
+| Elemen | Spesifikasi |
+|---|---|
+| Header | tinggi 70 px; latar token `--sica-topbar-bg` (default biru Velzon `#405189`, dapat diubah per tenant via parameter `ui.theme.topbar_bg`); teks putih; menu avatar berisi Profil, Ganti Role (bila user punya >1 assignment), Logout (mencabut sesi, §2 SECURITY) |
+| Warna aksen | tombol primer tetap hijau `#0ab39c` (§1); header biru hanya untuk bilah atas — keputusan PRD §10.7 PD-03 |
+| Daftar Modul | panel kiri; grid kartu: ≥1400 px 3 kolom, 992–1399 px 2 kolom, 768–991 px 2 kolom dan panel menjadi drawer, <768 px 1 kolom layar penuh |
+| Sumber kartu | `GET /api/v1/me/dashboard` → `{profile, modules:[{code,name,icon,badge,kpi[],route,permissions[]}]}` dihitung server: (profil seed ∪ modul ber-izin READ) ∩ entitlement aktif ∩ izin efektif (PRD §10.3) |
+| Urutan | sesuai `dashboard_profiles` (CRUD di M-03); user dapat menyematkan (pin) kartu — disimpan di `user_preferences` |
+| Pencarian | filter kartu by nama/kode (`/` shortcut) |
+
+### 10.2 Anatomi Kartu Modul
+
+Ikon Lucide + kode (`M-13`) + nama; badge angka tugas menunggu (mis. "5 KRS menunggu ACC"); satu KPI utama; status entitlement. State: **loading** (skeleton), **kosong** (ilustrasi + aksi pertama yang diizinkan, mis. "Buat Periode"), **error** (pesan + `X-Request-ID` + tombol coba lagi), **terkunci** (modul aktif tetapi periode `LOCK` → ikon gembok + alasan), **tidak berlangganan** (tidak dirender sama sekali). Badge & KPI diperbarui via WebSocket (topik `tenant:{tid}:{entitlement}` dan `user:{uid}`) dengan animasi pulse 600 ms; tidak ada polling.
+
+### 10.3 Gating Tombol Aksi & UX Real-Time
+
+- Komponen `<Can action="APPROVE" resource="enrollment.krs">` merender tombol hanya bila izin efektif ada; server tetap menegakkan (UI bukan kontrol keamanan).
+- Tombol destruktif (`DELETE`, `LOCK`, `UNLOCK`, `REJECT`) membuka modal konfirmasi dengan *impact analysis* (§9) dan kolom alasan wajib.
+- `PARAM_EDIT` membuka drawer editor parameter: nilai saat ini, versi, `effectiveFrom`, batas regulasi, pratinjau dampak.
+- Event masuk untuk entitas yang sedang dibuka: bila tidak ada perubahan lokal → refetch diam-diam + toast Sonner "Diperbarui oleh {aktor}"; bila ada perubahan lokal → banner konflik (pakai `VERSION_CONFLICT`).
+- Halaman list memakai pola §9 (data grid, filter, side drawer); semua label status berasal dari lookup (warna badge dari `lookup_values.extra.color`).
+
+
+### 10.4 Spesifikasi Layar per Modul
+
+| Kode | Modul | Kartu dashboard (KPI widget) | Menu kiri (urutan) | Tombol aksi (dirender hanya bila izin ada) | Kanal real-time (WebSocket topic) |
+|---|---|---|---|---|---|
+| M-01 | SaaS Foundation | Tenant aktif, SLA bulan ini, Insiden terbuka, Pemakaian seat | Tenant Mgmt, SaaS Licensing, SLA, Global Audit | CREATE, DELETE, EXPORT, LOCK, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:platform_saas` |
+| M-02 | Master Parameter | Kategori lookup, Parameter berubah 7 hari, NIM terbit periode ini, Atribut EAV | Master Lookups, System Params, Dynamic EAV, Auto-NIM | CREATE, DELETE, EXPORT, PARAM_EDIT, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:identity` |
+| M-03 | Hak Akses & RBAC | Role aktif, Permintaan akses menunggu, Assignment kedaluwarsa 30 hari, Pelanggaran SoD | Role Mgmt, Permission Grid, Parameter Restrictions | APPROVE, CREATE, DELETE, EXPORT, READ, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:identity` |
+| M-04 | IT Helpdesk | Tiket saya, Tiket terbuka, SLA breach, Rata-rata resolusi | Service Desk Portal, Ticket Mgmt, SLA Rules | APPROVE, CREATE, DELETE, EXPORT, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:helpdesk` |
+| M-05 | Keamanan & Audit | Integritas rantai, Pelanggaran 24 jam, DSR jatuh tempo, Kolom PII ter-mask | Hash Chain Audit Log, PII Masking, Security Violations | APPROVE, CREATE, DELETE, EXPORT, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:audit` |
+| M-06 | HRIS & Payroll | Pegawai aktif, Cuti menunggu, Status payroll bulan ini, KPI rata-rata unit | Data Pegawai, Presensi/Cuti, KPI, Remunerasi | APPROVE, CREATE, DELETE, EXPORT, LOCK, REJECT, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:hr_bkd` |
+| M-07 | BKD Dosen | SKS terklaim, Bentrok terdeteksi, Asesmen menunggu, Status periode | BKD Portfolio, Overlap Detector, EWMP Rubric | APPROVE, CREATE, DELETE, EXPORT, LOCK, READ, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:hr_bkd` |
+| M-08 | SISTER Sync | Antrean push, Gagal 24 jam, Terakhir sinkron, Delta tertunda | Sync Dashboard, Schema Mapping, Push Queue | CREATE, DELETE, EXPORT, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:hr_bkd` |
+| M-09 | PMB & OCR | Pendaftar per jalur, Dokumen menunggu verifikasi, Lulus seleksi, Daftar ulang | Portal Camaba, Jalur PMB, Verification, CBT Exam | APPROVE, CREATE, DELETE, EXPORT, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:pmb` |
+| M-10 | Keuangan & Billing | Tagihan terbit, Terbayar hari ini, Piutang > 30 hari, Serapan anggaran | Tariff Component Master, Billing Generator, Reconciler | APPROVE, CREATE, DELETE, EXPORT, LOCK, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:finance` |
+| M-11 | KIP-K & Beasiswa | Pendaftar, Penerima aktif, Peringatan IPK, Dana tersalur | Application Verification, IPK Monitor, Allowance | APPROVE, CREATE, DELETE, EXPORT, LOCK, REJECT, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:scholarship` |
+| M-12 | Kurikulum OBE | Kurikulum aktif, RPS menunggu, Capaian CPL rata-rata, Mata kuliah tanpa CPMK | Kurikulum Master, Profil Lulusan & CPL, CPMK Mapping | APPROVE, CREATE, DELETE, EXPORT, LOCK, READ, REJECT, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:academic` |
+| M-13 | KRS Online & Perwalian | KRS saya / mahasiswa wali, Menunggu ACC, Kursi tersisa, Antrean war | Sesi Perwalian Akademik, Bimbingan DPA, KRS Portal, KRS War Queue | APPROVE, CREATE, DELETE, EXPORT, LOCK, REJECT, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:enrollment` |
+| M-14 | Jadwal & Ruang | Konflik jadwal, Utilisasi ruang, Run terakhir, Booking hari ini | Timetabling Generator, Facility Master, CSP Solver | APPROVE, CREATE, DELETE, EXPORT, LOCK, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:scheduling` |
+| M-15 | Moda Perkuliahan | Sesi hari ini per moda, Rapat daring siap, Sesi belum ditutup, Distribusi F/O/M | Learning Mode Control, Shift Allocator, Lecture Session | CREATE, DELETE, EXPORT, LOCK, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:teaching` |
+| M-16 | LMS Digital | Kelas aktif, Tugas jatuh tempo, Progres materi, Diskusi baru | Course Classroom, SCORM/Video Material, Discussion | CREATE, DELETE, EXPORT, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:lms` |
+| M-17 | Ujian & Proctoring | Ujian berlangsung, Flag real-time, Attempt selesai, Persetujuan biometrik | Online Exam Portal, Proctoring Rules, Incident Feed | APPROVE, CREATE, DELETE, EXPORT, LOCK, REJECT, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:cbt` |
+| M-18 | Presensi Smart | Sesi terbuka, Kehadiran hari ini, Di bawah 75%, Koreksi menunggu | Presensi Kelas, Dynamic QR Generator, Geofence Master | APPROVE, CREATE, DELETE, EXPORT, LOCK, READ, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:attendance` |
+| M-19 | Nilai & KHS | Kelas belum kunci nilai, Perubahan menunggu, IPS rata-rata, KHS terbit | Gradebook Entry, Grading Scale, AST Evaluator, KHS | APPROVE, CREATE, DELETE, EXPORT, LOCK, READ, REJECT, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:assessment` |
+| M-20 | Tugas Akhir & RAMA | Mahasiswa bimbingan, Logbook menunggu tanda tangan, Sidang minggu ini, Terbit di RAMA | Pengajuan TA/Skripsi, Bimbingan TA Digital, Pendaftaran Sidang, Repositori RAMA | APPROVE, CREATE, DELETE, EXPORT, LOCK, READ, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:thesis` |
+| M-21 | Jurnal & OJS | Jurnal terkelola, Artikel baru, APC tertunda, Peringkat SINTA | Journal Directory, APC Billing, Article Indexing | APPROVE, CREATE, DELETE, EXPORT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:journal` |
+| M-22 | Inkubator & HAKI | HAKI diajukan, HAKI granted, Startup aktif, Dana seed | HAKI Portal, DJKI Integration, Startup Milestones | APPROVE, CREATE, DELETE, EXPORT, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:ipr_incubator` |
+| M-23 | Wisuda & Toga | Pendaftar wisuda, Kursi terplot, Toga terdistribusi, Antrean panggung | Convocation Register, Seating Plotter, Stage Call Queue | CREATE, DELETE, EXPORT, LOCK, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:graduation` |
+| M-24 | Kemahasiswaan & SKKM | Klaim menunggu, Poin SKKM saya, Prestasi nasional/internasional, Ormawa aktif | Pengajuan SKKM, SIMKATMAWA Scorer, Prestasi | APPROVE, CREATE, DELETE, EXPORT, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:student_affairs` |
+| M-25 | KKN, PKL & Magang | Peserta aktif, Logbook belum diverifikasi, Nilai mitra masuk, Lokasi terisi | Alokasi Lokasi KP/PKL/KKN, Penugasan DPL, Bimbingan & Logbook Geofenced, Penilaian Mitra | APPROVE, CREATE, DELETE, EXPORT, LOCK, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:fieldwork` |
+| M-26 | Simulasi Lulus | Sisa SKS, Semester lulus proyeksi, Mata kuliah kritis, Risiko lewat masa studi | Graduation Simulator, Prerequisite Graph, CPM Analysis | CREATE, DELETE, EXPORT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:academic` |
+| M-27 | Tracer Study | Response rate, Bekerja < 6 bulan (IKU 1), Alumni terdata, Blast berjalan | Survey Tracer, Blast Communication, Alumni Directory | CREATE, DELETE, EXPORT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:tracer_iku` |
+| M-28 | Career Center | Lowongan aktif, Lamaran, Rekrut tercatat, Mitra terverifikasi | Employer Portal, Job Vacancy Board, Virtual Career Fair | APPROVE, CREATE, DELETE, EXPORT, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:career` |
+| M-29 | KUI & Mobilitas | Inbound/outbound, Visa < 30 hari, Konversi menunggu, Kelas BIPA | International Mobility, Visa/ITAS Tracker, BIPA Class | APPROVE, CREATE, DELETE, EXPORT, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:international` |
+| M-30 | Yudisium & SKPI | Mahasiswa layak, Clearance tertahan, Batch menunggu, SKPI terbit | Clearance Check, DFA Inference Engine, Batch Yudisium | APPROVE, CREATE, DELETE, EXPORT, LOCK, READ, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:graduation` |
+| M-31 | Akreditasi LKPS | Kelengkapan 9 kriteria, Rasio gagal, Snapshot terakhir, LED progres | LKPS Data Extractor, LED Report Builder, Compliance | CREATE, DELETE, EXPORT, LOCK, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:accreditation` |
+| M-32 | Dashboard IKU | IKU 1–8, Alert ambang, Capaian vs target, Tren 3 tahun | Executive Dashboard, IKU Metric Detail 1-8, Reports | CREATE, DELETE, EXPORT, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:tracer_iku` |
+| M-33 | Jadwal Darurat | Insiden aktif, Ruang terkunci, Kelas terdampak, Rencana menunggu | Incident Room Manager, Re-Routing Solver, Distance | APPROVE, CREATE, DELETE, EXPORT, LOCK, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:scheduling` |
+| M-34 | Feeder PDDikti | Staging error, Antrean sync, Sukses 24 jam, Koreksi menunggu | Staging Buffer Manager, Error Validation, Sync Queue | APPROVE, CREATE, DELETE, EXPORT, LOCK, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:feeder_pddikti` |
+| M-35 | PIN & SIVIL | Kuota PIN tersisa, Ijazah terbit, Verifikasi publik 7 hari, Pencabutan | PIN Reservation, SIVIL Adapter, E-Ijazah Generator | APPROVE, CREATE, DELETE, EXPORT, LOCK, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:graduation` |
+| M-36 | Portal PPKS | Kasus baru, Melewati batas respon, Kasus ditangani, Konseling terjadwal | Encrypted Whistleblower, Case Mgmt, Counseling | CREATE, DELETE, EXPORT, LOCK, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:ppks` |
+| M-37 | SPMI & Quality | Temuan terbuka, RTL lewat tenggat, Siklus AMI, Standar per tahap PPEPP | Mutu Repository, Audit Mutu Internal, Temuan/RTL | APPROVE, CREATE, DELETE, EXPORT, LOCK, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:spmi` |
+| M-38 | Kampus Merdeka / MBKM | Peserta MBKM, Logbook terverifikasi, Konversi menunggu, SKS terkonversi | Program MBKM Portal, Bimbingan MBKM, Kampus Merdeka Sync | APPROVE, CREATE, DELETE, EXPORT, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:mbkm` |
+| M-39 | e-Library | Pinjaman aktif, Terlambat, Denda tertunggak, Bebas pustaka hari ini | OPAC Catalog Master, Circulation & Fines, Repository | APPROVE, CREATE, DELETE, EXPORT, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:library` |
+| M-40 | Aset & Inventaris | Total aset, Nilai buku, Belum ter-tag, Penyusutan bulan ini | Asset Directory, Tagging & Barcoding, Depreciation | APPROVE, CREATE, DELETE, EXPORT, LOCK, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:assets` |
+| M-41 | Klinik Kampus | Antrean saat ini, Kunjungan hari ini, Booking konseling, Akses break-glass | Encrypted Health Records, Virtual Clinic Queue, Bimbingan Konseling | CREATE, DELETE, EXPORT, TOGGLE_ACTIVE, UNLOCK, UPDATE | `tenant:{tid}:clinic` |
+| M-42 | Asrama & Kantin | Okupansi, Menunggu alokasi, Saldo beredar, Selisih rekonsiliasi | Dormitory Allocation, Shuttle Transport, E-Wallet | APPROVE, CREATE, DELETE, EXPORT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:dormitory` |
+| M-43 | Humas & Event | Event mendatang, Registrasi, Check-in live, Signage aktif | Event Management, Gate Check-in QR, Digital Signage | APPROVE, CREATE, DELETE, EXPORT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:events` |
+| M-44 | SIM-LPPM / LITABMAS | Proposal dibuka, Review menunggu, Dana tersalur, Luaran tervalidasi (IKU 5) | Skema Hibah, Selection, Contract, Monev & Luaran | APPROVE, CREATE, DELETE, EXPORT, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:litabmas` |
+| M-45 | CRM PMB & Marketing | Lead baru 7 hari, Konversi funnel, CAC per kanal, Komisi tertunda | Leads Management, School Roadshow, Referral/Agent Network, Drip Campaign | APPROVE, CREATE, DELETE, EXPORT, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:crm_marketing` |
+| M-46 | E-Procurement PBJ | Pengajuan aktif, Menunggu PPK, Nilai kontrak, Barang diterima | Pengajuan PBJ, Tender/RFQ, E-Katalog Kampus, Kontrak | APPROVE, CREATE, DELETE, EXPORT, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:procurement` |
+| M-47 | Endowment Fund | Total pokok, Imbal hasil YTD, Alokasi tertunda, Donasi kampanye | Donor Campaign, Fund Portfolio, Investment Return, Grant Allocator | APPROVE, CREATE, DELETE, EXPORT, REJECT, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:endowment` |
+| APP | SuperApp Mobile | Jadwal hari ini, QR presensi, Tagihan, Notifikasi | Mobile Dashboard, Fast KRS War, Dynamic QR Attendance, LMS, Bimbingan Logbook Mobile | CREATE, DELETE, EXPORT, LOCK, READ, TOGGLE_ACTIVE, UPDATE | `tenant:{tid}:mobile_superapp` |
+
+### 10.5 Paritas Mobile (SuperApp)
+
+SuperApp merender kartu dari endpoint `/me/dashboard` yang sama (grid 2 kolom, Material 3 §3) dengan subset modul mobile: M-10, M-13 (Fast KRS War), M-16, M-17 (lihat jadwal; ujian berjalan di web lockdown), M-18 (scan QR + GPS), M-19, M-20/M-25/M-38 (logbook), M-39, M-41, M-42, M-43, notifikasi. Data disimpan di SQLite (Drift) untuk offline; check-in offline ditandatangani kunci perangkat (APP, ARCHITECTURE §11.4).
+
+<!-- SICA-47:END enterprise-47 -->

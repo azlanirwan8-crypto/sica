@@ -311,3 +311,47 @@ export async function generateUploadPresignedUrl(params: {
   };
 }
 ```
+
+---
+
+<!-- SICA-47:BEGIN enterprise-47 -->
+
+## 5. Integrasi Enterprise 47 Modul (dikunci 2026-10-20)
+
+> **Penamaan berkas:** dokumen yang di instruksi disebut `INTEGRATION_SPEC.md` adalah berkas ini (`INTEGRATIONS.md`); nama berkas dipertahankan agar seluruh rujukan silang (AGENTS.md, INDEX.md) tidak putus.
+
+### 5.1 Kebijakan "Zero Paid API Key" vs Integrasi Resmi
+
+| Kelas | Contoh | Aturan |
+|---|---|---|
+| Engine algoritma/AI | OCR, fuzzy matching, solver jadwal, scoring, face check, plagiarisme, pencarian | **wajib lokal** (proses `api`/`worker`/WASM klien); dilarang memanggil API AI/cloud berbayar; model/bobot disimpan & berversi di DB tenant |
+| Integrasi regulasi pemerintah | PDDikti Neo Feeder (M-34), SISTER (M-08), PIN/SIVIL (M-35), MSIB/PMM (M-38), SINTA/ARJUNA (M-21) | memakai kredensial resmi milik tenant (bukan berbayar); bila tidak ada API resmi → impor/ekspor berkas terstandar |
+| Integrasi transaksi | Virtual Account/payment gateway (M-10), TTE PSrE (M-35) | kredensial tenant di secret manager; webhook HMAC + idempotensi |
+| Komunikasi | WhatsApp Business/Email/SMS (M-27, notifikasi), push FCM/APNs (APP) | kredensial tenant; fallback email; throttle parameter |
+| Rapat daring | Jitsi self-hosted (default), Zoom/Google Meet via OAuth tenant (M-15) | log join diambil via webhook/report API untuk rekonsiliasi ≥ 75% |
+| Pustaka & repositori | SLiMS/KOHA (M-39) via OAI-PMH/SIP2, OJS (M-21) via OAI-PMH | self-hosted, tanpa biaya API |
+| DJKI (M-22) | — | pencatatan nomor permohonan/sertifikat + unggah bukti; tidak ada scraping |
+
+Semua kredensial disimpan sebagai referensi secret (`*_secret_ref`) — tidak pernah di tabel/log; rotasi diatur SECURITY_COMPLIANCE §2.
+
+### 5.2 Katalog Adapter per Modul
+
+| Modul | Adapter | Arah | Protokol | Pola keandalan |
+|---|---|---|---|---|
+| M-08 | SISTER | push | REST/web service SISTER | delta hash, outbox, retry backoff, antrean review konflik |
+| M-34 | Neo Feeder | push | web service Feeder (§1) | staging → pre-sync rules → fuzzy auto-corrector → retry; dry-run wajib |
+| M-35 | PIN/SIVIL | push/pull | layanan PIN/SIVIL + QR publik SICA | reservasi per batch, tanda tangan RSA-PSS/Ed25519 |
+| M-38 | MSIB/PMM | pull | impor berkas/endpoint resmi | importer logbook mingguan idempoten per (peserta, minggu) |
+| M-21 | OJS | pull | OAI-PMH 2.0 | resumptionToken, dedupe DOI |
+| M-20 | RAMA/Garuda | pull oleh pihak luar | OAI-PMH 2.0 endpoint SICA | `oai_dc`, embargo dihormati |
+| M-39 | SLiMS/KOHA | dua arah | OAI-PMH, SIP2, impor MARC21 | sinkron katalog & status pinjaman → bebas pustaka |
+| M-10 | Payment VA | push/webhook | §2 | HMAC, `external_ref` unik, rekonsiliasi harian |
+| M-15 | Jitsi/Zoom/Meet | dua arah | REST/OAuth | provisioning rapat saat sesi dibuat, ambil log join saat sesi ditutup |
+| M-27/M-45 | Messaging | push | §3 | throttle, consent PDP, opt-out |
+| APP | FCM/APNs | push | HTTP v1 | token terenkripsi, payload tanpa PII |
+
+### 5.3 Integrasi Internal (Event Pipeline)
+
+Rantai I-1…I-10 ([PRD.md §10.4](file:///c:/SICA/docs/PRD.md)) diimplementasikan murni lewat event outbox ([ARCHITECTURE.md §11.5](file:///c:/SICA/docs/ARCHITECTURE.md)); tidak ada integrasi titik-ke-titik antar modul internal. Kontrak payload event berada di `packages/contracts/src/events/<domain>.ts` (Zod, versi `v1`); perubahan breaking → versi baru dan konsumen lama tetap dilayani sampai migrasi selesai.
+
+<!-- SICA-47:END enterprise-47 -->

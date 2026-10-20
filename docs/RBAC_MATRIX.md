@@ -722,3 +722,122 @@ Dokumen ini tetap **sumber kebenaran hak akses**. Dokumen Area Admin yang baru s
 | 6 | **`G-08` (EdDSA vs RS256)** | **CLOSED 2026-10-19** — `.cursor/rules/02-security.mdc` §3.2 telah disinkronkan ke **RS256**, konsisten dengan `SECURITY_COMPLIANCE.md` AUD-11 dan `jwt.service.ts`/`jwt-edge.ts`. |
 
 **Verifikasi klaim sebelum adopsi (bukan salin-bulat):** `G-01` dikonfirmasi di [apps/web/src/modules/entitlement/guards.ts:6-11](file:///C:/SICA/apps/web/src/modules/entitlement/guards.ts#L6-L11) (`ADMIN_TOKENS.some(token => normalized.includes(token))` — pencocokan substring nyata); `G-08` dikonfirmasi di `.cursor/rules/02-security.mdc:103` sebelumnya menulis "JWT EdDSA"; Approval KRS masih `TODO` verifikasi role di [krs/approve/route.ts:31](file:///C:/SICA/apps/web/src/app/api/v1/academic/krs/approve/route.ts#L31) (konsisten dengan status `[~]` ROADMAP §2.3).
+
+---
+
+<!-- SICA-47:BEGIN enterprise-47 -->
+
+## 12. Perluasan Enterprise: Role Baru & Matriks 47 Modul (dikunci 2026-10-20)
+
+### 12.1 Role Tambahan
+
+22 role §2 tetap berlaku. Role berikut ditambahkan (seed `roles.is_system = true`; tenant dapat membuat role kustom turunan via M-03):
+
+| Kode | Label | Scope | Profil dashboard |
+|---|---|---|---|
+| `IT_ADMIN` | Admin IT Kampus | tenant | `ADMIN_IT` |
+| `DEAN` | Dekan | fakultas | `PIMPINAN_AKADEMIK` |
+| `HR_ADMIN` | Admin HRD | tenant | `STAF_OPERASIONAL` |
+| `EMPLOYEE` | Pegawai/Tendik | self | — (modul ber-izin) |
+| `BKD_ASSESSOR` | Asesor BKD | penugasan | `DOSEN` |
+| `LPPM_ADMIN`, `GRANT_REVIEWER` | Admin LPPM, Reviewer hibah | tenant / penugasan | — |
+| `MARKETING_PMB`, `PMB_AGENT`, `SCHOOL_COUNSELOR` | Tim Marketing, Agen/Mitra PMB, Guru BK SMA | tenant / self (eksternal) | — |
+| `SCHOLARSHIP_ADMIN` | Admin Beasiswa | tenant | `STAF_OPERASIONAL` |
+| `PROCUREMENT_COMMITTEE`, `PPK_OFFICER`, `VENDOR` | Panitia PBJ, PPK, Vendor | tenant / self (eksternal) | `STAF_OPERASIONAL` (internal) |
+| `SCHEDULER`, `LAB_STAFF`, `SARPRAS_ADMIN`, `ASSET_ADMIN` | Penjadwal BAAK, Laboran, Admin Sarpras, Admin BMN | tenant/org | `STAF_OPERASIONAL` |
+| `INVIGILATOR`, `THESIS_SUPERVISOR` | Pengawas ujian, Pembimbing TA | kelas / penugasan | `DOSEN` |
+| `JOURNAL_MANAGER`, `IPR_MANAGER` | Pengelola Jurnal, Pengelola HAKI | tenant | — |
+| `GRADUATION_COMMITTEE` | Panitia Wisuda | tenant | `STAF_OPERASIONAL` |
+| `STUDENT_AFFAIRS_ADMIN` | Admin Kemahasiswaan | tenant | — |
+| `FIELD_SUPERVISOR`, `PARTNER_MENTOR`, `MBKM_SUPERVISOR` | DPL, Pembimbing Mitra, Pembimbing MBKM | penugasan / eksternal | `DOSEN` (internal) |
+| `ALUMNI_ADMIN`, `CAREER_ADMIN`, `EMPLOYER` | Admin Alumni, Admin Karir, Mitra Perusahaan | tenant / eksternal | — |
+| `INTL_OFFICE_ADMIN` | Admin KUI | tenant | — |
+| `ENDOWMENT_MANAGER`, `DONOR` | Pengelola Dana Abadi, Donatur | tenant / self | — |
+| `LIBRARIAN`, `CLINIC_DOCTOR`, `COUNSELOR`, `DORM_MANAGER`, `PR_EVENT_ADMIN`, `EVENT_PARTICIPANT` | Pustakawan, Dokter, Konselor, Pengelola Asrama, Humas, Peserta event | tenant / self | — |
+| `PPKS_TASKFORCE`, `PPKS_REPORTER` | Satgas PPKS, Pelapor (anonim) | tenant / anonim | — |
+| `INTERNAL_AUDITOR` | Auditor Mutu Internal | penugasan | — |
+| `ALL_USERS`, `PUBLIC` | pseudo-role: setiap user terautentikasi / anonim | — | — |
+
+Role tanpa profil seed memperoleh dashboard dari modul yang ber-izin READ (PRD §10.3).
+
+### 12.2 Pemetaan Nama Role di Instruksi → Kode
+
+Super Admin → `PLATFORM_OPERATOR`; Admin IT → `TENANT_ADMIN`/`IT_ADMIN`; Security Auditor → `COMPLIANCE_OFFICER`; BAAK → `ADMIN_ACADEMIC`/`SCHEDULER`; BAUK → `ADMIN_FINANCE`/`TREASURER`; Rektorat → `LEADER`; Kaprodi → `HEAD_OF_PROGRAM`; Dosen Wali/DPA → `ADVISER`; Dosen Penguji → `EXAMINER`; Admin PDDikti → `FEEDER_OPERATOR`; Admin PMB → `PMB_OPERATOR`; Camaba → `APPLICANT`; LPM → `QUALITY_OFFICER`; Admin Kepegawaian → `HR_BKD_OFFICER`.
+
+
+### 12.3 Matriks Ringkas Role × Modul (huruf aksi)
+
+| Role | Modul & aksi |
+|---|---|
+| `ADMIN_ACADEMIC` | M-02: R; M-12: RX; M-13: RUXLKPT; M-14: RAX; M-15: CRUDXLKPT; M-16: RX; M-17: RX; M-18: RUXKPT; M-19: RXPT; M-23: RAX; M-30: CRUDXLKPT; M-33: RA; M-34: R; M-35: CRUAXLP |
+| `ADMIN_FINANCE` | M-06: RAJXL; M-09: R; M-10: CRUDAJXLPT; M-11: RX; M-40: RX; M-42: RX; M-44: RAJX; M-46: RAX; M-47: RAJX |
+| `ADVISER` | M-13: RUAJX; M-18: R; M-24: R; M-26: RX |
+| `ALL_USERS` | M-04: CRU |
+| `ALUMNI` | M-27: CRU; M-28: CR |
+| `ALUMNI_ADMIN` | M-27: CRUDXPT |
+| `APPLICANT` | M-09: CRU |
+| `ASSET_ADMIN` | M-40: CRUDAJXLKPT |
+| `BKD_ASSESSOR` | M-07: RAJX |
+| `CAREER_ADMIN` | M-28: CRUDAJXPT |
+| `CLINIC_DOCTOR` | M-41: CRUXK |
+| `COMPLIANCE_OFFICER` | M-01: RX; M-02: RX; M-03: RX; M-05: RAJXP; M-10: RX |
+| `COORDINATOR` | M-16: CRUX |
+| `COUNSELOR` | M-41: CRU |
+| `DEAN` | M-07: RX; M-12: RAJXK; M-13: R; M-19: RX; M-20: R; M-25: R; M-30: RAJX; M-31: RAX; M-32: RX; M-37: R; M-38: R; M-44: RX |
+| `DONOR` | M-47: CR |
+| `DORM_MANAGER` | M-42: CRUDAJXPT |
+| `EMPLOYEE` | M-06: CR |
+| `EMPLOYER` | M-28: CRU |
+| `ENDOWMENT_MANAGER` | M-47: CRUDXPT |
+| `EVENT_PARTICIPANT` | M-43: CR |
+| `EXAMINER` | M-20: RU |
+| `FEEDER_OPERATOR` | M-34: CRUDAJXLKPT; M-35: CRUX |
+| `FIELD_SUPERVISOR` | M-25: RUAJL |
+| `GRADUATION_COMMITTEE` | M-23: CRUDAXLKPT |
+| `GRANT_REVIEWER` | M-44: RU |
+| `HEAD_OF_PROGRAM` | M-07: RAJX; M-12: CRUDAJXLPT; M-13: RX; M-14: R; M-19: RAJXK; M-20: CRUAJXLKPT; M-25: RX; M-26: RXP; M-29: RAJ; M-31: CRUX; M-37: RU; M-38: CRUDAJXLKPT; M-44: RX |
+| `HR_ADMIN` | M-06: CRUDAJXLKPT |
+| `HR_BKD_OFFICER` | M-07: RXLKPT; M-08: CRUXPT |
+| `INTERNAL_AUDITOR` | M-37: CRU |
+| `INTL_OFFICE_ADMIN` | M-29: CRUDAJXPT |
+| `INVIGILATOR` | M-17: RUAJLK |
+| `IPR_MANAGER` | M-22: CRUDAJXPT |
+| `IT_ADMIN` | M-02: CRUDXPT; M-03: CRUDXT; M-04: CRUDAJXLKPT; M-05: RX; M-34: RXP; M-35: R; M-40: CRU; APP: RLKPT |
+| `JOURNAL_MANAGER` | M-21: CRUDAJXPT |
+| `LAB_STAFF` | M-14: CRU |
+| `LEADER` | M-06: RX; M-07: RX; M-09: RX; M-10: RX; M-11: RX; M-22: RX; M-24: RX; M-27: RX; M-29: RX; M-31: RX; M-32: RXP; M-35: A; M-36: RX; M-37: RX; M-44: RAX; M-45: RX; M-47: RAJX |
+| `LECTURER` | M-06: CR; M-07: CRUX; M-08: R; M-12: CRU; M-13: R; M-14: R; M-15: RU; M-16: CRUDXPT; M-17: CRUDAJXPT; M-18: CRUAJXL; M-19: CRUXL; M-21: CR; M-22: CR; M-39: R; M-44: CRUX; APP: CR |
+| `LIBRARIAN` | M-20: RX; M-30: RAJ; M-39: CRUDAJXPT |
+| `LPPM_ADMIN` | M-21: RX; M-25: CRUDAJXLKPT; M-44: CRUDAJXLKPT |
+| `MARKETING_PMB` | M-09: R; M-45: CRUDAJXPT |
+| `MBKM_SUPERVISOR` | M-38: RUA |
+| `PARTNER_MENTOR` | M-25: CRU |
+| `PLATFORM_OPERATOR` | M-01: CRUDAJXLKPT; M-05: R |
+| `PMB_AGENT` | M-45: CRU |
+| `PMB_OPERATOR` | M-09: CRUDAJXLKPT; M-45: R |
+| `PPKS_REPORTER` | M-36: CR |
+| `PPKS_TASKFORCE` | M-36: CRUAJXLKP |
+| `PPK_OFFICER` | M-46: RAJXLK |
+| `PROCUREMENT_COMMITTEE` | M-10: R; M-46: CRUDXPT |
+| `PR_EVENT_ADMIN` | M-43: CRUDAJXPT |
+| `PUBLIC` | M-35: R |
+| `QUALITY_OFFICER` | M-12: RX; M-27: RX; M-31: CRUDAXLKPT; M-32: CRUXPT; M-37: CRUDAJXLKPT |
+| `SARPRAS_ADMIN` | M-33: CRUDXLKPT; M-40: CRUX; M-46: CR |
+| `SCHEDULER` | M-14: CRUDAXLKPT; M-15: RU; M-33: CRUAXLK |
+| `SCHOLARSHIP_ADMIN` | M-11: CRUDAJXLKPT |
+| `SCHOOL_COUNSELOR` | M-45: CR |
+| `STUDENT` | M-10: R; M-11: CR; M-13: CRU; M-14: R; M-15: R; M-16: CR; M-17: CR; M-18: CR; M-19: RX; M-20: CRU; M-22: CR; M-23: CRU; M-24: CR; M-25: CRU; M-26: CRX; M-27: R; M-28: CR; M-29: CR; M-30: R; M-38: CR; M-39: R; M-41: CR; M-42: CR; M-43: CR; APP: CR |
+| `STUDENT_AFFAIRS_ADMIN` | M-24: CRUDAJXPT |
+| `TENANT_ADMIN` | M-01: R; M-02: CRUDXPT; M-03: CRUDAJXPT; M-04: RX; M-05: R; M-08: RP |
+| `THESIS_SUPERVISOR` | M-20: RUAJ |
+| `TREASURER` | M-06: RAX; M-10: RAJXLK; M-47: RA |
+| `UNIT_CLEARANCE_OFFICER` | M-30: RAJ |
+| `VENDOR` | M-46: CRU |
+
+### 12.4 Catatan Rekonsiliasi
+
+- Hibah READ yang ditambahkan agar profil dashboard instruksi konsisten: `LECTURER`→M-13 (R), `STUDENT`→M-27 (R, survei exit), `HEAD_OF_PROGRAM`→M-14 (R), M-44 (RX), `DEAN`→M-07/M-13/M-19/M-20/M-25/M-37/M-38/M-44, `IT_ADMIN`→M-35 (R), `TENANT_ADMIN`→M-01 (R, status langganan sendiri).
+- **G-10** (litabmas/persuratan/kerjasama) — `litabmas` ditutup oleh M-44, `kerjasama` oleh `partners` (M-25/M-28/M-38); `documents/persuratan` tetap terbuka (di luar 47 modul).
+- Matriks detail per aksi: [SECURITY_COMPLIANCE.md §10.4](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md).
+
+<!-- SICA-47:END enterprise-47 -->

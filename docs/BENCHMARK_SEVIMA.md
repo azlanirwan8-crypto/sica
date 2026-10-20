@@ -214,7 +214,7 @@ Yang di atas berasal dari dokumentasi resmi Sevima dan PDF panduan ber-copyright
 | Objek/layanan Sevima | Padanan SICA | Status SICA |
 |---|---|---|
 | `Data Pelengkap` 6 kategori master | `/admin/master/**` | ❌ belum ada (skema sebagian ada, UI/API nol) |
-| `Status Hadir`, `Jenis Pertemuan`, `Slot Waktu`, `Unsur Nilai`, `Jenis Matakuliah`, `Kelompok Matakuliah`, `Bidang Ilmu` | tabel data referensi (§5.1 M-17) | ❌ belum ada tabel |
+| `Status Hadir`, `Jenis Pertemuan`, `Slot Waktu`, `Unsur Nilai`, `Jenis Matakuliah`, `Kelompok Matakuliah`, `Bidang Ilmu` | tabel data referensi (§5.1 MD-17) | ❌ belum ada tabel |
 | `Wilayah` (Negara/Propinsi/Kota/Kecamatan/Kelurahan) | `student_addresses.*Code` | ◐ kolom ada, **kamus wilayah belum ada** |
 | `Biodata > Agama/Pekerjaan/Suku/Penghasilan` | enum `income_band` saja | ◐ sebagian (`incomeBand`), agama/pekerjaan/suku masih teks bebas |
 | `Status Mahasiswa` + `Jenis Keluar` (feeder) | `student_status` enum + `feederStatusCode` | ◐ enum ada, **riwayat & kamus jenis keluar belum** (P-10) |
@@ -337,11 +337,11 @@ Domain per kampus: `<kampus>.siakadcloud.com`, `<kampus>.sevimaplatform.com`, `<
 ### 2A.10 Titik jual Sevima yang harus kita punya (persyaratan fungsional tambahan)
 | Yang mereka punya | FR/SPEC SICA yang harus ditambah |
 |---|---|
-| `Unsur Nilai`, `Jenis Matakuliah`, `Kelompok Matakuliah`, `Bidang Ilmu`, `Slot Waktu`, `Status Hadir`, `Jenis Pertemuan`, `Jenis Kegiatan Pendukung` | **FR-ADM-07 Data Referensi & Kamus** (tabel `reference_items` + `reference_kinds`, atau tabel khusus per gugus) — lihat §5.1 M-17 |
+| `Unsur Nilai`, `Jenis Matakuliah`, `Kelompok Matakuliah`, `Bidang Ilmu`, `Slot Waktu`, `Status Hadir`, `Jenis Pertemuan`, `Jenis Kegiatan Pendukung` | **FR-ADM-07 Data Referensi & Kamus** (tabel `reference_items` + `reference_kinds`, atau tabel khusus per gugus) — lihat §5.1 MD-17 |
 | `Sistem Kuliah` (mengikat kelas yang boleh diambil **dan** biayanya) | Perlu padanan: `enrollment_scheme` per prodi/angkatan (reguler/parallel/PPG/dsb.) → **FR-ADM-08** |
 | `Ekivalensi Mata Kuliah` + `RPL` | **FR-KUR-02** konversi/equivalensi (dipakai MBKM & pindah prodi) |
 | `Batas SKS` sebagai objek master | sudah ada (`academic_rules.max_sks_by_ip` + plafon prodi) — tetapi perlu **layar Admin** |
-| `Pembatalan NIM`, `NIM generate dari Kode Fakultas` | `student_status_history` + `tenant_settings.nim_format` (M-04/K-02) |
+| `Pembatalan NIM`, `NIM generate dari Kode Fakultas` | `student_status_history` + `tenant_settings.nim_format` (MD-04/K-02) |
 | `Dispensasi KRS`, `validasi KRS online`, `Pemaketan KRS` | `academic_rules.late_krs_mode` + jalur approval (FR-AKA-04/11) + **FR-AKA-16 pemaketan KRS** |
 | `Kustomisasi Form/Kolom Data Master/Laporan/Penandatanganan` | **FR-ADM-09 Meta-konfigurasi per tenant** (field visibility, label, urutan kolom, template laporan) — backlog produk bernilai tinggi |
 | `Monitoring Pengisian Nilai`, `Monitoring Ruang`, `Statistik Login` | **FR-RPT-02 Monitoring operasional admin** |
@@ -449,25 +449,25 @@ Empat gugus (pemisahan ini yang membuat admin SIAKAD sering kacau bila tidak dis
 ### 5.1 Data MASTER (rujukan, umur panjang, dikunci oleh relasi)
 | # | Entitas | Sumber tabel | Status kode | Catatan regulatori |
 |---|---|---|---|---|
-| M-01 | Tahun akademik | `academic_years` | ✅ ada | label `2026/2027`, unik per tenant |
-| M-02 | Periode/semester | `academic_periods` | ✅ ada | status `DRAFT/OPEN/CLOSED`; penutupan memblokir tulis (BR-A9) |
-| M-03 | Kalender akademik | `academic_calendar_events` | ❌ **belum ada** | jenis `OW_OPEN…PDDIKTI_*_DUE`; `is_mandatory` tak boleh hapus |
-| M-04 | Organisasi (fakultas/jurusan/unit) | `organizations` | ✅ ada | `kind` + `parent_id` (hierarki) |
-| M-05 | Program studi | `study_programs` | ✅ ada | kode PDDikti, akreditasi + masa berlaku (BR-R7), plafon SKS (BR-R2/R3/R4) |
-| M-06 | Kurikulum | `curricula` | ✅ ada | berversi + `grade_scale_id` per kurikulum |
-| M-07 | Mata kuliah | `courses` | ✅ ada | SKS pecah teori/praktik; `course_type` |
-| M-08 | Prasyarat matakuliah | `course_prerequisites` | ❌ **belum ada** | BR-A16 (`PASSED`/`TAKEN`/`CO_REQUISITE` + ambang nilai) |
-| M-09 | Skala nilai + band | `grade_scales`, `grade_scale_bands` | ✅ ada | BR-R5; band tumpang tindih ditolak |
-| M-10 | Komponen bobot nilai | `grade_components` | ✅ ada | **AC-NIL-4** = jumlah bobot harus 100% |
-| M-11 | Ruang/gedung | `rooms` | ✅ ada | kapasitas, tipe, fasilitas |
-| M-12 | Mahasiswa | `students` | ✅ ada | + kolom biodata feeder (§11.2) |
-| M-13 | Alamat mahasiswa (multi-jenis) | `student_addresses` | ✅ ada | kode wilayah Kemendagri 4 level |
-| M-14 | Orang tua/wali | `student_guardians` | ✅ ada | penghasilan/pekerjaan = wajib feeder & basis UKT |
-| M-15 | Dosen | `lecturers` | ✅ ada | NIDN/NUPTK/rumpun/homebase (G-04) |
-| M-16 | Tendik/staf | `staff` | ✅ ada | NIP, unit kerja (G-05) |
-| M-17 | Data referensi nasional | *(belum ada tabel)* | ❌ | agama, pekerjaan, penghasilan, jalur masuk, jenis sekolah asal, bahasa pengantar, wilayah |
-| M-18 | Kelompok tarif & komponen biaya | `fee_tariff_groups`, `fee_components` | ❌ | BR-K1 (UKT / per-SKS), versioned |
-| M-19 | Beasiswa & keringanan | `payment_waivers` | ❌ | jalur dispensasi gerbang KRS |
+| MD-01 | Tahun akademik | `academic_years` | ✅ ada | label `2026/2027`, unik per tenant |
+| MD-02 | Periode/semester | `academic_periods` | ✅ ada | status `DRAFT/OPEN/CLOSED`; penutupan memblokir tulis (BR-A9) |
+| MD-03 | Kalender akademik | `academic_calendar_events` | ❌ **belum ada** | jenis `OW_OPEN…PDDIKTI_*_DUE`; `is_mandatory` tak boleh hapus |
+| MD-04 | Organisasi (fakultas/jurusan/unit) | `organizations` | ✅ ada | `kind` + `parent_id` (hierarki) |
+| MD-05 | Program studi | `study_programs` | ✅ ada | kode PDDikti, akreditasi + masa berlaku (BR-R7), plafon SKS (BR-R2/R3/R4) |
+| MD-06 | Kurikulum | `curricula` | ✅ ada | berversi + `grade_scale_id` per kurikulum |
+| MD-07 | Mata kuliah | `courses` | ✅ ada | SKS pecah teori/praktik; `course_type` |
+| MD-08 | Prasyarat matakuliah | `course_prerequisites` | ❌ **belum ada** | BR-A16 (`PASSED`/`TAKEN`/`CO_REQUISITE` + ambang nilai) |
+| MD-09 | Skala nilai + band | `grade_scales`, `grade_scale_bands` | ✅ ada | BR-R5; band tumpang tindih ditolak |
+| MD-10 | Komponen bobot nilai | `grade_components` | ✅ ada | **AC-NIL-4** = jumlah bobot harus 100% |
+| MD-11 | Ruang/gedung | `rooms` | ✅ ada | kapasitas, tipe, fasilitas |
+| MD-12 | Mahasiswa | `students` | ✅ ada | + kolom biodata feeder (§11.2) |
+| MD-13 | Alamat mahasiswa (multi-jenis) | `student_addresses` | ✅ ada | kode wilayah Kemendagri 4 level |
+| MD-14 | Orang tua/wali | `student_guardians` | ✅ ada | penghasilan/pekerjaan = wajib feeder & basis UKT |
+| MD-15 | Dosen | `lecturers` | ✅ ada | NIDN/NUPTK/rumpun/homebase (G-04) |
+| MD-16 | Tendik/staf | `staff` | ✅ ada | NIP, unit kerja (G-05) |
+| MD-17 | Data referensi nasional | *(belum ada tabel)* | ❌ | agama, pekerjaan, penghasilan, jalur masuk, jenis sekolah asal, bahasa pengantar, wilayah |
+| MD-18 | Kelompok tarif & komponen biaya | `fee_tariff_groups`, `fee_components` | ❌ | BR-K1 (UKT / per-SKS), versioned |
+| MD-19 | Beasiswa & keringanan | `payment_waivers` | ❌ | jalur dispensasi gerbang KRS |
 
 ### 5.2 Data PENDUKUNG / transaksional (dibentuk dari master)
 P-01 Kelas & paralel (`classes` ✅) · P-02 Penugasan pengampu (`class_assignments` ✅) · P-03 Jadwal mingguan (`class_schedules` ✅) · P-04 Pertemuan/sesi (`class_sessions` ✅) · P-05 Antrean kelas (`class_waitlists` ✅, BR-A10) · P-06 Enrollment/KRS (`enrollments` ✅) · P-07 Presensi (`attendances` ✅, status + GPS) · P-08 Nilai (`grades` ✅) · P-09 Koreksi nilai (`grade_corrections` ✅, BR-G4) · P-10 Riwayat status mahasiswa (**❌** `student_status_history`) · P-11 Invoice & pembayaran (**❌**) · P-12 Ledger append-only (**❌**) · P-13 Clearance/cekal (**❌** `blockades`, `clearances`) · P-14 Yudisium/ijazah (**❌**, defek AUD-09) · P-15 Sync log feeder (**❌**).
@@ -491,12 +491,12 @@ K-06 `retention_rules` & `data_processing_bases` (**❌**) — JRA kampus (NFR-D
 Ini alur **Admin** yang jadi target pengerjaan pertama (PRD §5.4 menetapkan urutannya):
 
 ```
-1 Buat Tahun Akademik            (M-01)
-2 Buka Periode/Semester          (M-02)  ── status DRAFT sampai siap
-3 Isi Kalender Akademik           (M-03)  ── OW_OPEN/CLOSE, UTS, UAS, GRADE_CUTOFF, PDDIKTI_*_DUE
-4 Tetapkan/Perbarui Kurikulum     (M-06) ── + skala nilai (M-09) & komposisi bobot (M-10)
-5 Sinkron Mata Kuliah ke Kurikulum(M-07) ── + prasyarat (M-08)
-6 Siapkan Ruang                   (M-11)
+1 Buat Tahun Akademik            (MD-01)
+2 Buka Periode/Semester          (MD-02)  ── status DRAFT sampai siap
+3 Isi Kalender Akademik           (MD-03)  ── OW_OPEN/CLOSE, UTS, UAS, GRADE_CUTOFF, PDDIKTI_*_DUE
+4 Tetapkan/Perbarui Kurikulum     (MD-06) ── + skala nilai (MD-09) & komposisi bobot (MD-10)
+5 Sinkron Mata Kuliah ke Kurikulum(MD-07) ── + prasyarat (MD-08)
+6 Siapkan Ruang                   (MD-11)
 7 Buat Kelas Paralel per MK       (P-01) ── plafon paralel prodi (max_parallel_classes)
 8 Tugaskan Dosen Pengampu         (P-02) ── guardrail 16 SKS (BR-A11) menolak overload
 9 Plot Jadwal Mingguan            (P-03) ── deteksi bentrok dosen+ruang (AC-JDW-1) HARD BLOCK
