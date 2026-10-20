@@ -432,3 +432,10 @@ Aturan: **setiap** route di `apps/web/src/app/api/v1/<domain>` **wajib** mendekl
 
 ### 5.5 Kontrak bersama
 Tambah `packages/contracts/src/entitlement.ts` (`TenantModuleSchema`, `ActivateModuleSchema`) sebagai sumber kebenaran TS↔Dart (lihat API_SPEC §4.5).
+
+## 6. Konvensi Enterprise 47 Modul (2026-10-20)
+
+- Folder modul: `apps/web/src/modules/<entitlement>/<modul>`; impor lintas modul hanya via `packages/contracts` (ARCHITECTURE §11.1).
+- Dilarang literal pilihan bisnis/ENUM; gunakan kode lookup yang di-resolve saat runtime (DATA_MODEL §15.1).
+- Permission code `<entitlement>.<resource>.<aksi>`; 11 aksi (SECURITY_COMPLIANCE §10.1); gating UI via `<Can>`.
+- Kontrak event: `packages/contracts/src/events/<domain>.ts`, nama `domain.entity.verb`, versi `v1`.

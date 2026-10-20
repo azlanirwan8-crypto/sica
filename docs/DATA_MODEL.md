@@ -577,11 +577,7 @@ CREATE TABLE students (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES t
   UNIQUE (tenant_id, nim), UNIQUE (tenant_id, membership_id));
 CREATE INDEX idx_students_program ON students(tenant_id, program_id, status);
 
-CREATE TABLE student_status_history (
-  id uuid PRIMARY KEY, tenant_id uuid NOT NULL, student_id uuid NOT NULL REFERENCES students(id),
-  from_status student_status, to_status student_status NOT NULL,
-  reason text NOT NULL, effective_on date NOT NULL, approved_by uuid,
-  created_at timestamptz NOT NULL DEFAULT now());
+-- student_status_history: definisi TUNGGAL di §14 (bentuk ringkas lama dihapus 2026-10-20, anti-duplikasi).
 
 CREATE TABLE classes (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
   program_id uuid NOT NULL REFERENCES study_programs(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
@@ -807,24 +803,8 @@ CREATE TABLE clearances (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
   passed boolean NOT NULL DEFAULT false, checked_at timestamptz, evidence jsonb,
   UNIQUE (tenant_id, student_id, period_id, kind));
 
--- Rekaman Kelulusan & Yudisium (FR-AKA-13, BR-R6, BR-R7, BR-R12)
-CREATE TABLE graduation_records (
-  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
-  student_id uuid NOT NULL REFERENCES students(id),
-  period_id uuid NOT NULL REFERENCES academic_periods(id),
-  decree_number text NOT NULL,                       -- Nomor SK Yudisium Dekan/Rektor
-  graduation_date date NOT NULL,
-  total_sks numeric(5,1) NOT NULL CHECK (total_sks >= 36),
-  final_gpa numeric(3,2) NOT NULL CHECK (final_gpa BETWEEN 0 AND 4),
-  predicate text NOT NULL,                           -- 'CUMLAUDE','SANGAT_MEMUASKAN','MEMUASKAN' (BR-R6)
-  national_diploma_number text,                      -- Nomor PIN / PISN (Permenristekdikti 59/2018)
-  pddikti_reported_at timestamptz,
-  is_locked boolean NOT NULL DEFAULT true,           -- BR-R12: arsip kelulusan permanen & immutable
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, student_id),                    -- satu kelulusan per mahasiswa per jenjang
-  UNIQUE (tenant_id, decree_number, student_id)
-);
-CREATE INDEX idx_grad_period ON graduation_records(tenant_id, period_id, graduation_date);
+-- Rekaman Kelulusan & Yudisium (FR-AKA-13, BR-R6, BR-R7, BR-R12): definisi TUNGGAL ada di blok
+-- "KEWAJIBAN REGULATORI" di bawah (AUD-09 diselesaikan 2026-10-20: blok sederhana digabung ke blok definitif).
 
 -- ── PDDIKTI ─────────────────────────────────────────────────────────────────
 CREATE TABLE pddikti_mappings (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
@@ -872,8 +852,12 @@ CREATE TABLE pddikti_correction_requests (
 CREATE TABLE graduation_records (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
   student_id uuid NOT NULL REFERENCES students(id),
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  yudisium_batch_id uuid,                       -- FK yudisium_batches (§15.6.30)
+  decree_number text NOT NULL,                  -- Nomor SK Yudisium Dekan/Rektor
   conferred_on date NOT NULL, ipk_final numeric(3,2) NOT NULL,
-  honors text,                                  -- predikat: parameter PT (BR-R6), bukan tabel nasional
+  predicate_id uuid NOT NULL,                   -- FK lookup_values(graduation_predicate) — BR-R6, parameter PT
+  pddikti_reported_at timestamptz,
   total_sks numeric(5,1) NOT NULL,
   diploma_number text,                          -- PIN 15 digit: prodi(5)+tahun(4)+urut(5)+checksum(1)
   pin_batch_id uuid,                            -- generate dibatasi per batch (praktik PISN ≤1.000)
@@ -882,7 +866,9 @@ CREATE TABLE graduation_records (
   snapshot_hash bytea NOT NULL,                 -- digest → bukti dokumen tidak berubah
   program_accreditation_at_conferment text NOT NULL,  -- ⚑ bukti BR-R7 terpenuhi saat lulus
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, student_id));
+  UNIQUE (tenant_id, student_id),
+  UNIQUE (tenant_id, decree_number, student_id));
+CREATE INDEX idx_grad_period ON graduation_records(tenant_id, period_id, conferred_on);
 -- TIDAK ada UPDATE/DELETE untuk sica_app pada tabel ini; koreksi = catatan baru berversi + alasan.
 
 CREATE TABLE document_signatures (              -- BR-R15: TTE tersertifikasi (PSrE/BSSN)
@@ -1231,8 +1217,11 @@ ALTER TABLE study_programs  ADD COLUMN establishment_decree text, ADD COLUMN deg
 -- study_programs.pddikti_code (sudah ada) kini menjadi target pemetaan; degree_code = kode gelar kementerian.
 ```
 
-### 11.5 Catatan Defek DSK Dokumen (AUD-09)
-§5 mendefinisikan `CREATE TABLE graduation_records` **dua kali** (blok pertama sederhana + blok kedua dengan `snapshot_hash`, `pin_batch_id`, `pisn_verification_ref`). Dua `CREATE TABLE` dengan nama yang sama membuat replay migrasi **gagal**. Keputusan arsitek: blok kedua menjadi definitif; blok pertama dihapus/di-`ALTER` (kolom `decree_number`,`predicate`,`national_diploma_number` digabung ke `graduation_records` definitif). Perlu direfaktori pada §5 sebelum skema Drizzle `schema/graduation.ts` dibuat.
+### 11.5 Catatan Defek DSK Dokumen (AUD-09) — ✅ SELESAI 2026-10-20
+
+> **Status:** diselesaikan di §5 — hanya satu `CREATE TABLE graduation_records` (blok definitif) yang tersisa; kolom `period_id`, `decree_number`, `pddikti_reported_at` digabung, `predicate` menjadi `predicate_id` (lookup dinamis, §15.1). Paragraf di bawah dipertahankan sebagai riwayat.
+
+§5 dahulu memuat definisi `graduation_records` **dua kali** (blok pertama sederhana + blok kedua dengan `snapshot_hash`, `pin_batch_id`, `pisn_verification_ref`). Dua `CREATE TABLE` dengan nama yang sama membuat replay migrasi **gagal**. Keputusan arsitek: blok kedua menjadi definitif; blok pertama dihapus/di-`ALTER` (kolom `decree_number`,`predicate`,`national_diploma_number` digabung ke `graduation_records` definitif). Perlu direfaktori pada §5 sebelum skema Drizzle `schema/graduation.ts` dibuat.
 
 ### 11.6 Konsekuensi ke Lapis Kontrak & UI
 - `packages/contracts` perlu `StudentBiodataSchema`, `LecturerSchema`, `AttendanceStatusSchema` agar form registrasi/biodata punya **field lengkap** (Guardrail §3.3, §3.5).
@@ -1397,7 +1386,7 @@ Rujukan kebutuhan: [PRD §5.8](file:///c:/SICA/docs/PRD.md) dan [BENCHMARK_SEVIM
 | `grade_components` | §5 (ada) | ✅ (`enrollments.ts`) | — | ADM-3 |
 | `blockades` | §5 (ada) | ❌ | `0009_rules_blockades_status.sql` | ADM-6 |
 | `academic_rules` | §5 (ada) | ❌ | `0009_…` | ADM-6 |
-| `student_status_history` | §5 (ada) | ❌ | `0009_…` | ADM-7 |
+| `student_status_history` | §14 (definisi tunggal) | ❌ | `0009_…` | ADM-7 |
 | `enrollment_schemes` | **§14.3 baru** | ❌ | `0010_admin_misc.sql` | ADM-6 |
 | `reference_items` (+`reference_kinds`) | **§14.3 baru** | ❌ | `0007_…` | ADM-3/ADM-7 |
 | `tenant_settings` | **§14.3 baru** | ❌ | `0010_…` | ADM-2 |
@@ -1406,7 +1395,7 @@ Rujukan kebutuhan: [PRD §5.8](file:///c:/SICA/docs/PRD.md) dan [BENCHMARK_SEVIM
 | `audit_logs` (+`audit_chain_head`), `outbox`, `idempotency_keys`, `login_events` | §4 / §3 (ada) | ❌ | `0012_audit_outbox.sql` | ADM-1 |
 | Gugus keuangan (`fee_*`, `invoices`, `payments`, `ledger`, `payment_waivers`, `clearances`) | §5 (ada) | ❌ | backlog Sprint 4 | — |
 | Gugus feeder (`pddikti_mappings`, `pddikti_sync_runs`, `period_reopen_requests`, `pddikti_correction_requests`) | §5 (ada) | ❌ | backlog Sprint 8 | — |
-| `graduation_records` | §5 (**duplikat baris 811 & 872 — defek AUD-09**) | ❌ | **WAJIB refactor sebelum migrasi** | — |
+| `graduation_records` | §5 (definisi tunggal; AUD-09 ✅ diselesaikan 2026-10-20) | ❌ | siap dimigrasi (R7.1) | — |
 
 > **Aturan:** setiap objek baru **di commit yang sama** wajib membawa `tenant_id`, `ENABLE/FORCE ROW LEVEL SECURITY`, dan policy `tenant_isolation` dari generator §6.2 (PRD P1, AGENTS §3.2). Tidak ada tabel domain tanpa RLS.
 
@@ -1501,9 +1490,8 @@ CREATE TABLE course_equivalencies (
   CHECK (source_course_id <> target_course_id)
 );
 
--- Status mahasiswa bersejarah (menutup P-10). VERSI §14 INI MENGGANTIKAN bentuk ringkas di §5
--- (baris ±580, 6 kolom) — saat migrasi `0009` ditulis, blok §5 dicabut agar tidak ada
--- dua definisi satu tabel (pengulangan yang sama dengan defek AUD-09 pada graduation_records).
+-- Status mahasiswa bersejarah (menutup P-10). Definisi TUNGGAL (blok ringkas §5 sudah dicabut 2026-10-20).
+-- Kolom from_status/to_status akan menjadi FK lookup_values(student_status) pada R1.0.1 (§15.1).
 CREATE TABLE student_status_history (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   student_id uuid NOT NULL REFERENCES students(id),
@@ -1539,5 +1527,780 @@ Pemetaan semantik `VALIDATE`: persetujuan KRS oleh Dosen PA, approval koreksi ni
 3. Layar Admin memakai `VelzonDataGrid` + **satu pola daftar→drawer form** (lihat UI_UX_DESIGN §9) supaya 12 objek master tidak jadi 12 gaya halaman.
 4. Setiap tulis Admin memancarkan event `audit_logs` + (bila relevan) `outbox` untuk notifikasi.
 
+---
+
+<!-- SICA-47:BEGIN enterprise-47 -->
+
+## 15. Addendum Enterprise 47 Modul + SuperApp (dikunci 2026-10-20)
+
+> Bagian ini memperluas model data dari 19 entitlement inti menjadi **47 modul enterprise + 1 SuperApp** (katalog kanonik: [PRD.md §10](file:///c:/SICA/docs/PRD.md)). Semua konvensi §1 tetap berlaku. Jika bagian ini bertentangan dengan §1–§14, **§15 yang berlaku**, dan bagian lama wajib diselaraskan saat migrasi terkait ditulis (tercatat di [ROADMAP_TASKS.md R1](file:///c:/SICA/docs/ROADMAP_TASKS.md)).
+
+### 15.1 Kebijakan Zero-Hardcoding (menggantikan aturan ENUM di §1)
+
+**Aturan:** nilai domain bisnis (status, jenis, kategori, predikat, metode, kanal, tingkat, dsb.) **tidak boleh** berupa PostgreSQL `ENUM`, `CHECK (kolom IN (...))`, array statis, atau string literal di kode. Semuanya disimpan sebagai baris `lookup_values` dan direferensikan via FK `<nama>_id uuid REFERENCES lookup_values(id)`. Admin IT kampus memiliki CRUD penuh (`CREATE`, `READ`, `UPDATE`, `DELETE`, `TOGGLE_ACTIVE`) melalui M-02.
+
+**Yang tetap boleh di DB (invarian struktural, bukan pilihan bisnis):** `NOT NULL`, `PRIMARY KEY`, `FOREIGN KEY`, `UNIQUE`, `EXCLUDE USING gist` (anti-bentrok rentang waktu), `CHECK` integritas matematis/struktural yang tidak pernah dikonfigurasi pengguna (mis. `debit_idr >= 0`, `approved_by <> requested_by`, `Σdebit = Σcredit` via trigger, `valid_to > valid_from`). Ambang numerik bisnis (mis. `total_sks >= 36`, rentang IPK) **dipindah** ke `system_parameters` dan divalidasi di service + trigger yang membaca parameter.
+
+**Kategori sistem.** Kategori yang nilainya dirujuk oleh logika mesin (mis. `permission_action`, `feeder_mode`, `lookup_domain`) ditandai `lookup_categories.is_system = true`: kode nilai dikelola platform (PLATFORM_OPERATOR, lewat seed berversi yang direview), sedangkan tenant boleh `UPDATE` label/terjemahan dan `TOGGLE_ACTIVE` bila kategori mengizinkan. `DELETE` nilai yang sudah dirujuk selalu ditolak `409 REFERENCED` (lihat `GET .../:id/impact`).
+
+**Migrasi dari skema lama.** Seluruh `CREATE TYPE ... AS ENUM` dan `CHECK (... IN (...))` bisnis di §3–§14 dan migrasi `0002`–`0006` dikonversi pada tugas **R1.1** dengan pola: (1) seed `lookup_categories` + `lookup_values` dari daftar enum lama (kode identik), (2) tambah kolom `<x>_id`, backfill, (3) ganti FK, (4) drop kolom/enum lama. Kode feeder PDDikti disimpan di `lookup_values.extra->>'feeder_code'` (bukan kolom enum).
+
+### 15.2 Model Lookup & Parameter Terpadu
+
+`reference_kinds`/`reference_items` (§14.2) dan `tenant_settings` digabung ke model kanonik berikut (nama lama menjadi *view* kompatibilitas selama transisi):
+
+| Tabel | Peran | Aturan kunci |
+|---|---|---|
+| `lookup_categories` | kamus kategori (global `tenant_id IS NULL` atau milik tenant) | `UNIQUE(coalesce(tenant_id,'00000000-0000-0000-0000-000000000000'), code)`; `is_system`, `allow_tenant_extend` |
+| `lookup_values` | nilai pilihan | `UNIQUE(tenant_id, category_id, code)`; `is_active`, `valid_from/valid_to`, `sort_order`, `parent_id` (hierarki, mis. wilayah), `extra jsonb` (kode feeder, warna badge, ikon) |
+| `parameter_definitions` | katalog parameter (GLOBAL) | `param_key` unik, `json_schema` untuk validasi nilai, `is_regulatory_locked`, `regulatory_floor` |
+| `system_parameters` | nilai parameter per scope | append-only berversi; resolusi TENANT → ORG → PROGRAM → PERIOD (paling spesifik & berlaku menang); perubahan = baris versi baru + audit + (bila `four_eyes`) persetujuan |
+| `parameter_restrictions` | batas PARAM_EDIT per role | nilai di luar `allowed_values` → `422 PARAM_OUT_OF_RANGE` |
+
+Parameter yang menyalin ketentuan regulasi (mis. batas masa studi, minimum SKS) memiliki `regulatory_floor`: tenant boleh lebih ketat, tidak boleh lebih longgar (`422 PARAM_REGULATORY_FLOOR`).
+
+### 15.3 Kolom Standar Semua Tabel Modul Baru
+
+`id uuid PK (UUIDv7, dibuat aplikasi)`, `tenant_id uuid NOT NULL REFERENCES tenants(id)` (kecuali tabel bertanda GLOBAL), `created_at`, `created_by`, `updated_at`, `updated_by`, `row_version int NOT NULL DEFAULT 1` (optimistic locking untuk `If-Match`), `is_active boolean NOT NULL DEFAULT true` (untuk `TOGGLE_ACTIVE`), `deleted_at` **tidak dipakai** — penghapusan fisik hanya bila tidak dirujuk; data berkekuatan hukum memakai append-only/versi. Kolom status selalu `status_id → lookup_values`. Kolom uang `*_idr bigint`. Kolom PII sensitif berakhiran `_enc` (AES-256-GCM, kunci per tenant di KMS) dan/atau `_hash` (HMAC untuk pencarian).
+
+### 15.4 RLS Standar & Predikat Khusus
+
+Setiap tabel ber-`tenant_id` menerima kebijakan generator §6.2 (`tenant_isolation`, `FORCE ROW LEVEL SECURITY`). GUC kanonik adalah **`app.current_tenant`** (dipakai migrasi `0001`–`0006` dan `client.ts`); penyebutan `app.tenant_id` di dokumen lama dibaca sebagai alias dan diseragamkan. Predikat tambahan:
+
+| Predikat | Dipakai pada | Definisi |
+|---|---|---|
+| `self_row` | tabel bertanda "RLS + SELF" | baris milik `current_setting('app.current_user')` atau subjeknya (mahasiswa/pegawai/pelamar) |
+| `scope_row` | tabel akademik ber-prodi/kelas | `program_id`/`class_id` ∈ scope assignment aktif (`app.current_scopes`, JSON) |
+| `vault_row` | `ppks_*`, `medical_records`, `counseling_bookings` | hanya role pemilik vault; Admin IT/TENANT_ADMIN **tidak** mendapat SELECT; ciphertext saja di DB |
+| `assignment_row` | `grant_reviews`, `ami_assignments`, `thesis_examiners` | hanya penugasan milik user; identitas pengusul di-mask (blind review) |
+| `party_row` | `rfq_bids`, `job_applications` | pihak eksternal (VENDOR/EMPLOYER) hanya baris pihaknya |
+
+### 15.5 Perluasan Katalog Entitlement (19 → 47 + APP)
+
+Kode entitlement §12 tetap; modul enterprise dipetakan sebagai berikut (kode baru di-seed ke `modules` dengan `module_dependencies`):
+
+| Entitlement | Modul | Status |
+|---|---|---|
+| `identity` | M-02, M-03 | inti (ada) |
+| `audit` | M-05 | inti (ada) |
+| `academic` | M-12, M-26 | inti (ada) |
+| `enrollment` | M-13 | inti (ada) |
+| `teaching` | M-15 | inti (ada) |
+| `attendance` | M-18 | inti (ada) |
+| `assessment` | M-19 | inti (ada) |
+| `finance` | M-10 | inti (ada) |
+| `feeder_pddikti` | M-34 | inti (ada) |
+| `pmb` · `cbt` · `lms` · `mbkm` · `thesis` · `spmi` · `hr_bkd` · `graduation` · `tracer_iku` | M-09 · M-17 · M-16 · M-38 · M-20 · M-37 · M-06/07/08 · M-23/30/35 · M-27/32 | addon (ada) |
+| `parent_portal` | lintas modul (akses `GUARDIAN`) | addon (ada) |
+| `platform_saas` | M-01 | baru — GLOBAL, tidak dijual ke tenant |
+| `helpdesk`, `scheduling`, `scholarship` | M-04, M-14/M-33, M-11 | baru — inti tambahan |
+| `litabmas`, `crm_marketing`, `procurement`, `journal`, `ipr_incubator`, `student_affairs`, `fieldwork`, `career`, `international`, `endowment`, `accreditation`, `ppks`, `library`, `assets`, `clinic`, `dormitory`, `events`, `mobile_superapp` | M-44, M-45, M-46, M-21, M-22, M-24, M-25, M-28, M-29, M-47, M-31, M-36, M-39, M-40, M-41, M-42, M-43, APP | baru — addon |
+
+Dependensi minimum: `crm_marketing→pmb`, `pmb→finance`, `scholarship→finance`, `procurement→finance,assets`, `litabmas→hr_bkd,finance`, `fieldwork→enrollment,assessment`, `mbkm→academic,assessment`, `graduation→assessment,library`, `accreditation→academic,hr_bkd`, `endowment→finance`, `mobile_superapp→identity`. Catatan: `ppks` adalah kewajiban regulasi (Permendikbudristek 55/2024) sehingga **direkomendasikan inti**; keputusan paket tercatat di PRD §10.7.
+
+### 15.6 Skema per Modul
+
+Format: daftar tabel milik modul (bounded context, [ARCHITECTURE.md §11.3](file:///c:/SICA/docs/ARCHITECTURE.md)), kolom kunci, FK/RLS, parameter, dan kategori lookup. Setiap `*_id` yang merujuk pilihan bisnis adalah FK ke `lookup_values`. Event outbox setiap modul tercantum di ARCHITECTURE §11.5.
 
 
+#### 15.6.1 M-01 — SaaS Foundation (entitlement `platform_saas`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `tenants` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, code, legal_name, status_id→lookup_values, plan_id, shard_key, region, go_live_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK plans; GLOBAL (tanpa RLS, hanya PLATFORM_OPERATOR) |
+| `subscriptions` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, plan_id, valid_from, valid_to, billing_cycle_id→lookup_values, seats` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK tenants, plans; RLS tenant_isolation + platform bypass via sica_platform |
+| `sla_policies` | id, tenant_id, metric_id→lookup_values, target_value numeric, window_id→lookup_values | FK tenants |
+| `sla_measurements` | id, tenant_id, sla_policy_id, measured_at, value, breached bool | FK sla_policies; partisi bulanan |
+| `tenant_shard_map` | tenant_id, ring_position bigint, pool_name, assigned_at | FK tenants |
+
+Parameter (`system_parameters`, CRUD + versi): `platform.ring.virtual_nodes` (int, default `256`) — jumlah virtual node consistent hashing; `platform.sla.availability_target` (numeric, default `99.5`) — target ketersediaan bulanan (%); `platform.provision.default_modules` (jsonb, default `[core]`) — modul default saat provisioning
+
+Kategori lookup dinamis (`lookup_categories.code`): `tenant_status`, `billing_cycle`, `sla_metric`, `sla_window`
+
+#### 15.6.2 M-02 — Master Parameter (entitlement `identity`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `lookup_categories` | id, tenant_id NULL(global), code, label, domain_id, is_system, feeder_code, allow_tenant_extend | FK self; global+tenant |
+| `lookup_values` | id, tenant_id, category_id, code, label, label_en, parent_id, sort_order, extra jsonb, is_active, valid_from, valid_to | FK lookup_categories, self; RLS tenant_isolation; UNIQUE(tenant_id,category_id,code) |
+| `system_parameters` | id, tenant_id, param_key, scope_level_id, scope_ref_id, value jsonb, value_schema_id, version, effective_from, effective_to, regulatory_floor jsonb | FK parameter_definitions; append-only versi |
+| `parameter_definitions` | id, param_key, module_code, data_type_id, json_schema jsonb, default_value jsonb, is_regulatory_locked | GLOBAL katalog |
+| `eav_attributes` | id, tenant_id, entity_type_id, attr_code, data_type_id, is_required, validation jsonb | FK lookup_values |
+| `eav_values` | id, tenant_id, attribute_id, entity_id, value jsonb | FK eav_attributes |
+| `nim_sequences` | id, tenant_id, pattern_id, scope_key, last_value bigint | FK system_parameters |
+
+Parameter (`system_parameters`, CRUD + versi): `nim.pattern` (string, default `{kodeProdi}{yy}{seq4}`) — pola NIM; `nim.reset_scope` (lookup, default `PER_YEAR_PROGRAM`) — ruang lingkup reset sequence; `param.cache_ttl_seconds` (int, default `60`) — TTL cache resolver
+
+Kategori lookup dinamis (`lookup_categories.code`): `lookup_domain`, `data_type`, `scope_level`, `entity_type`
+
+#### 15.6.3 M-03 — Hak Akses & RBAC (entitlement `identity`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `roles` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, code, name, scope_kind_id, is_system, dashboard_profile_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | UNIQUE(tenant_id,code); RLS |
+| `permissions` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, module_code, resource, action_id→lookup_values(permission_action), code` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | GLOBAL katalog |
+| `role_permissions` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, role_id, permission_id, action_mask bigint, conditions jsonb` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK roles, permissions; RLS |
+| `user_role_assignments` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, user_id, role_id, scope_org_id, scope_program_id, scope_class_id, scope_period_id, valid_from, valid_to` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK users, roles; RLS |
+| `parameter_restrictions` | id, tenant_id, role_id, param_key, allowed_values jsonb | FK roles; batasi PARAM_EDIT per kunci |
+| `rls_policy_map` | id, table_name, policy_kind_id, predicate_template | GLOBAL; dibaca generator RLS |
+| `access_change_requests` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, requested_by, approved_by, payload jsonb, status_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | CHECK requested_by<>approved_by |
+
+Parameter (`system_parameters`, CRUD + versi): `rbac.cache_ttl_seconds` (int, default `300`) — TTL cache izin; `rbac.four_eyes_required` (bool, default `true`) — perubahan izin wajib empat-mata
+
+Kategori lookup dinamis (`lookup_categories.code`): `permission_action`, `scope_kind`, `policy_kind`, `dashboard_profile`
+
+#### 15.6.4 M-04 — IT Helpdesk (entitlement `helpdesk`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `helpdesk_tickets` | id, tenant_id, requester_id, category_id, priority_id, status_id, tier, sla_due_at, assigned_to | FK users, lookup_values; RLS + predikat SELF untuk requester |
+| `helpdesk_ticket_events` | id, tenant_id, ticket_id, actor_id, event_type_id, body, created_at | FK helpdesk_tickets; append-only |
+| `helpdesk_sla_rules` | id, tenant_id, category_id, priority_id, response_minutes, resolve_minutes, escalate_to_tier | FK lookup_values |
+
+Parameter (`system_parameters`, CRUD + versi): `helpdesk.max_tier` (int, default `3`) — tier eskalasi; `helpdesk.auto_close_days` (int, default `7`) — tutup otomatis setelah resolved
+
+Kategori lookup dinamis (`lookup_categories.code`): `ticket_category`, `ticket_priority`, `ticket_status`, `ticket_event_type`
+
+#### 15.6.5 M-05 — Keamanan & Audit (entitlement `audit`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `audit_logs` | **sudah didefinisikan di DATA_MODEL §4 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, seq bigint, actor_id, action, resource, before jsonb, after jsonb, prev_hash, row_hash, occurred_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | append-only; GRANT tanpa UPDATE/DELETE; partisi bulanan |
+| `audit_anchors` | id, tenant_id, day date, merkle_root, leaf_count, signed_by | FK tenants |
+| `pii_masking_rules` | id, tenant_id, table_name, column_name, mask_strategy_id, unmask_permission | FK lookup_values |
+| `security_violations` | id, tenant_id, kind_id, severity_id, actor_id, ip, detail jsonb, status_id | FK lookup_values |
+| `data_subject_requests` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, subject_user_id, request_type_id, status_id, due_at, decision_reason` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK users |
+
+Parameter (`system_parameters`, CRUD + versi): `audit.anchor_cron` (string, default `0 1 * * *`) — jadwal anchor harian; `pdp.breach_notify_hours` (int, default `72`) — batas notifikasi kegagalan PDP; `pii.default_mask` (lookup, default `PARTIAL`) — strategi masking default
+
+Kategori lookup dinamis (`lookup_categories.code`): `mask_strategy`, `violation_kind`, `severity`, `dsr_type`, `dsr_status`
+
+#### 15.6.6 M-06 — HRIS & Payroll (entitlement `hr_bkd`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `lecturers` | **sudah didefinisikan di DATA_MODEL §11.3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `perluasan HR: hired_at, functional_rank_id→lookup_values, status_id→lookup_values` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | dosen; RLS + SELF |
+| `staff` | **sudah didefinisikan di DATA_MODEL §11.3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `perluasan HR: hired_at, functional_rank_id→lookup_values, status_id→lookup_values` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | tendik; RLS + SELF |
+| `leave_requests` | id, tenant_id, membership_id, leave_type_id, start_date, end_date, status_id, approver_id | FK tenant_memberships (lecturers/staff); CHECK approver_id<>employee.user_id via trigger SoD |
+| `employee_attendance` | id, tenant_id, membership_id, work_date, check_in, check_out, source_id | FK tenant_memberships (lecturers/staff); partisi bulanan |
+| `kpi_scorecards` | id, tenant_id, membership_id, period_id, indicator_id, target, actual, score | FK tenant_memberships (lecturers/staff), periods |
+| `payroll_runs` | id, tenant_id, period_month, status_id, locked_at, locked_by | FK users; LOCK/UNLOCK |
+| `payroll_lines` | id, tenant_id, payroll_run_id, membership_id, component_id, amount_idr bigint | FK payroll_runs; append-only setelah LOCK |
+| `tax_brackets` | id, tenant_id NULL, scheme_id, lower_idr, upper_idr, rate_bp, effective_from, effective_to | global+tenant override, berversi |
+| `ptkp_rates` | id, status_code_id, amount_idr, ter_category_id, effective_from | global berversi |
+
+Parameter (`system_parameters`, CRUD + versi): `payroll.cutoff_day` (int, default `25`) — tanggal cut-off presensi; `payroll.rounding` (lookup, default `FLOOR_RUPIAH`) — pembulatan; `leave.annual_quota_days` (int, default `12`) — kuota cuti tahunan
+
+Kategori lookup dinamis (`lookup_categories.code`): `employment_type`, `functional_rank`, `leave_type`, `pay_component`, `tax_scheme`, `ter_category`
+
+#### 15.6.7 M-07 — BKD Dosen (entitlement `hr_bkd`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `bkd_periods` | id, tenant_id, academic_period_id, status_id, locked_at | FK periods |
+| `bkd_activities` | id, tenant_id, bkd_period_id, lecturer_id, dharma_id, activity_type_id, sks numeric(4,2), start_at, end_at, evidence_doc_id, source_module, source_ref_id | FK tenant_memberships (lecturers/staff), documents; source_ref → event asal (M-13/M-18/M-44/M-21) |
+| `bkd_assessments` | id, tenant_id, bkd_activity_id, assessor_id, verdict_id, score, note | FK bkd_activities, users; CHECK assessor_id<>lecturer via trigger |
+| `ewmp_rubrics` | id, tenant_id, activity_type_id, sks_formula_ast jsonb, max_sks, effective_from | FK lookup_values |
+
+Parameter (`system_parameters`, CRUD + versi): `bkd.min_sks` (numeric, default `12`) — batas bawah; `bkd.max_sks` (numeric, default `16`) — batas atas; `bkd.min_dharma_pendidikan_sks` (numeric, default `9`) — komposisi minimum
+
+Kategori lookup dinamis (`lookup_categories.code`): `dharma`, `bkd_activity_type`, `bkd_verdict`
+
+#### 15.6.8 M-08 — SISTER Sync (entitlement `hr_bkd`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `sister_mappings` | id, tenant_id, local_entity_id, sister_entity, field_map jsonb, version | FK lookup_values |
+| `sister_sync_items` | id, tenant_id, entity_type_id, local_id, payload_hash, last_pushed_hash, status_id, attempts, last_error, external_ref | FK lookup_values; UNIQUE(tenant_id,entity_type_id,local_id) |
+| `sister_sync_runs` | id, tenant_id, started_at, finished_at, pushed, failed | append-only |
+
+Parameter (`system_parameters`, CRUD + versi): `sister.base_url` (secret-ref, default `-`) — URL layanan SISTER tenant; `sister.batch_size` (int, default `100`) — ukuran batch; `sister.retry_max` (int, default `8`) — maks retry backoff
+
+Kategori lookup dinamis (`lookup_categories.code`): `sister_entity_type`, `sync_status`
+
+#### 15.6.9 M-09 — PMB & OCR (entitlement `pmb`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `pmb_periods` | id, tenant_id, academic_year_id, wave, open_at, close_at, status_id | FK academic_years |
+| `pmb_tracks` | id, tenant_id, pmb_period_id, track_type_id, quota, fee_component_id, form_schema_id | FK pmb_periods, form_schemas |
+| `form_schemas` | id, tenant_id, module_code, version, json_schema jsonb, ui_schema jsonb | dynamic form berversi |
+| `pmb_applicants` | id, tenant_id, lead_id, user_id, track_id, program_choice jsonb, status_id, nim_candidate, rpl_type_id | FK crm_leads, users, pmb_tracks; RLS + SELF |
+| `pmb_documents` | id, tenant_id, applicant_id, doc_type_id, storage_key, ocr_text, ocr_fields jsonb, match_score, verify_status_id, verified_by | FK pmb_applicants |
+| `cbt_question_banks` | id, tenant_id, owner_id, subject_id, name | FK users |
+| `cbt_questions` | id, tenant_id, bank_id, type_id, stem, options jsonb, answer_key_enc, difficulty | FK cbt_question_banks; kunci terenkripsi |
+| `cbt_sessions` | id, tenant_id, applicant_id, exam_id, started_at, submitted_at, score | FK pmb_applicants |
+| `pmb_selection_results` | id, tenant_id, applicant_id, program_id, decision_id, decided_by, decided_at | FK; SoD decided_by≠verifikator |
+
+Parameter (`system_parameters`, CRUD + versi): `pmb.ocr.match_threshold` (numeric, default `0.85`) — ambang Levenshtein ternormalisasi; `pmb.ocr.langs` (string, default `ind+eng`) — bahasa traineddata; `pmb.max_program_choices` (int, default `2`) — pilihan prodi
+
+Kategori lookup dinamis (`lookup_categories.code`): `pmb_track_type`, `pmb_doc_type`, `applicant_status`, `selection_decision`, `rpl_type`, `question_type`
+
+#### 15.6.10 M-10 — Keuangan & Billing (entitlement `finance`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `fee_components` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, code, name, gl_account_id, is_recurring` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK chart_of_accounts |
+| `tariff_rules` | id, tenant_id, fee_component_id, dimension_key jsonb, amount_idr, effective_from, effective_to, version | FK fee_components; berversi |
+| `invoices` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, student_id, applicant_id, period_id, total_idr, status_id, due_at, va_number` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK students, pmb_applicants; RLS + SELF |
+| `invoice_items` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, invoice_id, fee_component_id, amount_idr, rule_version, calc_trace jsonb` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK invoices; append-only |
+| `payments` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, invoice_id, channel_id, amount_idr, paid_at, external_ref UNIQUE, raw_payload_hash` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK invoices; idempoten |
+| `finance_journals` | id, tenant_id, journal_no, source_module, source_ref_id, posted_at, reversed_journal_id | append-only |
+| `finance_journal_lines` | id, tenant_id, journal_id, account_id, debit_idr, credit_idr | FK finance_journals; trigger Σdebit=Σcredit |
+| `budget_lines` | id, tenant_id, fiscal_year, org_unit_id, account_id, ceiling_idr, committed_idr, realized_idr | FK org_units; dipakai M-46/M-44 |
+| `blockades` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, student_id, reason_id, active, released_by` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK students; gate KRS/ujian/yudisium |
+
+Parameter (`system_parameters`, CRUD + versi): `finance.va.expiry_hours` (int, default `72`) — masa VA; `finance.hold.krs_block` (bool, default `true`) — tunggakan memblok KRS; `finance.installment.max` (int, default `3`) — maks cicilan
+
+Kategori lookup dinamis (`lookup_categories.code`): `payment_channel`, `invoice_status`, `hold_reason`, `ukt_group`, `gl_account_type`
+
+#### 15.6.11 M-11 — KIP-K & Beasiswa (entitlement `scholarship`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `scholarship_programs` | id, tenant_id, code, name, sponsor_id, quota, amount_idr, ahp_matrix jsonb, cr_value | FK lookup_values |
+| `scholarship_applications` | id, tenant_id, program_id, student_id, criteria jsonb, score, rank, status_id | FK; RLS + SELF |
+| `scholarship_awards` | id, tenant_id, application_id, valid_from, valid_to, status_id | FK scholarship_applications |
+| `scholarship_monitoring` | id, tenant_id, award_id, period_id, gpa, sks, warning_level_id, frozen | FK awards, periods |
+| `allowance_disbursements` | id, tenant_id, award_id, period_month, amount_idr, account_ref_enc, status_id, journal_id | FK awards, finance_journals |
+
+Parameter (`system_parameters`, CRUD + versi): `scholarship.min_gpa` (numeric, default `3.00`) — IPK minimum lanjut; `scholarship.freeze_after_warnings` (int, default `2`) — peringatan sebelum freeze; `scholarship.cr_max` (numeric, default `0.10`) — consistency ratio maksimum
+
+Kategori lookup dinamis (`lookup_categories.code`): `sponsor`, `scholarship_status`, `warning_level`
+
+#### 15.6.12 M-12 — Kurikulum OBE (entitlement `academic`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `curricula` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, program_id, code, year, total_sks, status_id, locked_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK programs |
+| `graduate_profiles` | id, tenant_id, curriculum_id, code, description | FK curricula |
+| `plos` | id, tenant_id, curriculum_id, code, domain_id, description | CPL; FK curricula, lookup_values |
+| `courses` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, curriculum_id, code, name, sks_theory, sks_practice, semester, course_type_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK curricula |
+| `course_prerequisites` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, course_id, prereq_course_id, rule_type_id, min_grade_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK courses; tanpa CHECK statis — validasi DAG di service |
+| `clos` | id, tenant_id, course_id, code, description | CPMK; FK courses |
+| `clo_plo_maps` | id, tenant_id, clo_id, plo_id, weight numeric | FK clos, plos |
+| `rps_documents` | id, tenant_id, course_id, version, content jsonb, status_id, approved_by | FK courses |
+| `obe_rubrics` | id, tenant_id, clo_id, criteria jsonb | FK clos |
+| `plo_attainments` | id, tenant_id, student_id, plo_id, period_id, value numeric, computed_at | FK; materialized dari M-19 |
+| `rpl_conversions` | id, tenant_id, applicant_id, source_institution, source_course, source_sks, source_grade, target_course_id, match_score, status_id, approved_by | FK pmb_applicants, courses; DAG prasyarat divalidasi |
+
+Parameter (`system_parameters`, CRUD + versi): `obe.plo_pass_threshold` (numeric, default `70`) — ambang capaian CPL; `curriculum.min_total_sks` (int, default `144`) — minimum SKS S1 (parameter regulasi)
+
+Kategori lookup dinamis (`lookup_categories.code`): `plo_domain`, `course_type`, `prereq_rule_type`, `rps_status`
+
+#### 15.6.13 M-13 — KRS Online & Perwalian (entitlement `enrollment`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `advising_sessions` | id, tenant_id, period_id, adviser_id, student_id, scheduled_at, status_id | FK; RLS scope ADVISER |
+| `advising_logs` | id, tenant_id, session_id, note, follow_up, created_by | FK advising_sessions; append-only |
+| `krs_headers` | id, tenant_id, student_id, period_id, status_id, max_sks, submitted_at, approved_by, approved_at | FK; RLS + SELF |
+| `enrollments` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, krs_header_id, class_id, sks, status_id, reserved_token` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK krs_headers, classes |
+| `krs_war_windows` | id, tenant_id, period_id, cohort_filter jsonb, open_at, close_at | FK periods |
+| `academic_rules` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, gpa_min, gpa_max, max_sks, effective_from` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | berversi |
+
+Parameter (`system_parameters`, CRUD + versi): `krs.reservation_ttl_seconds` (int, default `600`) — TTL kursi tertahan; `krs.war.rate_limit_per_min` (int, default `30`) — rate limit per mahasiswa; `krs.require_adviser_approval` (bool, default `true`) — wajib ACC dosen wali
+
+Kategori lookup dinamis (`lookup_categories.code`): `krs_status`, `advising_status`
+
+#### 15.6.14 M-14 — Jadwal & Ruang (entitlement `scheduling`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `rooms` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, building_id, code, capacity, room_type_id, geofence_id, is_active` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK buildings, geofences |
+| `time_slots` | id, tenant_id, day_of_week_id, start_time, end_time, shift_id | FK lookup_values |
+| `schedule_constraints` | id, tenant_id, kind_id, hardness_id, subject_ref jsonb, params jsonb, weight | FK lookup_values |
+| `schedule_runs` | id, tenant_id, period_id, status_id, score, conflicts, started_at, finished_at | FK periods |
+| `class_schedules` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, class_id, room_id, time_slot_id, lecturer_id, mode_id, run_id, locked` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK classes, rooms, time_slots |
+| `room_bookings` | id, tenant_id, room_id, start_at, end_at, purpose, booked_by, status_id | EXCLUDE gist (room_id, tstzrange) — invarian struktural |
+
+Parameter (`system_parameters`, CRUD + versi): `schedule.solver_timeout_seconds` (int, default `120`) — batas waktu solver; `schedule.min_break_minutes` (int, default `10`) — jeda antar sesi
+
+Kategori lookup dinamis (`lookup_categories.code`): `room_type`, `day_of_week`, `shift`, `constraint_kind`, `constraint_hardness`
+
+#### 15.6.15 M-15 — Moda Perkuliahan (entitlement `teaching`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `learning_modes` | id, tenant_id, code, label, feeder_tag | lookup khusus; feeder_tag ∈ lookup feeder_mode (F/O/M) |
+| `class_sessions` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, class_id, meeting_no, starts_at, ends_at, mode_id, room_id, online_meeting_id, shift_id, status_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK classes, learning_modes, rooms, online_meetings |
+| `online_meetings` | id, tenant_id, provider_id, external_meeting_id, join_url_enc, host_user_id | FK lookup_values |
+| `shift_allocations` | id, tenant_id, class_id, student_id, shift_id | FK |
+| `reconciliation_rules` | id, tenant_id, mode_id, onsite_evidence_id, online_evidence_id, result_status_id, priority | FK lookup_values |
+
+Parameter (`system_parameters`, CRUD + versi): `mode.online_min_join_ratio` (numeric, default `0.75`) — rasio join minimum daring; `mode.meeting_provider` (lookup, default `JITSI_SELF_HOSTED`) — provider default; Zoom/Meet opsional via OAuth tenant
+
+Kategori lookup dinamis (`lookup_categories.code`): `learning_mode`, `feeder_mode`, `shift`, `meeting_provider`, `evidence_type`
+
+#### 15.6.16 M-16 — LMS Digital (entitlement `lms`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `lms_courses` | id, tenant_id, class_id, title, status_id | FK classes |
+| `lms_materials` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, course_id, type_id, storage_key, scorm_manifest jsonb, duration_s, published_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK lms_courses |
+| `lms_progress` | id, tenant_id, material_id, student_id, progress_pct, last_position_s, completed_at | FK; RLS + SELF |
+| `xapi_statements` | id, tenant_id, actor_id, verb_iri, object_iri, result jsonb, stored_at | append-only; partisi |
+| `lms_assignments` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, course_id, title, due_at, max_score, grade_component_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK grade_components (M-19) |
+| `lms_submissions` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, assignment_id, student_id, storage_key, score, graded_by` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK |
+| `lms_quizzes` | id, tenant_id, course_id, settings jsonb, grade_component_id | FK |
+| `lms_discussions` | id, tenant_id, course_id, parent_id, author_id, body | FK self |
+| `search_index_terms` | id, tenant_id, term, doc_ref, tf, idf | indeks lokal |
+
+Parameter (`system_parameters`, CRUD + versi): `lms.video_complete_ratio` (numeric, default `0.90`) — ambang selesai video; `lms.max_upload_mb` (int, default `100`) — batas unggah
+
+Kategori lookup dinamis (`lookup_categories.code`): `material_type`, `xapi_verb`
+
+#### 15.6.17 M-17 — Ujian & Proctoring (entitlement `cbt`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `exams` | id, tenant_id, class_id, kind_id, starts_at, ends_at, settings jsonb, proctoring_profile_id | FK classes |
+| `exam_attempts` | id, tenant_id, exam_id, student_id, started_at, submitted_at, score, device_fingerprint | FK; RLS + SELF |
+| `proctoring_profiles` | id, tenant_id, name, lockdown bool, face_check bool, flag_rules jsonb | FK |
+| `proctoring_flags` | id, tenant_id, attempt_id, flag_type_id, severity_id, occurred_at, evidence_meta jsonb | append-only |
+| `biometric_consents` | id, tenant_id, user_id, purpose_id, granted_at, withdrawn_at | FK users |
+
+Parameter (`system_parameters`, CRUD + versi): `proctor.flag_threshold` (int, default `3`) — flag sebelum review; `proctor.face_check_interval_s` (int, default `30`) — interval cek wajah
+
+Kategori lookup dinamis (`lookup_categories.code`): `exam_kind`, `flag_type`, `severity`
+
+#### 15.6.18 M-18 — Presensi Smart (entitlement `attendance`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `geofences` | id, tenant_id, name, lat, lng, radius_m, accuracy_max_m | FK |
+| `attendance_sessions` | id, tenant_id, class_session_id, opened_by, opened_at, closed_at, totp_secret_enc, status_id | FK class_sessions |
+| `attendances` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, attendance_session_id, student_id, method_id, status_id, lat, lng, distance_m, online_join_ratio, feeder_tag_id, recorded_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK; UNIQUE(session,student); RLS + SELF |
+| `attendance_corrections` | id, tenant_id, record_id, requested_by, approved_by, reason | FK; SoD |
+| `lecturer_attendance` | id, tenant_id, class_session_id, lecturer_id, checked_in_at | FK; feed BKD |
+
+Parameter (`system_parameters`, CRUD + versi): `attendance.qr_step_seconds` (int, default `5`) — langkah TOTP; `attendance.qr_tolerance_steps` (int, default `1`) — toleransi; `attendance.geofence_radius_m` (int, default `30`) — radius default; `attendance.min_presence_ratio` (numeric, default `0.75`) — syarat ujian
+
+Kategori lookup dinamis (`lookup_categories.code`): `attendance_method`, `attendance_status`, `feeder_mode`
+
+#### 15.6.19 M-19 — Nilai & KHS (entitlement `assessment`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `grade_scales` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, code, effective_from` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | berversi |
+| `grade_scale_bands` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, scale_id, letter, min_score, max_score, point` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK grade_scales |
+| `grade_components` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, class_id, code, weight, source_module, clo_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK classes, clos |
+| `grade_formulas` | id, tenant_id, class_id, expression, ast jsonb, version | FK |
+| `grade_values` | id, tenant_id, class_id, student_id, component_id, score, source_ref | FK; RLS + SELF baca |
+| `grades` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, class_id, student_id, score, letter, point, formula_version, locked_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK |
+| `khs` | id, tenant_id, student_id, period_id, ips, ipk, sks_total, published_at | FK |
+| `grade_corrections` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, grade_id, requested_by, approved_by, reason, status_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | SoD |
+
+Parameter (`system_parameters`, CRUD + versi): `grading.publish_requires_lock` (bool, default `true`) — KHS hanya dari nilai terkunci; `grading.rounding_digits` (int, default `2`) — pembulatan
+
+Kategori lookup dinamis (`lookup_categories.code`): `grade_component_type`, `grade_change_status`
+
+#### 15.6.20 M-20 — Tugas Akhir & RAMA (entitlement `thesis`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `theses` | id, tenant_id, student_id, title, topic_area_id, status_id, plagiarism_score | FK; RLS SELF + supervisor scope |
+| `thesis_supervisors` | id, tenant_id, thesis_id, lecturer_id, role_id | FK |
+| `thesis_logbooks` | id, tenant_id, thesis_id, met_at, summary, next_action, signed_by_supervisor_at | append-only; feed BKD |
+| `thesis_defenses` | id, tenant_id, thesis_id, kind_id, scheduled_at, room_id, status_id | FK |
+| `thesis_examiners` | id, tenant_id, defense_id, lecturer_id | FK; CHECK beda dari pembimbing (service+trigger) |
+| `thesis_scores` | id, tenant_id, defense_id, examiner_id, rubric_scores jsonb, total | FK |
+| `repository_items` | id, tenant_id, thesis_id, oai_identifier, metadata jsonb, file_key, embargo_until, published_at | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `thesis.min_logbook_entries` (int, default `8`) — syarat daftar sidang; `thesis.plagiarism_max` (numeric, default `0.25`) — ambang similarity; `thesis.winnow.k` (int, default `5`) — k-gram
+
+Kategori lookup dinamis (`lookup_categories.code`): `thesis_status`, `supervisor_role`, `defense_kind`, `topic_area`
+
+#### 15.6.21 M-21 — Jurnal & OJS (entitlement `journal`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `journals` | id, tenant_id, name, issn, eissn, ojs_base_url, sinta_rank_id | FK lookup_values |
+| `journal_articles` | id, tenant_id, journal_id, doi, title, authors jsonb, published_at, oai_identifier | FK |
+| `article_authors` | id, tenant_id, article_id, person_id, is_internal | FK; feed BKD |
+| `apc_invoices` | id, tenant_id, article_id, invoice_id, amount_idr | FK invoices M-10 |
+
+Parameter (`system_parameters`, CRUD + versi): `journal.harvest_cron` (string, default `0 3 * * *`) — jadwal harvest; `journal.apc_default_idr` (bigint, default `0`) — APC default
+
+Kategori lookup dinamis (`lookup_categories.code`): `sinta_rank`, `article_status`
+
+#### 15.6.22 M-22 — Inkubator & HAKI (entitlement `ipr_incubator`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `ipr_filings` | id, tenant_id, title, ipr_type_id, filing_no, filed_at, granted_at, status_id, certificate_key | FK |
+| `ipr_inventors` | id, tenant_id, filing_id, person_id, share_pct | FK |
+| `startups` | id, tenant_id, name, founder_ids jsonb, stage_id | FK |
+| `startup_milestones` | id, tenant_id, startup_id, milestone_type_id, due_at, achieved_at | FK |
+| `seed_fundings` | id, tenant_id, startup_id, amount_idr, status_id, journal_id | FK finance_journals |
+
+Parameter (`system_parameters`, CRUD + versi): `ipr.iku5_counted_types` (jsonb, default `[PATENT,SIMPLE_PATENT,COPYRIGHT]`) — tipe HAKI dihitung IKU 5 (lookup codes)
+
+Kategori lookup dinamis (`lookup_categories.code`): `ipr_type`, `ipr_status`, `startup_stage`, `milestone_type`
+
+#### 15.6.23 M-23 — Wisuda & Toga (entitlement `graduation`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `convocations` | id, tenant_id, name, held_at, venue_id, capacity, status_id | FK |
+| `convocation_registrants` | id, tenant_id, convocation_id, student_id, yudisium_id, gown_size_id, guest_count, status_id | FK; hanya mahasiswa lulus yudisium |
+| `convocation_seats` | id, tenant_id, convocation_id, registrant_id, block, row_no, seat_no, call_order | FK; UNIQUE seat |
+| `gown_inventory` | id, tenant_id, size_id, stock, issued | FK |
+| `stage_call_logs` | id, tenant_id, seat_id, called_at, scanned_by | append-only |
+
+Parameter (`system_parameters`, CRUD + versi): `graduation.guest_max` (int, default `2`) — undangan maksimum; `graduation.seating_strategy` (lookup, default `BY_PROGRAM_GPA`) — strategi biaya Hungarian
+
+Kategori lookup dinamis (`lookup_categories.code`): `gown_size`, `registrant_status`, `seating_strategy`
+
+#### 15.6.24 M-24 — Kemahasiswaan & SKKM (entitlement `student_affairs`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `skkm_rules` | id, tenant_id, activity_type_id, level_id, role_id, points, effective_from | FK lookup_values |
+| `skkm_claims` | id, tenant_id, student_id, rule_id, title, certificate_key, certificate_hash, points, status_id, verified_by | FK; RLS + SELF |
+| `achievements` | id, tenant_id, student_id, competition_name, level_id, rank_id, achieved_at, simkatmawa_ref | FK |
+| `student_organizations` | id, tenant_id, name, advisor_id, status_id | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `skkm.min_points_graduation` (int, default `100`) — syarat poin lulus; `skkm.duplicate_check` (bool, default `true`) — cek hash sertifikat
+
+Kategori lookup dinamis (`lookup_categories.code`): `skkm_activity_type`, `achievement_level`, `participation_role`, `achievement_rank`
+
+#### 15.6.25 M-25 — KKN, PKL & Magang (entitlement `fieldwork`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `fieldwork_programs` | id, tenant_id, kind_id, period_id, credit_sks, course_id | FK courses (konversi) |
+| `fieldwork_sites` | id, tenant_id, program_id, partner_id, name, lat, lng, radius_m, capacity | FK partners |
+| `fieldwork_groups` | id, tenant_id, site_id, supervisor_id | FK; DPL |
+| `fieldwork_members` | id, tenant_id, group_id, student_id | FK; RLS + SELF |
+| `fieldwork_logbooks` | id, tenant_id, member_id, log_date, activity, lat, lng, distance_m, supervisor_verified_at | FK; append-only |
+| `fieldwork_scores` | id, tenant_id, member_id, scorer_kind_id, scorer_id, rubric_scores jsonb, total, locked_at | FK |
+| `partners` | id, tenant_id, name, partner_type_id, mou_doc_id, status_id | FK; dipakai M-28/M-38 |
+
+Parameter (`system_parameters`, CRUD + versi): `fieldwork.logbook_geofence_required` (bool, default `true`) — logbook wajib dalam geofence; `fieldwork.score_weights` (jsonb, default `{dpl:0.5,mitra:0.5}`) — bobot nilai
+
+Kategori lookup dinamis (`lookup_categories.code`): `fieldwork_kind`, `partner_type`, `scorer_kind`
+
+#### 15.6.26 M-26 — Simulasi Lulus (entitlement `academic`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `graduation_simulations` | id, tenant_id, student_id, curriculum_id, input jsonb, result jsonb, computed_at | FK; RLS SELF + ADVISER; cache |
+
+Parameter (`system_parameters`, CRUD + versi): `study.max_semesters` (int, default `14`) — batas masa studi; `simulation.max_sks_per_term` (int, default `24`) — asumsi maks SKS
+
+#### 15.6.27 M-27 — Tracer Study (entitlement `tracer_iku`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `tracer_surveys` | id, tenant_id, cohort_year, wave, form_schema_id, open_at, close_at | FK form_schemas |
+| `tracer_responses` | id, tenant_id, survey_id, alumni_id, answers jsonb, submitted_at | FK; RLS + SELF |
+| `alumni_profiles` | id, tenant_id, student_id, pin, graduated_at, employer, job_field_id, consent_directory | FK |
+| `blast_jobs` | id, tenant_id, channel_id, segment jsonb, template_id, sent, failed, status_id | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `tracer.waves_years` (jsonb, default `[1,3,5]`) — gelombang; `tracer.blast_rate_per_min` (int, default `60`) — throttle
+
+Kategori lookup dinamis (`lookup_categories.code`): `job_field`, `blast_channel`
+
+#### 15.6.28 M-28 — Career Center (entitlement `career`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `employers` | id, tenant_id, partner_id, name, verified_at | FK partners |
+| `job_vacancies` | id, tenant_id, employer_id, title, skills jsonb, closes_at, status_id | FK |
+| `job_applications` | id, tenant_id, vacancy_id, candidate_id, match_score, status_id | FK; RLS SELF + employer |
+| `career_fairs` | id, tenant_id, name, starts_at, ends_at | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `career.min_match_score` (numeric, default `0.4`) — ambang rekomendasi
+
+Kategori lookup dinamis (`lookup_categories.code`): `application_status`, `skill_tag`
+
+#### 15.6.29 M-29 — KUI & Mobilitas (entitlement `international`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `mobility_programs` | id, tenant_id, direction_id, partner_institution, country_code, period_id | FK |
+| `mobility_participants` | id, tenant_id, program_id, student_id, status_id | FK; RLS SELF |
+| `immigration_documents` | id, tenant_id, person_id, doc_type_id, number_enc, expires_at | FK; enkripsi kolom |
+| `credit_conversion_factors` | id, tenant_id, source_system_id, factor numeric, effective_from | berversi |
+| `credit_conversions` | id, tenant_id, participant_id, source_course, source_credits, target_course_id, target_sks, status_id | FK courses |
+
+Parameter (`system_parameters`, CRUD + versi): `intl.visa_alert_days` (jsonb, default `[90,30,7]`) — pengingat kedaluwarsa
+
+Kategori lookup dinamis (`lookup_categories.code`): `mobility_direction`, `credit_system`, `immigration_doc_type`
+
+#### 15.6.30 M-30 — Yudisium & SKPI (entitlement `graduation`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `clearance_rules` | id, tenant_id, program_id, requirement_id, source_event, predicate jsonb, is_mandatory, effective_from | FK lookup_values |
+| `clearances` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, student_id, requirement_id, satisfied, evidence_ref, updated_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK; RLS SELF + scope |
+| `yudisium_batches` | id, tenant_id, period_id, org_unit_id, held_at, status_id, approved_by | FK |
+| `yudisium_members` | id, tenant_id, batch_id, student_id, gpa, predicate_id, graduated_at | FK |
+| `skpi_documents` | id, tenant_id, student_id, content jsonb, number, signed_at, file_key | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `yudisium.predicate_rules` (jsonb, default `[...]`) — predikat kelulusan berdasarkan IPK & masa studi (Permendikbudristek 53/2023)
+
+Kategori lookup dinamis (`lookup_categories.code`): `clearance_requirement`, `graduation_predicate`, `yudisium_status`
+
+#### 15.6.31 M-31 — Akreditasi LKPS (entitlement `accreditation`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `lkps_templates` | id, tenant_id NULL, instrument_id, table_code, criterion_no, query_def jsonb, version | global+tenant |
+| `lkps_snapshots` | id, tenant_id, program_id, template_version, ts_year, data jsonb, frozen_at | FK |
+| `led_documents` | id, tenant_id, program_id, sections jsonb, status_id | FK |
+| `ratio_checks` | id, tenant_id, program_id, ratio_code_id, value, threshold, passed | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `lkps.ts_years` (int, default `3`) — TS, TS-1, TS-2
+
+Kategori lookup dinamis (`lookup_categories.code`): `accreditation_instrument`, `ratio_code`
+
+#### 15.6.32 M-32 — Dashboard IKU (entitlement `tracer_iku`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `iku_definitions` | id, tenant_id NULL, code, name, numerator_def jsonb, denominator_def jsonb, version, effective_from | global+tenant |
+| `iku_counters` | id, tenant_id, iku_id, org_unit_id, year, numerator, denominator, updated_at | read-model |
+| `iku_targets` | id, tenant_id, iku_id, org_unit_id, year, target, alert_threshold | FK |
+| `iku_alerts` | id, tenant_id, iku_id, org_unit_id, raised_at, level_id | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `iku.full_recompute_cron` (string, default `0 4 * * *`) — rekonsiliasi
+
+Kategori lookup dinamis (`lookup_categories.code`): `alert_level`
+
+#### 15.6.33 M-33 — Jadwal Darurat (entitlement `scheduling`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `incidents` | id, tenant_id, building_id, room_id, kind_id, started_at, ended_at, severity_id | FK |
+| `room_lockouts` | id, tenant_id, room_id, incident_id, from_at, to_at | FK |
+| `reroute_plans` | id, tenant_id, incident_id, assignments jsonb, unmet jsonb, status_id | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `emergency.max_walk_m` (int, default `500`) — jarak maksimum ruang pengganti
+
+Kategori lookup dinamis (`lookup_categories.code`): `incident_kind`, `severity`
+
+#### 15.6.34 M-34 — Feeder PDDikti (entitlement `feeder_pddikti`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `feeder_staging` | id, tenant_id, entity_type_id, local_id, payload jsonb, payload_hash, status_id, errors jsonb | FK |
+| `feeder_rules` | id, tenant_id NULL, entity_type_id, rule_def jsonb, severity_id | global+tenant |
+| `pddikti_sync_runs` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, entity_type_id, status_id, attempts, next_attempt_at, last_error` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK |
+| `pddikti_correction_requests` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, staging_id, field, before, after, score, approved_by` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `feeder.fuzzy_threshold` (numeric, default `0.92`) — ambang koreksi otomatis; `feeder.retry_max` (int, default `10`) — retry
+
+Kategori lookup dinamis (`lookup_categories.code`): `feeder_entity_type`, `feeder_status`
+
+#### 15.6.35 M-35 — PIN & SIVIL (entitlement `graduation`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `pin_quotas` | id, tenant_id, program_id, year, quota, used | FK |
+| `pin_reservations` | id, tenant_id, yudisium_member_id, pin, reserved_at, status_id | FK; UNIQUE pin |
+| `diplomas` | id, tenant_id, student_id, pin, number, signed_payload, signature, key_version, file_key, issued_at, revoked_at | FK |
+| `signing_keys` | id, tenant_id, key_version, public_key, private_key_ref, valid_from, valid_to | KMS ref; private key tidak di DB |
+
+Parameter (`system_parameters`, CRUD + versi): `diploma.qr_ttl_days` (int, default `0`) — 0 = permanen; `diploma.public_fields` (jsonb, default `[name,program,graduated_at]`) — field publik
+
+Kategori lookup dinamis (`lookup_categories.code`): `pin_status`
+
+#### 15.6.36 M-36 — Portal PPKS (entitlement `ppks`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `ppks_reports` | id, tenant_id, case_code_hash, ciphertext, nonce, recipient_key_version, submitted_at | tanpa FK ke users (anonim); RLS hanya PPKS_TASKFORCE |
+| `ppks_cases` | id, tenant_id, report_id, status_id, assigned_to, risk_level_id | FK |
+| `ppks_case_events` | id, tenant_id, case_id, event_type_id, ciphertext, created_by | append-only |
+| `ppks_ministry_reports` | id, tenant_id, period, aggregate jsonb, submitted_at | agregat tanpa identitas |
+
+Parameter (`system_parameters`, CRUD + versi): `ppks.response_days` (int, default `3`) — batas respon awal (sesuai pedoman berlaku)
+
+Kategori lookup dinamis (`lookup_categories.code`): `ppks_case_status`, `ppks_event_type`, `risk_level`
+
+#### 15.6.37 M-37 — SPMI & Quality (entitlement `spmi`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `quality_standards` | id, tenant_id, code, name, ppepp_stage_id, version | FK |
+| `ami_cycles` | id, tenant_id, year, status_id | FK |
+| `ami_assignments` | id, tenant_id, cycle_id, auditor_id, org_unit_id | FK; CHECK auditor bukan anggota unit (service+trigger) |
+| `ami_checklists` | id, tenant_id, assignment_id, items jsonb, submitted_at | FK |
+| `ami_findings` | id, tenant_id, assignment_id, category_id, description, status_id | FK |
+| `ami_corrective_actions` | id, tenant_id, finding_id, plan, due_at, verified_at | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `ami.rtl_due_days` (int, default `60`) — batas RTL
+
+Kategori lookup dinamis (`lookup_categories.code`): `ppepp_stage`, `finding_category`, `finding_status`
+
+#### 15.6.38 M-38 — Kampus Merdeka / MBKM (entitlement `mbkm`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `mbkm_programs` | id, tenant_id, scheme_id, name, partner_id, period_id, max_sks | FK partners |
+| `mbkm_participants` | id, tenant_id, program_id, student_id, supervisor_id, status_id | FK; RLS SELF + supervisor |
+| `mbkm_logbooks` | id, tenant_id, participant_id, week_no, content, source_id, verified_at | FK; importer |
+| `mbkm_conversions` | id, tenant_id, participant_id, course_id, sks, grade_score, status_id, approved_by | FK courses |
+
+Parameter (`system_parameters`, CRUD + versi): `mbkm.max_sks_outside` (int, default `60`) — batas SKS luar prodi
+
+Kategori lookup dinamis (`lookup_categories.code`): `mbkm_scheme`, `logbook_source`
+
+#### 15.6.39 M-39 — e-Library (entitlement `library`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `library_items` | id, tenant_id, marc jsonb, dc jsonb, title, isbn, call_number | FK |
+| `library_copies` | id, tenant_id, item_id, barcode, status_id, location_id | FK |
+| `library_loans` | id, tenant_id, copy_id, borrower_id, loaned_at, due_at, returned_at | FK; RLS SELF |
+| `library_fines` | id, tenant_id, loan_id, amount_idr, status_id, invoice_id | FK invoices M-10 |
+| `library_clearances` | id, tenant_id, student_id, granted_by, granted_at | FK; event ke M-30 |
+
+Parameter (`system_parameters`, CRUD + versi): `library.loan_days` (int, default `14`) — lama pinjam; `library.fine_per_day_idr` (bigint, default `1000`) — denda; `library.bm25_k1` (numeric, default `1.2`) — BM25 k1
+
+Kategori lookup dinamis (`lookup_categories.code`): `copy_status`, `library_location`
+
+#### 15.6.40 M-40 — Aset & Inventaris (entitlement `assets`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `asset_categories` | id, tenant_id, code, name, useful_life_months, residual_pct, bmn_code | berversi |
+| `assets` | id, tenant_id, category_id, tag_code, name, acquired_at, acquisition_idr, location_room_id, custodian_id, source_receipt_id, status_id | FK goods_receipts (M-46), rooms |
+| `asset_depreciations` | id, tenant_id, asset_id, period_month, amount_idr, book_value_idr, journal_id | UNIQUE(asset,period); append-only |
+| `asset_movements` | id, tenant_id, asset_id, from_room_id, to_room_id, moved_at, approved_by | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `asset.depreciation_cron` (string, default `0 1 1 * *`) — posting bulanan; `asset.tag_prefix` (string, default `{tenant}-{cat}-`) — pola tag
+
+Kategori lookup dinamis (`lookup_categories.code`): `asset_status`
+
+#### 15.6.41 M-41 — Klinik Kampus (entitlement `clinic`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `clinic_patients` | id, tenant_id, user_id, consent_at | FK |
+| `medical_records` | id, tenant_id, patient_id, ciphertext, dek_wrapped, key_version, created_by, created_at | append-only (koreksi = versi baru); RLS hanya CLINIC_DOCTOR |
+| `clinic_queue` | id, tenant_id, patient_id, triage_level_id, enqueued_at, called_at | FK |
+| `counseling_bookings` | id, tenant_id, student_id, counselor_id, slot_at, status_id, notes_ciphertext | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `clinic.record_retention_years` (int, default `25`) — retensi (Permenkes 24/2022)
+
+Kategori lookup dinamis (`lookup_categories.code`): `triage_level`, `booking_status`
+
+#### 15.6.42 M-42 — Asrama & Kantin (entitlement `dormitory`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `dorm_rooms` | id, tenant_id, building_id, code, capacity, gender_id, accessibility jsonb | FK |
+| `dorm_allocations` | id, tenant_id, room_id, student_id, period_id, status_id | FK; RLS SELF |
+| `shuttle_routes` | id, tenant_id, name, stops jsonb, schedule jsonb | FK |
+| `wallet_accounts` | id, tenant_id, user_id, status_id | FK |
+| `wallet_ledger` | id, tenant_id, account_id, amount_idr, kind_id, ref, created_at | append-only |
+
+Parameter (`system_parameters`, CRUD + versi): `wallet.max_balance_idr` (bigint, default `2000000`) — batas saldo closed-loop
+
+Kategori lookup dinamis (`lookup_categories.code`): `gender`, `wallet_entry_kind`
+
+#### 15.6.43 M-43 — Humas & Event (entitlement `events`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `events` | id, tenant_id, title, starts_at, ends_at, venue, quota, segment_rules jsonb, status_id | FK |
+| `event_registrations` | id, tenant_id, event_id, participant_id, score, status_id, ticket_hmac | FK; RLS SELF |
+| `event_checkins` | id, tenant_id, registration_id, gate_id, scanned_at | append-only; UNIQUE registration |
+| `signage_schedules` | id, tenant_id, display_id, content_key, from_at, to_at, priority | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `event.waitlist_enabled` (bool, default `true`) — waitlist
+
+Kategori lookup dinamis (`lookup_categories.code`): `event_status`, `registration_status`
+
+#### 15.6.44 M-44 — SIM-LPPM / LITABMAS (entitlement `litabmas`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `grant_schemes` | id, tenant_id, code, name, funding_source_id, ceiling_idr, call_open_at, call_close_at, rubric_id | FK lookup_values, rubrics |
+| `grant_proposals` | id, tenant_id, scheme_id, lead_lecturer_id, title, abstract, budget_idr, status_id, nb_score, nb_model_version | FK grant_schemes, tenant_memberships |
+| `grant_proposal_members` | id, tenant_id, proposal_id, person_id, role_id | FK grant_proposals |
+| `grant_reviews` | id, tenant_id, proposal_id, reviewer_id, blind_alias, scores jsonb, total, recommendation_id | FK; RLS: reviewer hanya assignment-nya, identitas pengusul di-mask |
+| `grant_contracts` | id, tenant_id, proposal_id, contract_no, amount_idr, signed_at, status_id | FK grant_proposals |
+| `grant_disbursements` | id, tenant_id, contract_id, tranche_no, amount_idr, status_id, finance_journal_id | FK grant_contracts, finance_journals |
+| `research_outputs` | id, tenant_id, proposal_id, output_type_id, title, doi, sinta_id, ipr_id, validated_at, validated_by | FK grant_proposals, ipr_filings |
+
+Parameter (`system_parameters`, CRUD + versi): `lppm.reviewers_per_proposal` (int, default `2`) — jumlah reviewer; `lppm.nb.enabled` (bool, default `true`) — skor NB pendamping; `lppm.tranches` (jsonb, default `[70,30]`) — persentase termin
+
+Kategori lookup dinamis (`lookup_categories.code`): `funding_source`, `grant_member_role`, `output_type`, `review_recommendation`, `grant_status`
+
+#### 15.6.45 M-45 — CRM PMB & Marketing (entitlement `crm_marketing`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `crm_leads` | id, tenant_id, full_name, phone_hash, email_hash, school_id, source_id, agent_id, stage_id, score, consent_at, converted_applicant_id | FK lookup_values, schools, crm_agents, pmb_applicants; PII terenkripsi kolom |
+| `crm_lead_activities` | id, tenant_id, lead_id, activity_type_id, channel_id, occurred_at, outcome_id | FK crm_leads; append-only |
+| `crm_funnel_rules` | id, tenant_id, from_stage_id, to_stage_id, condition_ast jsonb, action jsonb, is_active | FK lookup_values |
+| `crm_campaigns` | id, tenant_id, name, channel_id, segment_query jsonb, schedule jsonb, budget_idr, status_id | FK lookup_values |
+| `crm_events` | id, tenant_id, school_id, event_type_id, scheduled_at, location, pic_id | FK schools, users |
+| `crm_agents` | id, tenant_id, user_id, agent_type_id, commission_rule_id, status_id | FK users |
+| `crm_commission_rules` | id, tenant_id, basis_id, amount_idr, percent_bp, effective_from | FK lookup_values |
+| `crm_commissions` | id, tenant_id, agent_id, applicant_id, amount_idr, status_id, finance_journal_id | FK crm_agents, pmb_applicants |
+
+Parameter (`system_parameters`, CRUD + versi): `crm.lead_dedupe_threshold` (numeric, default `0.88`) — ambang Jaro-Winkler duplikasi lead; `crm.score.retrain_cron` (string, default `0 2 * * 0`) — jadwal retrain; `crm.consent_required` (bool, default `true`) — wajib persetujuan PDP sebelum kontak
+
+Kategori lookup dinamis (`lookup_categories.code`): `lead_source`, `lead_stage`, `marketing_channel`, `crm_activity_type`, `agent_type`, `commission_basis`
+
+#### 15.6.46 M-46 — E-Procurement PBJ (entitlement `procurement`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `procurement_requests` | id, tenant_id, org_unit_id, requester_id, title, method_id, budget_line_id, hps_idr, status_id | FK budget_lines, org_units |
+| `procurement_items` | id, tenant_id, request_id, item_name, spec, qty, unit_id, unit_price_hps_idr, asset_category_id | FK procurement_requests |
+| `vendors` | id, tenant_id, legal_name, npwp_enc, nib, status_id, rating | FK lookup_values |
+| `rfq_bids` | id, tenant_id, request_id, vendor_id, amount_idr, tech_score, ahp_score, submitted_at | FK; RLS vendor hanya bid miliknya |
+| `procurement_approvals` | id, tenant_id, request_id, level, approver_id, decision_id, decided_at | FK; CHECK approver≠requester (trigger) |
+| `procurement_contracts` | id, tenant_id, request_id, vendor_id, contract_no, amount_idr, start_date, end_date, status_id | FK |
+| `goods_receipts` | id, tenant_id, contract_id, received_at, received_by, items jsonb | FK; memicu pembuatan aset M-40 |
+
+Parameter (`system_parameters`, CRUD + versi): `pbj.approval_levels` (jsonb, default `[{max:50000000,levels:1},{max:200000000,levels:2},{levels:3}]`) — jenjang approval per nilai; `pbj.low_price_threshold` (numeric, default `0.80`) — ambang harga tidak wajar; `pbj.direct_procurement_ceiling_idr` (bigint, default `200000000`) — batas pengadaan langsung (parameter, ikuti regulasi berlaku)
+
+Kategori lookup dinamis (`lookup_categories.code`): `procurement_method`, `procurement_status`, `vendor_status`, `unit_of_measure`, `approval_decision`
+
+#### 15.6.47 M-47 — Endowment Fund (entitlement `endowment`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `donors` | id, tenant_id, person_or_org, contact_enc, is_alumni, consent_at | FK |
+| `donor_campaigns` | id, tenant_id, name, target_idr, starts_at, ends_at | FK |
+| `donations` | id, tenant_id, donor_id, campaign_id, amount_idr, restricted_purpose_id, received_at, journal_id | FK finance_journals |
+| `fund_instruments` | id, tenant_id, instrument_type_id, principal_idr, rate_bp, compounding_id, start_date, maturity_date | FK |
+| `fund_yields` | id, tenant_id, instrument_id, period_month, realized_idr, journal_id | append-only |
+| `fund_allocation_rules` | id, tenant_id, target_module_id, percent_bp, effective_from | berversi |
+| `fund_allocations` | id, tenant_id, yield_id, rule_id, amount_idr, target_ref_id, status_id | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `endowment.spend_rate_max_bp` (int, default `500`) — batas belanja tahunan (bp)
+
+Kategori lookup dinamis (`lookup_categories.code`): `instrument_type`, `compounding`, `restricted_purpose`, `allocation_target`
+
+#### 15.6.48 APP — SuperApp Mobile (entitlement `mobile_superapp`)
+
+| Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
+|---|---|---|
+| `devices` | id, tenant_id, user_id, device_id_hash, platform_id, public_key, bound_at, revoked_at | FK; satu perangkat aktif per user (parameter) |
+| `sync_cursors` | id, tenant_id, device_id, stream, server_seq | FK |
+| `push_tokens` | id, tenant_id, device_id, token_enc, provider_id | FK |
+
+Parameter (`system_parameters`, CRUD + versi): `mobile.max_devices_per_user` (int, default `1`) — binding perangkat; `mobile.offline_checkin_max_minutes` (int, default `15`) — batas tunda check-in offline; `mobile.min_app_version` (string, default `1.0.0`) — versi minimum (X-App-Version)
+
+Kategori lookup dinamis (`lookup_categories.code`): `device_platform`, `push_provider`
+
+
+### 15.7 Retensi & Imutabilitas Tambahan
+
+| Data | Aturan |
+|---|---|
+| `audit_logs`, `xapi_statements`, `*_logbooks`, `*_events`, `wallet_ledger`, `finance_journal*`, `fund_yields`, `asset_depreciations` | append-only; `sica_app` tanpa `UPDATE/DELETE` |
+| `medical_records` | retensi ≥ 25 tahun (parameter `clinic.record_retention_years`, Permenkes 24/2022); koreksi = versi baru |
+| `ppks_*` | ciphertext; retensi sesuai pedoman Satgas (parameter); tidak ikut ekspor umum |
+| `graduation_records`, `diplomas`, `skpi_documents` | permanen (BR-R12) |
+| `crm_leads` tanpa konversi | anonimisasi setelah `crm.lead_retention_days` (parameter, default 730) — UU PDP prinsip pembatasan penyimpanan |
+
+<!-- SICA-47:END enterprise-47 -->

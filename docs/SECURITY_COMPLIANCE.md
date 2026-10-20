@@ -424,3 +424,272 @@ Suite pengujian otomatis mencakup skenario keamanan berikut pada setiap rilis:
 - Uji pemblokiran bypass gerbang keuangan dan cekal administrasi.
 - Uji penolakan modifikasi rekaman audit dari peran aplikasi.
 - Uji sanitasi formula Excel/CSV untuk mencegah *Formula Injection*.
+
+---
+
+<!-- SICA-47:BEGIN enterprise-47 -->
+
+## 10. Otorisasi Granular Enterprise: 11 Aksi × Role × Modul × Parameter (dikunci 2026-10-20)
+
+### 10.1 Ontologi Aksi
+
+Model penyimpanan tetap memakai 6 verb kanonik ([RBAC_MATRIX.md §1.2](file:///c:/SICA/docs/RBAC_MATRIX.md)) agar kompatibel dengan migrasi/kode yang ada; **aksi bisnis** yang terlihat di UI/API dipetakan sebagai berikut (kategori lookup sistem `permission_action`):
+
+| Aksi bisnis | Verb kanonik | Bit mask | Contoh permission |
+|---|---|---|---|
+| CREATE | INSERT | 0 | `pmb.applicants.create` |
+| READ | READ | 1 | `grading.values.read` |
+| UPDATE | UPDATE | 2 | `bkd.activities.update` |
+| DELETE | DELETE | 3 | `admin.lookup_values.delete` |
+| APPROVE | VALIDATE | 4 | `enrollment.krs.approve` |
+| REJECT | VALIDATE | 5 | `enrollment.krs.reject` |
+| EXPORT | OTHER | 6 | `finance.reports.export` |
+| LOCK | OTHER | 7 | `grading.classes.lock` |
+| UNLOCK | OTHER | 8 | `grading.unlock` |
+| PARAM_EDIT | OTHER | 9 | `attendance.parameters.param_edit` |
+| TOGGLE_ACTIVE | OTHER | 10 | `admin.lookup_values.toggle_active` |
+
+`role_permissions.action_mask` (bigint) menyimpan bit di atas per resource; cek izin = `(mask >> bit) & 1` (M-03, O(1)) setelah resolusi scope. Tujuh permission terkunci di RBAC_MATRIX §4 tetap berlaku dengan nama yang sama.
+
+### 10.2 Lapisan Keputusan
+
+JWT valid → tenant aktif → membership aktif → **entitlement modul aktif** → bit aksi pada resource → scope (tenant/org/fakultas/prodi/kelas/periode/self) → **parameter restriction** (untuk `PARAM_EDIT`: kunci & rentang nilai yang boleh diubah role) → aturan bisnis/SoD → gate (hold keuangan, periode terkunci). Penolakan di lapis mana pun = deny, dicatat `security_violations` bila pola mencurigakan.
+
+### 10.3 Pemisahan Tugas (SoD) & Empat-Mata
+
+| Aksi | Aturan |
+|---|---|
+| `APPROVE`/`REJECT` apa pun | penyetuju ≠ pembuat/pemohon (`FOUR_EYES_REQUIRED`) |
+| `UNLOCK` nilai (M-19), periode keuangan (M-10), payroll (M-06), kurikulum (M-12) | wajib penyetuju kedua dengan role berbeda |
+| Perubahan RBAC (M-03) | `access_change_requests` empat-mata; tidak boleh memberi izin kepada diri sendiri |
+| `PARAM_EDIT` parameter ber-flag `four_eyes` atau `is_regulatory_locked` | empat-mata + alasan; regulatory floor tidak dapat dilanggar |
+| PBJ (M-46) | panitia ≠ PPK ≠ penerima barang |
+| Asesor BKD, auditor AMI, penguji TA | tidak menilai diri/unit sendiri/mahasiswa bimbingannya |
+| Hibah (M-44) | reviewer tidak melihat identitas pengusul; pengusul tidak dapat menjadi reviewer skema yang sama |
+
+
+### 10.4 Matriks Aksi Granular Role × Modul (11 aksi)
+
+Legenda: ✓ = diizinkan (dengan scope assignment), kosong = ditolak (deny-by-default). Kolom: C=CREATE, R=READ, U=UPDATE, D=DELETE, A=APPROVE, J=REJECT, X=EXPORT, L=LOCK, K=UNLOCK, P=PARAM_EDIT, T=TOGGLE_ACTIVE.
+
+| Modul | Role | C | R | U | D | A | J | X | L | K | P | T |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| M-01 SaaS Foundation | `PLATFORM_OPERATOR` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-01 SaaS Foundation | `COMPLIANCE_OFFICER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-01 SaaS Foundation | `TENANT_ADMIN` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-02 Master Parameter | `TENANT_ADMIN` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ | ✓ |
+| M-02 Master Parameter | `IT_ADMIN` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ | ✓ |
+| M-02 Master Parameter | `COMPLIANCE_OFFICER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-02 Master Parameter | `ADMIN_ACADEMIC` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-03 Hak Akses & RBAC | `TENANT_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-03 Hak Akses & RBAC | `IT_ADMIN` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  |  | ✓ |
+| M-03 Hak Akses & RBAC | `COMPLIANCE_OFFICER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-04 IT Helpdesk | `IT_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-04 IT Helpdesk | `ALL_USERS` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-04 IT Helpdesk | `TENANT_ADMIN` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-05 Keamanan & Audit | `COMPLIANCE_OFFICER` |  | ✓ |  |  | ✓ | ✓ | ✓ |  |  | ✓ |  |
+| M-05 Keamanan & Audit | `IT_ADMIN` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-05 Keamanan & Audit | `TENANT_ADMIN` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-05 Keamanan & Audit | `PLATFORM_OPERATOR` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-06 HRIS & Payroll | `HR_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-06 HRIS & Payroll | `ADMIN_FINANCE` |  | ✓ |  |  | ✓ | ✓ | ✓ | ✓ |  |  |  |
+| M-06 HRIS & Payroll | `TREASURER` |  | ✓ |  |  | ✓ |  | ✓ |  |  |  |  |
+| M-06 HRIS & Payroll | `LECTURER` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-06 HRIS & Payroll | `EMPLOYEE` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-06 HRIS & Payroll | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-07 BKD Dosen | `LECTURER` | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  |  |  |
+| M-07 BKD Dosen | `HEAD_OF_PROGRAM` |  | ✓ |  |  | ✓ | ✓ | ✓ |  |  |  |  |
+| M-07 BKD Dosen | `BKD_ASSESSOR` |  | ✓ |  |  | ✓ | ✓ | ✓ |  |  |  |  |
+| M-07 BKD Dosen | `HR_BKD_OFFICER` |  | ✓ |  |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-07 BKD Dosen | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-07 BKD Dosen | `DEAN` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-08 SISTER Sync | `LECTURER` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-08 SISTER Sync | `HR_BKD_OFFICER` | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ | ✓ |
+| M-08 SISTER Sync | `TENANT_ADMIN` |  | ✓ |  |  |  |  |  |  |  | ✓ |  |
+| M-09 PMB & OCR | `PMB_OPERATOR` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-09 PMB & OCR | `APPLICANT` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-09 PMB & OCR | `ADMIN_FINANCE` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-09 PMB & OCR | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-09 PMB & OCR | `MARKETING_PMB` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-10 Keuangan & Billing | `ADMIN_FINANCE` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ |
+| M-10 Keuangan & Billing | `TREASURER` |  | ✓ |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |
+| M-10 Keuangan & Billing | `STUDENT` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-10 Keuangan & Billing | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-10 Keuangan & Billing | `COMPLIANCE_OFFICER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-10 Keuangan & Billing | `PROCUREMENT_COMMITTEE` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-11 KIP-K & Beasiswa | `SCHOLARSHIP_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-11 KIP-K & Beasiswa | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-11 KIP-K & Beasiswa | `ADMIN_FINANCE` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-11 KIP-K & Beasiswa | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-12 Kurikulum OBE | `HEAD_OF_PROGRAM` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ |
+| M-12 Kurikulum OBE | `DEAN` |  | ✓ |  |  | ✓ | ✓ | ✓ |  | ✓ |  |  |
+| M-12 Kurikulum OBE | `LECTURER` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-12 Kurikulum OBE | `ADMIN_ACADEMIC` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-12 Kurikulum OBE | `QUALITY_OFFICER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-13 KRS Online & Perwalian | `ADVISER` |  | ✓ | ✓ |  | ✓ | ✓ | ✓ |  |  |  |  |
+| M-13 KRS Online & Perwalian | `STUDENT` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-13 KRS Online & Perwalian | `ADMIN_ACADEMIC` |  | ✓ | ✓ |  |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-13 KRS Online & Perwalian | `HEAD_OF_PROGRAM` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-13 KRS Online & Perwalian | `LECTURER` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-13 KRS Online & Perwalian | `DEAN` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-14 Jadwal & Ruang | `SCHEDULER` | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-14 Jadwal & Ruang | `LAB_STAFF` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-14 Jadwal & Ruang | `ADMIN_ACADEMIC` |  | ✓ |  |  | ✓ |  | ✓ |  |  |  |  |
+| M-14 Jadwal & Ruang | `LECTURER` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-14 Jadwal & Ruang | `STUDENT` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-14 Jadwal & Ruang | `HEAD_OF_PROGRAM` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-15 Moda Perkuliahan | `ADMIN_ACADEMIC` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-15 Moda Perkuliahan | `LECTURER` |  | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-15 Moda Perkuliahan | `STUDENT` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-15 Moda Perkuliahan | `SCHEDULER` |  | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-16 LMS Digital | `LECTURER` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ | ✓ |
+| M-16 LMS Digital | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-16 LMS Digital | `ADMIN_ACADEMIC` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-16 LMS Digital | `COORDINATOR` | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  |  |  |
+| M-17 Ujian & Proctoring | `INVIGILATOR` |  | ✓ | ✓ |  | ✓ | ✓ |  | ✓ | ✓ |  |  |
+| M-17 Ujian & Proctoring | `LECTURER` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-17 Ujian & Proctoring | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-17 Ujian & Proctoring | `ADMIN_ACADEMIC` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-18 Presensi Smart | `LECTURER` | ✓ | ✓ | ✓ |  | ✓ | ✓ | ✓ | ✓ |  |  |  |
+| M-18 Presensi Smart | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-18 Presensi Smart | `ADMIN_ACADEMIC` |  | ✓ | ✓ |  |  |  | ✓ |  | ✓ | ✓ | ✓ |
+| M-18 Presensi Smart | `ADVISER` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-19 Nilai & KHS | `LECTURER` | ✓ | ✓ | ✓ |  |  |  | ✓ | ✓ |  |  |  |
+| M-19 Nilai & KHS | `HEAD_OF_PROGRAM` |  | ✓ |  |  | ✓ | ✓ | ✓ |  | ✓ |  |  |
+| M-19 Nilai & KHS | `STUDENT` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-19 Nilai & KHS | `ADMIN_ACADEMIC` |  | ✓ |  |  |  |  | ✓ |  |  | ✓ | ✓ |
+| M-19 Nilai & KHS | `DEAN` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-20 Tugas Akhir & RAMA | `STUDENT` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-20 Tugas Akhir & RAMA | `THESIS_SUPERVISOR` |  | ✓ | ✓ |  | ✓ | ✓ |  |  |  |  |  |
+| M-20 Tugas Akhir & RAMA | `EXAMINER` |  | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-20 Tugas Akhir & RAMA | `HEAD_OF_PROGRAM` | ✓ | ✓ | ✓ |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-20 Tugas Akhir & RAMA | `LIBRARIAN` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-20 Tugas Akhir & RAMA | `DEAN` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-21 Jurnal & OJS | `JOURNAL_MANAGER` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-21 Jurnal & OJS | `LECTURER` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-21 Jurnal & OJS | `LPPM_ADMIN` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-22 Inkubator & HAKI | `IPR_MANAGER` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-22 Inkubator & HAKI | `LECTURER` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-22 Inkubator & HAKI | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-22 Inkubator & HAKI | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-23 Wisuda & Toga | `GRADUATION_COMMITTEE` | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-23 Wisuda & Toga | `STUDENT` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-23 Wisuda & Toga | `ADMIN_ACADEMIC` |  | ✓ |  |  | ✓ |  | ✓ |  |  |  |  |
+| M-24 Kemahasiswaan & SKKM | `STUDENT_AFFAIRS_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-24 Kemahasiswaan & SKKM | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-24 Kemahasiswaan & SKKM | `ADVISER` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-24 Kemahasiswaan & SKKM | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-25 KKN, PKL & Magang | `STUDENT` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-25 KKN, PKL & Magang | `FIELD_SUPERVISOR` |  | ✓ | ✓ |  | ✓ | ✓ |  | ✓ |  |  |  |
+| M-25 KKN, PKL & Magang | `PARTNER_MENTOR` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-25 KKN, PKL & Magang | `LPPM_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-25 KKN, PKL & Magang | `HEAD_OF_PROGRAM` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-25 KKN, PKL & Magang | `DEAN` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-26 Simulasi Lulus | `STUDENT` | ✓ | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-26 Simulasi Lulus | `ADVISER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-26 Simulasi Lulus | `HEAD_OF_PROGRAM` |  | ✓ |  |  |  |  | ✓ |  |  | ✓ |  |
+| M-27 Tracer Study | `ALUMNI_ADMIN` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ | ✓ |
+| M-27 Tracer Study | `ALUMNI` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-27 Tracer Study | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-27 Tracer Study | `QUALITY_OFFICER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-27 Tracer Study | `STUDENT` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-28 Career Center | `CAREER_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-28 Career Center | `EMPLOYER` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-28 Career Center | `ALUMNI` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-28 Career Center | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-29 KUI & Mobilitas | `INTL_OFFICE_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-29 KUI & Mobilitas | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-29 KUI & Mobilitas | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-29 KUI & Mobilitas | `HEAD_OF_PROGRAM` |  | ✓ |  |  | ✓ | ✓ |  |  |  |  |  |
+| M-30 Yudisium & SKPI | `ADMIN_ACADEMIC` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-30 Yudisium & SKPI | `DEAN` |  | ✓ |  |  | ✓ | ✓ | ✓ |  |  |  |  |
+| M-30 Yudisium & SKPI | `STUDENT` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-30 Yudisium & SKPI | `UNIT_CLEARANCE_OFFICER` |  | ✓ |  |  | ✓ | ✓ |  |  |  |  |  |
+| M-30 Yudisium & SKPI | `LIBRARIAN` |  | ✓ |  |  | ✓ | ✓ |  |  |  |  |  |
+| M-31 Akreditasi LKPS | `HEAD_OF_PROGRAM` | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  |  |  |
+| M-31 Akreditasi LKPS | `DEAN` |  | ✓ |  |  | ✓ |  | ✓ |  |  |  |  |
+| M-31 Akreditasi LKPS | `QUALITY_OFFICER` | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-31 Akreditasi LKPS | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-32 Dashboard IKU | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  | ✓ |  |
+| M-32 Dashboard IKU | `DEAN` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-32 Dashboard IKU | `QUALITY_OFFICER` | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  | ✓ | ✓ |
+| M-33 Jadwal Darurat | `SCHEDULER` | ✓ | ✓ | ✓ |  | ✓ |  | ✓ | ✓ | ✓ |  |  |
+| M-33 Jadwal Darurat | `SARPRAS_ADMIN` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-33 Jadwal Darurat | `ADMIN_ACADEMIC` |  | ✓ |  |  | ✓ |  |  |  |  |  |  |
+| M-34 Feeder PDDikti | `FEEDER_OPERATOR` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-34 Feeder PDDikti | `IT_ADMIN` |  | ✓ |  |  |  |  | ✓ |  |  | ✓ |  |
+| M-34 Feeder PDDikti | `ADMIN_ACADEMIC` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-35 PIN & SIVIL | `ADMIN_ACADEMIC` | ✓ | ✓ | ✓ |  | ✓ |  | ✓ | ✓ |  | ✓ |  |
+| M-35 PIN & SIVIL | `FEEDER_OPERATOR` | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  |  |  |
+| M-35 PIN & SIVIL | `PUBLIC` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-35 PIN & SIVIL | `LEADER` |  |  |  |  | ✓ |  |  |  |  |  |  |
+| M-35 PIN & SIVIL | `IT_ADMIN` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-36 Portal PPKS | `PPKS_TASKFORCE` | ✓ | ✓ | ✓ |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
+| M-36 Portal PPKS | `PPKS_REPORTER` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-36 Portal PPKS | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-37 SPMI & Quality | `QUALITY_OFFICER` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-37 SPMI & Quality | `INTERNAL_AUDITOR` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-37 SPMI & Quality | `HEAD_OF_PROGRAM` |  | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-37 SPMI & Quality | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-37 SPMI & Quality | `DEAN` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-38 Kampus Merdeka / MBKM | `HEAD_OF_PROGRAM` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-38 Kampus Merdeka / MBKM | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-38 Kampus Merdeka / MBKM | `MBKM_SUPERVISOR` |  | ✓ | ✓ |  | ✓ |  |  |  |  |  |  |
+| M-38 Kampus Merdeka / MBKM | `DEAN` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-39 e-Library | `LIBRARIAN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-39 e-Library | `STUDENT` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-39 e-Library | `LECTURER` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-40 Aset & Inventaris | `ASSET_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-40 Aset & Inventaris | `IT_ADMIN` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-40 Aset & Inventaris | `ADMIN_FINANCE` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-40 Aset & Inventaris | `SARPRAS_ADMIN` | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  |  |  |
+| M-41 Klinik Kampus | `CLINIC_DOCTOR` | ✓ | ✓ | ✓ |  |  |  | ✓ |  | ✓ |  |  |
+| M-41 Klinik Kampus | `COUNSELOR` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-41 Klinik Kampus | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-42 Asrama & Kantin | `DORM_MANAGER` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-42 Asrama & Kantin | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-42 Asrama & Kantin | `ADMIN_FINANCE` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-43 Humas & Event | `PR_EVENT_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-43 Humas & Event | `EVENT_PARTICIPANT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-43 Humas & Event | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-44 SIM-LPPM / LITABMAS | `LECTURER` | ✓ | ✓ | ✓ |  |  |  | ✓ |  |  |  |  |
+| M-44 SIM-LPPM / LITABMAS | `GRANT_REVIEWER` |  | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-44 SIM-LPPM / LITABMAS | `LPPM_ADMIN` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| M-44 SIM-LPPM / LITABMAS | `ADMIN_FINANCE` |  | ✓ |  |  | ✓ | ✓ | ✓ |  |  |  |  |
+| M-44 SIM-LPPM / LITABMAS | `LEADER` |  | ✓ |  |  | ✓ |  | ✓ |  |  |  |  |
+| M-44 SIM-LPPM / LITABMAS | `HEAD_OF_PROGRAM` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-44 SIM-LPPM / LITABMAS | `DEAN` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-45 CRM PMB & Marketing | `MARKETING_PMB` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |
+| M-45 CRM PMB & Marketing | `PMB_AGENT` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-45 CRM PMB & Marketing | `SCHOOL_COUNSELOR` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-45 CRM PMB & Marketing | `LEADER` |  | ✓ |  |  |  |  | ✓ |  |  |  |  |
+| M-45 CRM PMB & Marketing | `PMB_OPERATOR` |  | ✓ |  |  |  |  |  |  |  |  |  |
+| M-46 E-Procurement PBJ | `PROCUREMENT_COMMITTEE` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ | ✓ |
+| M-46 E-Procurement PBJ | `PPK_OFFICER` |  | ✓ |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |
+| M-46 E-Procurement PBJ | `VENDOR` | ✓ | ✓ | ✓ |  |  |  |  |  |  |  |  |
+| M-46 E-Procurement PBJ | `ADMIN_FINANCE` |  | ✓ |  |  | ✓ |  | ✓ |  |  |  |  |
+| M-46 E-Procurement PBJ | `SARPRAS_ADMIN` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-47 Endowment Fund | `ENDOWMENT_MANAGER` | ✓ | ✓ | ✓ | ✓ |  |  | ✓ |  |  | ✓ | ✓ |
+| M-47 Endowment Fund | `DONOR` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| M-47 Endowment Fund | `ADMIN_FINANCE` |  | ✓ |  |  | ✓ | ✓ | ✓ |  |  |  |  |
+| M-47 Endowment Fund | `LEADER` |  | ✓ |  |  | ✓ | ✓ | ✓ |  |  |  |  |
+| M-47 Endowment Fund | `TREASURER` |  | ✓ |  |  | ✓ |  |  |  |  |  |  |
+| APP SuperApp Mobile | `STUDENT` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| APP SuperApp Mobile | `LECTURER` | ✓ | ✓ |  |  |  |  |  |  |  |  |  |
+| APP SuperApp Mobile | `IT_ADMIN` |  | ✓ |  |  |  |  |  | ✓ | ✓ | ✓ | ✓ |
+
+### 10.5 Vault Data Spesifik (UU PDP Ps. 4)
+
+| Data | Modul | Kontrol |
+|---|---|---|
+| Laporan kekerasan | M-36 | enkripsi sisi klien AES-256-GCM + X25519; server zero-knowledge; hanya `PPKS_TASKFORCE`; akses tercatat |
+| Rekam medis & catatan konseling | M-41 | envelope encryption (DEK per record, KEK di KMS); `vault_row` RLS; break-glass `UNLOCK` ber-audit + notifikasi DPO |
+| Biometrik wajah | M-17 | diproses di perangkat (WASM), tidak ada template di server; persetujuan eksplisit `biometric_consents`; DPIA wajib; alternatif non-biometrik |
+| Lokasi GPS | M-18, M-25, APP | hanya saat check-in/logbook; tidak ada pelacakan latar; retensi parameter |
+| Data donatur, lead, vendor | M-47, M-45, M-46 | kolom `_enc` + `_hash`; consent pemasaran; masking default |
+
+### 10.6 Kebijakan Zero Paid API Key & Rantai Pasok
+
+Engine algoritma/AI hanya memakai pustaka open-source yang di-vendor/di-pin (tesseract, OpenCV/MediaPipe WASM, solver internal) dan dipindai SCA (§9). Bobot model dilatih dari data tenant sendiri dan tidak pernah dikirim keluar. Integrasi eksternal non-AI mengikuti [INTEGRATIONS.md §5.1](file:///c:/SICA/docs/INTEGRATIONS.md).
+
+<!-- SICA-47:END enterprise-47 -->

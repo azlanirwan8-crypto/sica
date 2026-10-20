@@ -117,3 +117,8 @@ Jika Anda perlu mengubah tipe kolom yang sudah memiliki jutaan data produksi (mi
 1. Seluruh migrasi database harus menyertakan file pendamping rollback jika terjadi kegagalan (`YYYYMMDDHHMMSS_nama_perubahan.rollback.sql`).
 2. Jangan pernah melakukan rollback manual di tengah jam sibuk KRS tanpa koordinasi dengan Tim SRE / Database Administrator.
 3. Selalu periksa snapshot point-in-time recovery (PITR) PostgreSQL sebelum mengeksekusi migrasi skala besar (perubahan > 100.000 baris data).
+
+## 5. Aturan Tambahan Enterprise (2026-10-20)
+
+- Migrasi baru dilarang membuat `ENUM`/`CHECK IN (...)` untuk nilai bisnis (DATA_MODEL §15.1); konversi enum lama mengikuti R1.0.1 dengan pola expand-contract §3.
+- Satu tabel = satu `CREATE TABLE` di seluruh dokumen dan migrasi; perluasan tabel yang sudah ada (ditandai di DATA_MODEL §15.6) memakai `ALTER TABLE ... ADD COLUMN`.

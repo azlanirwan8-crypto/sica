@@ -236,3 +236,7 @@ Seluruh 50 mahasiswa berstatus **AKTIF** pada semester berjalan dan telah terdaf
 | 48 | `230604003` | **Uus Rizki** | 3 | 2.65 | Wahyu Hidayat, M.Ak. |
 | 49 | `240604001` | **Vanesha Prescilla** | 1 | 0.00 | Siti Farida, M.Si. |
 | 50 | `240604002` | **Wika Salim** | 1 | 0.00 | Wahyu Hidayat, M.Ak. |
+
+## 8. Seed Enterprise 47 Modul (2026-10-20)
+
+Seed tambahan dibangkitkan dari sumber tunggal (tidak didaftar ulang di sini): kategori & nilai lookup per modul ([DATA_MODEL §15.6](file:///c:/SICA/docs/DATA_MODEL.md), kode identik dengan enum lama — R1.0.1), parameter default + `regulatory_floor` (DATA_MODEL §15.6), role baru ([RBAC_MATRIX §12.1](file:///c:/SICA/docs/RBAC_MATRIX.md)), `role_permissions` dari [SECURITY_COMPLIANCE §10.4](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md), 6 `dashboard_profiles` ([PRD §10.3](file:///c:/SICA/docs/PRD.md)), dan data skenario S-1…S-6.

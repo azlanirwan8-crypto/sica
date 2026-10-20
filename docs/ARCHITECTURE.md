@@ -109,7 +109,7 @@ Kalau `COMMIT` gagal, tidak ada audit yang tertinggal sendirian dan tidak ada no
 | Cache/queue | Redis + BullMQ | 7 / 5.x | token bucket Lua atomic, delay job, retry/backoff |
 | Storage | S3-compatible (R2/MinIO) | — | presigned PUT/GET, versioning, lifecycle |
 | Search | Postgres FTS → OpenSearch | — | mulai dari yang cukup; `pg_trgm` untuk cari nama/NIM |
-| Auth primitives | `argon2` (Argon2id) + `jose` (JWT EdDSA) + TOTP/WebAuthn | — | hashing & token standar, tanpa vendor lock |
+| Auth primitives | `argon2` (Argon2id) + `jose` (JWT RS256 — ARC-01) + TOTP/WebAuthn | — | hashing & token standar, tanpa vendor lock |
 | Observability | OpenTelemetry + Grafana LGTM + Sentry + Pino | — | trace per request/tenant; error dengan konteks |
 | Testing | Vitest · Testcontainers · Playwright · k6 · fast-check | — | DB asli, bukan mock; uji properti untuk perhitungan IP |
 | CI/CD | GitHub Actions + Docker + Terraform | — | gate migration & RLS-policy test sebelum deploy |
@@ -420,3 +420,283 @@ worker = new Worker('krs.enroll', processor, {
 - **DLQ + alert**: job gagal → Sentry + notifikasi operator; **reconcile job** periodik memastikan `enrolled_count` DB == jumlah enrollment `EFFECTIVE` (proyeksi konsisten, PRD §2 "kelas hantu").
 - **Graceful drain**: saat scale-down, worker selesai-kan job aktif sebelum mati (SIGTERM → `worker.close()`).
 - Observability: metrik `queue.wait_time`, `queue.depth`, `seat_contention`, `db_txn_p95` di Grafana; ambang → trigger HPA worker.
+
+---
+
+<!-- SICA-47:BEGIN enterprise-47 -->
+
+## 11. Arsitektur Enterprise 47 Modul: Single Source of Truth & Real-Time (dikunci 2026-10-20)
+
+### 11.1 Prinsip Mengikat
+
+1. **Single Source of Truth (SSOT).** Setiap entitas punya **satu modul pemilik** (tabel §11.3). Modul lain hanya membaca (query read-only/read-model) atau bereaksi terhadap event; **dilarang** menulis langsung ke tabel modul lain dan **dilarang** menyalin data master sebagai input manual (zero re-entry).
+2. **Event-driven.** Setiap perubahan state bisnis yang relevan lintas modul ditulis bersama baris `outbox` dalam **transaksi yang sama** (ADR-7). Tidak ada "dual write" ke queue.
+3. **Parameterisasi penuh.** Aturan operasional dibaca dari `system_parameters`/`lookup_values` (DATA_MODEL §15.1–15.2) melalui *Rule Parameter Resolver* (cache Redis, invalidasi via event `parameter.versioned`).
+4. **Engine lokal.** Seluruh algoritma/AI berjalan di proses `api`/`worker`/WASM klien (§11.4). Tidak ada dependensi API AI/cloud berbayar. Integrasi eksternal non-AI (PDDikti, SISTER, payment VA, pesan, TTE) tetap memakai kredensial resmi tenant ([INTEGRATIONS.md §5](file:///c:/SICA/docs/INTEGRATIONS.md)).
+5. **Modular monolith tetap (ADR-1).** 47 modul = 47 folder modul di `apps/web/src/modules/<entitlement>/<modul>` + konsumen di `apps/worker`; batas ditegakkan lint import (`no-restricted-imports` lintas modul kecuali `contracts`).
+
+### 11.2 Topologi Real-Time
+
+```
+[UI Web/Mobile] --REST--> [api (Next.js route handlers)] --tx--> PostgreSQL (data + outbox)
+                                                                    |
+                                       [outbox-relay (worker, LISTEN/NOTIFY + polling 1s)]
+                                                                    |
+                                     Redis Streams `sica:events:<tenant>` (consumer group per modul)
+                                     |                       |                          |
+                         [konsumen modul (BullMQ)]  [read-model IKU/LKPS/Feeder]  [realtime-gateway (Node ws, stateful)]
+                                                                                        |
+                                                              WebSocket `wss://<host>/realtime` → UI (invalidate & refetch)
+```
+
+| Aspek | Keputusan |
+|---|---|
+| Transport UI | WebSocket di layanan **`apps/realtime`** (Node, `ws`) karena route handler serverless/Vercel tidak memegang koneksi panjang; fallback SSE `/api/v1/realtime/sse` |
+| Autentikasi WS | JWT RS256 akses (sama dengan REST) di pesan pertama `auth`; re-auth saat token dirotasi; koneksi ditutup saat sesi dicabut (Redis revocation) |
+| Topik | `tenant:{tid}:{entitlement}` (modul), `tenant:{tid}:user:{uid}` (personal), `tenant:{tid}:class:{classId}` (kelas), `tenant:{tid}:session:{attendanceSessionId}` (QR proyektor) |
+| Otorisasi topik | gateway memeriksa izin READ efektif + scope saat `subscribe`; event difilter ulang per penerima (tidak mengirim PII) |
+| Payload | **invalidation-only**: `{eventId, type, version, tenantId, aggregate, aggregateId, aggregateSeq, occurredAt, changed:[field]}` — klien me-refetch lewat REST (izin & masking tetap ditegakkan REST) |
+| Urutan | per agregat via `aggregateSeq` monoton; klien mengabaikan seq ≤ terakhir |
+| Dedupe | konsumen menyimpan `processed_events(consumer, event_id)` (UNIQUE) — at-least-once + idempoten |
+| Retry & DLQ | backoff eksponensial (maks parameter `events.retry_max`, default 10) → `dead_letter_events`; dasbor M-05/M-04 menampilkan DLQ; replay manual ber-audit |
+| Replay | konsumen baru/pulih membaca ulang dari `outbox` berdasarkan cursor; read-model dapat dibangun ulang penuh (rekalkulasi harian M-32/M-31) |
+| Rekonsiliasi | job harian membandingkan read-model vs sumber (hash agregat); selisih → alert + rebuild |
+| Kapasitas | gateway horizontal (sticky tidak wajib; fan-out via Redis pub/sub); target 1.000+ koneksi/instans (§9) |
+| QR presensi 5 s | token TOTP dihitung **di klien proyektor** dari secret sesi yang diambil sekali via REST; WS hanya untuk status sesi & daftar hadir live — tidak ada push tiap 5 s dari server |
+
+Contoh propagasi: Dosen membuka presensi (M-18) → `attendance.session.opened` → topik `class:{id}` → kartu Presensi di dashboard mahasiswa kelas itu berubah menjadi "Check-in tersedia" tanpa reload; Pustakawan memberi bebas pustaka (M-39) → `library.clearance.granted` → DFA M-30 bertransisi → BAAK melihat mahasiswa pindah ke "Layak Yudisium" & mahasiswa menerima notifikasi.
+
+
+### 11.3 Batas Modul (Bounded Context), Kepemilikan Data & Event
+
+| Kode | Modul | Entitlement | Tabel milik modul (hanya modul ini yang menulis) | Event dipublikasikan | Event dikonsumsi |
+|---|---|---|---|---|---|
+| M-01 | SaaS Foundation | `platform_saas` | `tenants`, `subscriptions`, `sla_policies`, `sla_measurements`, `tenant_shard_map` | `tenant.provisioned`, `tenant.suspended`, `sla.breached` | `*.audit.appended` |
+| M-02 | Master Parameter | `identity` | `lookup_categories`, `lookup_values`, `system_parameters`, `parameter_definitions`, `eav_attributes`, `eav_values`, `nim_sequences` | `parameter.versioned`, `lookup.changed`, `nim.generated`, `academic.student.activated`, `academic.student.status_changed` | `pmb.registration.completed`, `finance.invoice.paid` |
+| M-03 | Hak Akses & RBAC | `identity` | `roles`, `permissions`, `role_permissions`, `user_role_assignments`, `parameter_restrictions`, `rls_policy_map`, `access_change_requests` | `rbac.assignment.changed`, `rbac.role.changed` | `hr.employee.terminated`, `academic.student.status_changed` |
+| M-04 | IT Helpdesk | `helpdesk` | `helpdesk_tickets`, `helpdesk_ticket_events`, `helpdesk_sla_rules` | `helpdesk.ticket.created`, `helpdesk.ticket.escalated`, `helpdesk.sla.breached` | `sla.breached`, `security.violation.detected` |
+| M-05 | Keamanan & Audit | `audit` | `audit_logs`, `audit_anchors`, `pii_masking_rules`, `security_violations`, `data_subject_requests` | `security.violation.detected`, `audit.chain.broken`, `pdp.dsr.due` | `*.* (semua event domain via outbox)` |
+| M-06 | HRIS & Payroll | `hr_bkd` | `lecturers`, `staff`, `leave_requests`, `employee_attendance`, `kpi_scorecards`, `payroll_runs`, `payroll_lines`, `tax_brackets`, `ptkp_rates` | `hr.employee.hired`, `hr.employee.terminated`, `hr.payroll.locked`, `hr.leave.approved` | `bkd.report.approved`, `attendance.lecturer.session_closed` |
+| M-07 | BKD Dosen | `hr_bkd` | `bkd_periods`, `bkd_activities`, `bkd_assessments`, `ewmp_rubrics` | `bkd.activity.recorded`, `bkd.report.approved` | `attendance.lecturer.session_closed`, `lppm.output.validated`, `journal.article.published`, `ipr.granted`, `thesis.supervision.logged` |
+| M-08 | SISTER Sync | `hr_bkd` | `sister_mappings`, `sister_sync_items`, `sister_sync_runs` | `sister.item.pushed`, `sister.item.failed` | `bkd.report.approved`, `lppm.output.validated`, `hr.employee.hired` |
+| M-09 | PMB & OCR | `pmb` | `pmb_periods`, `pmb_tracks`, `form_schemas`, `pmb_applicants`, `pmb_documents`, `cbt_question_banks`, `cbt_questions`, `cbt_sessions`, `pmb_selection_results` | `pmb.applicant.submitted`, `pmb.selection.decided`, `pmb.registration.completed` | `crm.lead.converted`, `finance.invoice.paid` |
+| M-10 | Keuangan & Billing | `finance` | `fee_components`, `tariff_rules`, `invoices`, `invoice_items`, `payments`, `finance_journals`, `finance_journal_lines`, `budget_lines`, `blockades` | `finance.invoice.issued`, `finance.invoice.paid`, `finance.hold.changed`, `finance.journal.posted`, `finance.budget.committed` | `pmb.selection.decided`, `enrollment.krs.approved`, `scholarship.award.approved`, `procurement.po.approved`, `lppm.disbursement.approved`, `hr.payroll.locked`, `endowment.yield.posted` |
+| M-11 | KIP-K & Beasiswa | `scholarship` | `scholarship_programs`, `scholarship_applications`, `scholarship_awards`, `scholarship_monitoring`, `allowance_disbursements` | `scholarship.award.approved`, `scholarship.award.frozen` | `grading.khs.published`, `endowment.allocation.approved` |
+| M-12 | Kurikulum OBE | `academic` | `curricula`, `graduate_profiles`, `plos`, `courses`, `course_prerequisites`, `clos`, `clo_plo_maps`, `rps_documents`, `obe_rubrics`, `plo_attainments`, `rpl_conversions` | `curriculum.locked`, `rps.approved`, `obe.plo.computed`, `rpl.conversion.approved` | `grading.khs.published` |
+| M-13 | KRS Online & Perwalian | `enrollment` | `advising_sessions`, `advising_logs`, `krs_headers`, `enrollments`, `krs_war_windows`, `academic_rules` | `enrollment.seat.reserved`, `enrollment.krs.submitted`, `enrollment.krs.approved`, `enrollment.krs.rejected` | `finance.hold.changed`, `academic.student.activated`, `schedule.published` |
+| M-14 | Jadwal & Ruang | `scheduling` | `rooms`, `time_slots`, `schedule_constraints`, `schedule_runs`, `class_schedules`, `room_bookings` | `schedule.published`, `schedule.meeting.changed` | `enrollment.krs.approved`, `emergency.room.locked_out` |
+| M-15 | Moda Perkuliahan | `teaching` | `learning_modes`, `class_sessions`, `online_meetings`, `shift_allocations`, `reconciliation_rules` | `teaching.session.mode_changed`, `teaching.session.closed` | `schedule.published` |
+| M-16 | LMS Digital | `lms` | `lms_courses`, `lms_materials`, `lms_progress`, `xapi_statements`, `lms_assignments`, `lms_submissions`, `lms_quizzes`, `lms_discussions`, `search_index_terms` | `lms.progress.updated`, `lms.submission.graded`, `lms.quiz.completed` | `enrollment.krs.approved`, `teaching.session.closed` |
+| M-17 | Ujian & Proctoring | `cbt` | `exams`, `exam_attempts`, `proctoring_profiles`, `proctoring_flags`, `biometric_consents` | `cbt.attempt.flagged`, `cbt.attempt.submitted` | `finance.hold.changed` |
+| M-18 | Presensi Smart | `attendance` | `geofences`, `attendance_sessions`, `attendances`, `attendance_corrections`, `lecturer_attendance` | `attendance.session.opened`, `attendance.recorded`, `attendance.lecturer.session_closed` | `teaching.session.mode_changed`, `teaching.session.closed` |
+| M-19 | Nilai & KHS | `assessment` | `grade_scales`, `grade_scale_bands`, `grade_components`, `grade_formulas`, `grade_values`, `grades`, `khs`, `grade_corrections` | `grading.final.locked`, `grading.khs.published`, `grading.transcript.updated` | `lms.submission.graded`, `lms.quiz.completed`, `attendance.recorded`, `fieldwork.score.submitted`, `mbkm.conversion.approved`, `rpl.conversion.approved` |
+| M-20 | Tugas Akhir & RAMA | `thesis` | `theses`, `thesis_supervisors`, `thesis_logbooks`, `thesis_defenses`, `thesis_examiners`, `thesis_scores`, `repository_items` | `thesis.supervision.logged`, `thesis.defense.scored`, `thesis.repository.published` | `grading.khs.published` |
+| M-21 | Jurnal & OJS | `journal` | `journals`, `journal_articles`, `article_authors`, `apc_invoices` | `journal.article.published` | `finance.invoice.paid` |
+| M-22 | Inkubator & HAKI | `ipr_incubator` | `ipr_filings`, `ipr_inventors`, `startups`, `startup_milestones`, `seed_fundings` | `ipr.granted`, `incubator.milestone.achieved` | `lppm.output.validated` |
+| M-23 | Wisuda & Toga | `graduation` | `convocations`, `convocation_registrants`, `convocation_seats`, `gown_inventory`, `stage_call_logs` | `graduation.registered`, `graduation.stage_called` | `yudisium.batch.approved`, `pin.reserved` |
+| M-24 | Kemahasiswaan & SKKM | `student_affairs` | `skkm_rules`, `skkm_claims`, `achievements`, `student_organizations` | `skkm.claim.approved`, `achievement.recorded` | — |
+| M-25 | KKN, PKL & Magang | `fieldwork` | `fieldwork_programs`, `fieldwork_sites`, `fieldwork_groups`, `fieldwork_members`, `fieldwork_logbooks`, `fieldwork_scores`, `partners` | `fieldwork.logbook.verified`, `fieldwork.score.submitted` | `enrollment.krs.approved` |
+| M-26 | Simulasi Lulus | `academic` | `graduation_simulations` | — | `grading.khs.published`, `curriculum.locked` |
+| M-27 | Tracer Study | `tracer_iku` | `tracer_surveys`, `tracer_responses`, `alumni_profiles`, `blast_jobs` | `tracer.response.submitted` | `yudisium.batch.approved`, `pin.reserved` |
+| M-28 | Career Center | `career` | `employers`, `job_vacancies`, `job_applications`, `career_fairs` | `career.hired` | `tracer.response.submitted` |
+| M-29 | KUI & Mobilitas | `international` | `mobility_programs`, `mobility_participants`, `immigration_documents`, `credit_conversion_factors`, `credit_conversions` | `intl.conversion.approved`, `intl.visa.expiring` | — |
+| M-30 | Yudisium & SKPI | `graduation` | `clearance_rules`, `clearances`, `yudisium_batches`, `yudisium_members`, `skpi_documents` | `yudisium.clearance.changed`, `yudisium.batch.approved` | `finance.hold.changed`, `library.clearance.granted`, `skkm.claim.approved`, `thesis.repository.published`, `grading.transcript.updated` |
+| M-31 | Akreditasi LKPS | `accreditation` | `lkps_templates`, `lkps_snapshots`, `led_documents`, `ratio_checks` | `accreditation.snapshot.frozen` | `*.read_model.refreshed` |
+| M-32 | Dashboard IKU | `tracer_iku` | `iku_definitions`, `iku_counters`, `iku_targets`, `iku_alerts` | `iku.threshold.breached` | `tracer.response.submitted`, `career.hired`, `mbkm.conversion.approved`, `lppm.output.validated`, `ipr.granted`, `intl.conversion.approved`, `achievement.recorded`, `hr.employee.hired` |
+| M-33 | Jadwal Darurat | `scheduling` | `incidents`, `room_lockouts`, `reroute_plans` | `emergency.room.locked_out`, `emergency.reroute.applied` | — |
+| M-34 | Feeder PDDikti | `feeder_pddikti` | `feeder_staging`, `feeder_rules`, `pddikti_sync_runs`, `pddikti_correction_requests` | `feeder.item.synced`, `feeder.item.failed` | `academic.student.activated`, `enrollment.krs.approved`, `grading.khs.published`, `attendance.lecturer.session_closed`, `yudisium.batch.approved`, `teaching.session.mode_changed` |
+| M-35 | PIN & SIVIL | `graduation` | `pin_quotas`, `pin_reservations`, `diplomas`, `signing_keys` | `pin.reserved`, `diploma.issued`, `diploma.revoked` | `yudisium.batch.approved` |
+| M-36 | Portal PPKS | `ppks` | `ppks_reports`, `ppks_cases`, `ppks_case_events`, `ppks_ministry_reports` | `ppks.case.opened` | — |
+| M-37 | SPMI & Quality | `spmi` | `quality_standards`, `ami_cycles`, `ami_assignments`, `ami_checklists`, `ami_findings`, `ami_corrective_actions` | `spmi.finding.opened`, `spmi.finding.closed` | — |
+| M-38 | Kampus Merdeka / MBKM | `mbkm` | `mbkm_programs`, `mbkm_participants`, `mbkm_logbooks`, `mbkm_conversions` | `mbkm.conversion.approved` | `fieldwork.score.submitted` |
+| M-39 | e-Library | `library` | `library_items`, `library_copies`, `library_loans`, `library_fines`, `library_clearances` | `library.clearance.granted`, `library.loan.overdue` | `thesis.repository.published` |
+| M-40 | Aset & Inventaris | `assets` | `asset_categories`, `assets`, `asset_depreciations`, `asset_movements` | `asset.registered`, `asset.depreciated` | `procurement.goods.received` |
+| M-41 | Klinik Kampus | `clinic` | `clinic_patients`, `medical_records`, `clinic_queue`, `counseling_bookings` | `clinic.queue.called` | — |
+| M-42 | Asrama & Kantin | `dormitory` | `dorm_rooms`, `dorm_allocations`, `shuttle_routes`, `wallet_accounts`, `wallet_ledger` | `dorm.allocated`, `wallet.reconciled` | `finance.invoice.paid` |
+| M-43 | Humas & Event | `events` | `events`, `event_registrations`, `event_checkins`, `signage_schedules` | `event.checked_in` | `emergency.room.locked_out` |
+| M-44 | SIM-LPPM / LITABMAS | `litabmas` | `grant_schemes`, `grant_proposals`, `grant_proposal_members`, `grant_reviews`, `grant_contracts`, `grant_disbursements`, `research_outputs` | `lppm.proposal.funded`, `lppm.disbursement.approved`, `lppm.disbursement.paid`, `lppm.output.validated` | `endowment.allocation.approved`, `ipr.granted`, `journal.article.published` |
+| M-45 | CRM PMB & Marketing | `crm_marketing` | `crm_leads`, `crm_lead_activities`, `crm_funnel_rules`, `crm_campaigns`, `crm_events`, `crm_agents`, `crm_commission_rules`, `crm_commissions` | `crm.lead.created`, `crm.lead.converted`, `crm.commission.approved` | `pmb.registration.completed`, `finance.invoice.paid` |
+| M-46 | E-Procurement PBJ | `procurement` | `procurement_requests`, `procurement_items`, `vendors`, `rfq_bids`, `procurement_approvals`, `procurement_contracts`, `goods_receipts` | `procurement.request.submitted`, `procurement.po.approved`, `procurement.goods.received` | `finance.budget.committed` |
+| M-47 | Endowment Fund | `endowment` | `donors`, `donor_campaigns`, `donations`, `fund_instruments`, `fund_yields`, `fund_allocation_rules`, `fund_allocations` | `endowment.yield.posted`, `endowment.allocation.approved` | — |
+| APP | SuperApp Mobile | `mobile_superapp` | `devices`, `sync_cursors`, `push_tokens` | `mobile.device.bound` | `attendance.session.opened`, `enrollment.krs.approved`, `grading.khs.published`, `finance.invoice.issued`, `thesis.supervision.logged` |
+
+### 11.4 Registri Engine Algoritma Lokal (Zero Paid API Key)
+
+| Kode | Engine | Kompleksitas | Perilaku & jaminan determinisme |
+|---|---|---|---|
+| M-01 | Consistent Hashing (ring 256 virtual node) untuk penempatan tenant ke shard/pool koneksi + Redis keyspace | O(log N) lookup | Hash SHA-256 tenant_id -> posisi ring; penambahan node hanya memindahkan ±1/N tenant. |
+| M-02 | Rule Parameter Resolver (hierarki TENANT→ORG→PROGRAM→PERIOD, effective-dated) + NIM Pattern Compiler (tokenizer {kodeFak}{tahun}{seq}) | O(depth) resolve, O(1) cache hit | Nilai paling spesifik & berlaku menang; sequence NIM via advisory lock per (tenant, pola, tahun). |
+| M-03 | Bitwise Permission Masking (10-bit action mask per resource; 64-bit word per 6 resource) | O(1) cek izin | mask = OR(role_permissions); izin = (mask >> bit) & 1; disimpan sebagai bigint + di-cache Redis. |
+| M-04 | Priority Queue (binary heap) dengan skor = bobot_prioritas × sisa_SLA + Escalation Timer (timing wheel) | O(log N) enqueue/dequeue | Tiket melewati ambang SLA otomatis naik tier 1→2→3. |
+| M-05 | Merkle Tree SHA-256 + Hash Chaining (hash_n = SHA256(hash_{n-1} \|\| canonical_json(row))) | O(1) append, O(log N) inclusion proof | Root Merkle harian di-anchor ke tabel audit_anchors (dan opsional publikasi ber-tanda tangan). |
+| M-06 | PPh 21 Dynamic Bracket Calculator: TER bulanan (kategori A/B/C dari PTKP) + tarif progresif Ps.17 untuk masa Desember | O(k) per pegawai, k = jumlah bracket | Seluruh bracket, PTKP, dan kategori TER adalah data berversi (effective_from) — bukan konstanta. |
+| M-07 | Interval Tree Overlap Detection pada (start_at, end_at) seluruh kegiatan tridharma + jadwal mengajar | O(log N + k) query, O(N log N) build | Menolak klaim ganda waktu yang sama lintas pendidikan/penelitian/abdimas; rentang SKS wajib & maksimal dari parameter. |
+| M-08 | Delta Hash Sync: hash SHA-256 per record kanonik vs last_pushed_hash; hanya delta yang di-push | O(N) scan, O(Δ) push | Idempoten via external_ref; konflik → antrean review. |
+| M-09 | Local Tesseract OCR (tesseract.js WASM / tesseract-ocr worker, traineddata ind+eng dibundel) + Levenshtein Fuzzy Matching terhadap data isian | O(m·n) per pasangan string | Field hasil OCR dibandingkan dengan isian; similarity < ambang → verifikasi manual. Tanpa layanan cloud. |
+| M-10 | Multi-Variable Billing Matrix: tarif = f(prodi, angkatan, jalur, kelompok UKT, semester, status RPL, beasiswa) via lookup tensor berversi + diskon berlapis | O(d) dimensi | Setiap baris tagihan menyimpan rule_version & jejak kalkulasi; ledger append-only, koreksi via reversal. |
+| M-11 | Weighted Sum + AHP Economic Scorer: bobot kriteria (penghasilan, tanggungan, DTKS, aset, jarak) dari matriks perbandingan berpasangan; consistency ratio < 0.1 wajib | O(n³) eigen kecil, O(n) skor | Matriks AHP disimpan per periode; skor dapat dijelaskan per kriteria. |
+| M-12 | DAG Topological Sort (Kahn) atas prasyarat mata kuliah + CPL Attainment Matrix (CPMK→CPL berbobot) | O(V+E) | Siklus prasyarat ditolak saat simpan; capaian CPL = Σ(nilai CPMK × bobot) per mahasiswa/angkatan. |
+| M-13 | Redis Redlock + Lua atomic seat decrement (DECR jika >0) dengan token antrean FIFO | O(1) per reservasi | Kursi dipesan di Redis lalu dikonfirmasi ke PostgreSQL (advisory lock per class); rekonsiliasi terjadwal Redis↔DB. |
+| M-14 | CSP Solver: AC-3 arc consistency + backtracking MRV/LCV + local search (min-conflicts) untuk constraint lunak | AC-3 O(e·d³) | Constraint keras: dosen/ruang/kelas tidak bentrok, kapasitas, jenis ruang; lunak: preferensi dosen, jeda. |
+| M-15 | Hybrid Reconciliation Matrix: tabel keputusan (mode × bukti luring × bukti daring) → status hadir + feeder tag F/O/M | O(1) per mahasiswa-sesi | Aturan matriks adalah data (lookup + rule rows), bukan if-else. |
+| M-16 | TF-IDF Local Vector Search (indeks invers + cosine) atas materi/diskusi; xAPI LRS lokal | O(q·postings) | Indeks dibangun worker; tidak ada embedding cloud. |
+| M-17 | Local OpenCV / MediaPipe Face Mesh WASM di perangkat: deteksi wajah hadir, multi-wajah, arah pandang; hanya metadata flag yang dikirim (tanpa unggah video default) | O(frame) | Template wajah tidak disimpan di server; alternatif non-biometrik (pengawas manusia) wajib tersedia bila tidak memberi persetujuan. |
+| M-18 | HMAC-SHA256 TOTP (step 5 s, toleransi ±1 step) + Haversine distance ≤ radius geofence (default 30 m) + cek akurasi GPS | O(1) | Token = HMAC(secret_sesi, floor(t/step)); replay dicegah via (session, student) unik + nonce. |
+| M-19 | AST Math Evaluator: formula nilai akhir di-parse ke AST whitelist (+ − × ÷, min, max, round, if) — tanpa eval() | O(n) node | Formula & bobot berversi per kelas; hasil menyimpan formula_version dan jejak. |
+| M-20 | Winnowing fingerprint (k-gram, window w) + Jaccard similarity terhadap korpus lokal tenant; OAI-PMH 2.0 XML serializer (oai_dc) | O(n) fingerprint, O(F) pembandingan via indeks hash | Ambang similarity berparameter; laporan menunjukkan segmen cocok. |
+| M-21 | OAI-PMH Harvester inkremental (resumptionToken, from/until) dari OJS self-hosted + dedupe DOI | O(n) | Status SINTA/ARJUNA diperbarui via impor berkas/adapter, bukan scraping. |
+| M-22 | State machine pendaftaran HAKI + agregator IKU 5 (dedupe per luaran-dosen) | O(1) transisi | Integrasi DJKI berupa pencatatan nomor permohonan/sertifikat (unggah bukti), tanpa API berbayar. |
+| M-23 | Hungarian Algorithm (Kuhn-Munkres) untuk penugasan kursi berdasarkan biaya (urutan prodi, prestasi, aksesibilitas) | O(n³) | Untuk n besar dipecah per blok fakultas; urutan panggil panggung = urutan kursi. |
+| M-24 | SKKM Rule Scorer: poin = bobot(jenis) × bobot(tingkat) × bobot(peran) dari tabel aturan berversi; dedupe sertifikat via SHA-256 berkas | O(1) per klaim | Prestasi terverifikasi otomatis masuk draf SKPI (M-30). |
+| M-25 | K-Means spatial clustering (koordinat domisili/lokasi, k = jumlah lokasi) + balancing kapasitas + aturan heterogenitas prodi | O(n·k·i) | Logbook harian divalidasi Haversine terhadap geofence lokasi. |
+| M-26 | Critical Path Method di atas DAG prasyarat × ketersediaan penawaran semester (ganjil/genap) | O(V+E) | Hasil: semester lulus tercepat, mata kuliah kritis, sisa SKS; read-only (tidak mengubah KRS). |
+| M-27 | Survey longitudinal (gelombang 1/3/5 tahun) + alignment chart bidang kerja vs prodi (cosine similarity kode KBLI/KBJI) | O(n) | Blaster memakai gateway pesan tenant (INTEGRATIONS) dengan throttle; bukan AI. |
+| M-28 | Bipartite graph matching (Hopcroft-Karp) kandidat↔lowongan dengan bobot skor skill (Jaccard tag kompetensi) | O(E√V) | Rekomendasi, bukan keputusan; kandidat mengontrol visibilitas profil. |
+| M-29 | ECTS Conversion Matrix: SKS = kredit_asal × faktor(sistem asal) dari tabel faktor berversi (default 1 ECTS ≈ 25–30 jam; 1 SKS ≈ 45 jam/170 menit/minggu) + alert kedaluwarsa visa | O(1) | Faktor diatur admin; tidak hardcoded. |
+| M-30 | DFA Clearance Engine: state = himpunan syarat terpenuhi; transisi dipicu event (finance.hold.changed, library.clearance.granted, skkm…, thesis.repository.published); accept state = LAYAK_YUDISIUM | O(1) per event | Definisi state/transisi adalah data (clearance_rules); setiap transisi dicatat. |
+| M-31 | 9-Criteria LKPS Extractor: query terdefinisi (data, bukan kode) per tabel LKPS dari read-model; ratio checker (dosen:mahasiswa, dsb) dengan ambang berparameter | O(rows) | Snapshot beku per pengajuan akreditasi untuk jejak audit. |
+| M-32 | Incremental IKU Calculator: setiap event domain memperbarui counter numerator/denominator (CQRS read-model) → nilai real-time; rekalkulasi penuh harian untuk rekonsiliasi | O(1) per event | Definisi IKU (filter, numerator, denominator) = data. |
+| M-33 | Edmonds-Karp max-flow: source→kelas terdampak→ruang pengganti (kapasitas, jenis, jarak ≤ ambang)→sink | O(V·E²) | Jika flow < kebutuhan → sisa kelas dialihkan daring (M-15) otomatis dengan persetujuan. |
+| M-34 | Local Fuzzy String Matcher (Jaro-Winkler + normalisasi) untuk koreksi referensi (wilayah, sekolah, nama ibu) + pre-sync rule engine | O(m·n) | Koreksi otomatis hanya bila skor ≥ ambang & unik; selain itu antre review. |
+| M-35 | RSA-PSS / Ed25519 digital signature atas payload e-ijazah + HMAC token QR verifikasi publik (rotasi kunci berversi) | O(1) | Verifikasi publik hanya menampilkan field minimal (nama, prodi, tanggal lulus, status keaslian). |
+| M-36 | AES-256-GCM zero-knowledge vault: laporan dienkripsi di klien dengan kunci turunan (X25519 ke kunci publik Satgas + passphrase pelapor); server hanya menyimpan ciphertext | O(n) | Pelapor anonim memantau via kode kasus + passphrase; akses Satgas dicatat audit. |
+| M-37 | PPEPP Audit State Machine (Penetapan→Pelaksanaan→Evaluasi→Pengendalian→Peningkatan) dengan guard transisi berbasis bukti | O(1) | Temuan tanpa RTL tidak dapat ditutup; auditor tidak boleh mengaudit unitnya sendiri. |
+| M-38 | DAG Credit Conversion: bipartite kegiatan→mata kuliah dengan validasi prasyarat DAG kurikulum & batas SKS | O(V+E) | Adapter MSIB/PMM berupa impor berkas/endpoint resmi bila tersedia; tanpa API AI. |
+| M-39 | BM25 local ranker (k1, b berparameter) atas indeks invers katalog MARC21/Dublin Core | O(q·postings) | Adapter SLiMS/KOHA via OAI-PMH/SIP2 self-hosted. |
+| M-40 | Straight-Line Depreciation: beban/bulan = (nilai_perolehan − nilai_residu) / (masa_manfaat_bulan); masa manfaat per kategori dari tabel berversi | O(asset) | Posting jurnal bulanan idempoten per (asset, bulan). |
+| M-41 | AES-256-GCM envelope encryption per rekam medis (DEK per record, KEK di KMS) + virtual queue (priority queue triase) | O(log N) | Admin IT tidak dapat membaca isi; akses break-glass tercatat. |
+| M-42 | 3D Bin Packing (First-Fit Decreasing multi-dimensi: kapasitas, gender, kebutuhan aksesibilitas, preferensi) untuk alokasi kamar + rekonsiliasi saldo e-wallet (ledger ganda) | O(n log n) | E-wallet closed-loop: saldo = Σ ledger; tidak ada saldo mutable. |
+| M-43 | Event Registration Scorer (prioritas berbobot: kuota per segmen, waitlist FIFO) + QR HMAC tiket sekali pakai + interval scheduler signage | O(log N) | QR gate offline-capable (verifikasi tanda tangan di perangkat scanner). |
+| M-44 | Naive Bayes Proposal Scorer (multinomial, dilatih lokal dari proposal historis tenant) sebagai skor pendamping — keputusan tetap oleh reviewer buta | O(V) per proposal | Fitur TF dari judul/abstrak/RAB; model & versi disimpan, prediksi dapat diaudit; Laplace smoothing. |
+| M-45 | Probabilistic Lead Funnel Scorer: logistic regression lokal atas fitur (sumber, sekolah, interaksi, jarak) + transisi Markov antartahap funnel | O(F) per lead | Bobot dilatih ulang terjadwal dari konversi historis tenant; versi model tersimpan; tanpa API eksternal. |
+| M-46 | AHP Vendor Evaluator (harga, kualitas, waktu, rekam jejak, TKDN) + validasi HPS (penawaran ≤ HPS, deteksi harga tidak wajar < 80% HPS) | O(n³) kriteria, O(v) vendor | Bobot dari matriks berpasangan berversi; hasil dapat diaudit. |
+| M-47 | Compound Investment Yield Engine: A = P(1 + r/n)^{nt}, yield realisasi per instrumen, alokasi hasil via aturan persentase berversi (pokok tidak boleh dibelanjakan) | O(instrumen) | Hanya imbal hasil terealisasi yang dialokasikan ke M-11/M-44. |
+| APP | SQLite (Drift) Differential Sync: change-log per tabel dengan cursor (server_seq) + vector clock per record; konflik → server-wins untuk data berwenang, client-wins hanya draf; Local TOTP hardware binding (kunci di Android Keystore/iOS Secure Enclave) | O(Δ) | Check-in presensi offline disimpan bertanda tangan perangkat & dikirim saat online, divalidasi ulang server (TOTP step historis + jendela toleransi). |
+
+### 11.5 Katalog Event Domain (kontrak outbox → queue → WebSocket)
+
+| Event (`<domain>.<entitas>.<kejadian>`, versi `v1`) | Produsen | Konsumen |
+|---|---|---|
+| `academic.student.activated` | M-02 | M-13, M-34 |
+| `academic.student.status_changed` | M-02 | M-03 |
+| `accreditation.snapshot.frozen` | M-31 | read-model IKU/LKPS/Feeder + audit |
+| `achievement.recorded` | M-24 | M-32 |
+| `asset.depreciated` | M-40 | read-model IKU/LKPS/Feeder + audit |
+| `asset.registered` | M-40 | read-model IKU/LKPS/Feeder + audit |
+| `attendance.lecturer.session_closed` | M-18 | M-06, M-07, M-34 |
+| `attendance.recorded` | M-18 | M-19 |
+| `attendance.session.opened` | M-18 | APP |
+| `audit.chain.broken` | M-05 | read-model IKU/LKPS/Feeder + audit |
+| `bkd.activity.recorded` | M-07 | read-model IKU/LKPS/Feeder + audit |
+| `bkd.report.approved` | M-07 | M-06, M-08 |
+| `career.hired` | M-28 | M-32 |
+| `cbt.attempt.flagged` | M-17 | read-model IKU/LKPS/Feeder + audit |
+| `cbt.attempt.submitted` | M-17 | read-model IKU/LKPS/Feeder + audit |
+| `clinic.queue.called` | M-41 | read-model IKU/LKPS/Feeder + audit |
+| `crm.commission.approved` | M-45 | read-model IKU/LKPS/Feeder + audit |
+| `crm.lead.converted` | M-45 | M-09 |
+| `crm.lead.created` | M-45 | read-model IKU/LKPS/Feeder + audit |
+| `curriculum.locked` | M-12 | M-26 |
+| `diploma.issued` | M-35 | read-model IKU/LKPS/Feeder + audit |
+| `diploma.revoked` | M-35 | read-model IKU/LKPS/Feeder + audit |
+| `dorm.allocated` | M-42 | read-model IKU/LKPS/Feeder + audit |
+| `emergency.reroute.applied` | M-33 | read-model IKU/LKPS/Feeder + audit |
+| `emergency.room.locked_out` | M-33 | M-14, M-43 |
+| `endowment.allocation.approved` | M-47 | M-11, M-44 |
+| `endowment.yield.posted` | M-47 | M-10 |
+| `enrollment.krs.approved` | M-13 | M-10, M-14, M-16, M-25, M-34, APP |
+| `enrollment.krs.rejected` | M-13 | read-model IKU/LKPS/Feeder + audit |
+| `enrollment.krs.submitted` | M-13 | read-model IKU/LKPS/Feeder + audit |
+| `enrollment.seat.reserved` | M-13 | read-model IKU/LKPS/Feeder + audit |
+| `event.checked_in` | M-43 | read-model IKU/LKPS/Feeder + audit |
+| `feeder.item.failed` | M-34 | read-model IKU/LKPS/Feeder + audit |
+| `feeder.item.synced` | M-34 | read-model IKU/LKPS/Feeder + audit |
+| `fieldwork.logbook.verified` | M-25 | read-model IKU/LKPS/Feeder + audit |
+| `fieldwork.score.submitted` | M-25 | M-19, M-38 |
+| `finance.budget.committed` | M-10 | M-46 |
+| `finance.hold.changed` | M-10 | M-13, M-17, M-30 |
+| `finance.invoice.issued` | M-10 | APP |
+| `finance.invoice.paid` | M-10 | M-02, M-09, M-21, M-42, M-45 |
+| `finance.journal.posted` | M-10 | read-model IKU/LKPS/Feeder + audit |
+| `grading.final.locked` | M-19 | read-model IKU/LKPS/Feeder + audit |
+| `grading.khs.published` | M-19 | M-11, M-12, M-20, M-26, M-34, APP |
+| `grading.transcript.updated` | M-19 | M-30 |
+| `graduation.registered` | M-23 | read-model IKU/LKPS/Feeder + audit |
+| `graduation.stage_called` | M-23 | read-model IKU/LKPS/Feeder + audit |
+| `helpdesk.sla.breached` | M-04 | read-model IKU/LKPS/Feeder + audit |
+| `helpdesk.ticket.created` | M-04 | read-model IKU/LKPS/Feeder + audit |
+| `helpdesk.ticket.escalated` | M-04 | read-model IKU/LKPS/Feeder + audit |
+| `hr.employee.hired` | M-06 | M-08, M-32 |
+| `hr.employee.terminated` | M-06 | M-03 |
+| `hr.leave.approved` | M-06 | read-model IKU/LKPS/Feeder + audit |
+| `hr.payroll.locked` | M-06 | M-10 |
+| `iku.threshold.breached` | M-32 | read-model IKU/LKPS/Feeder + audit |
+| `incubator.milestone.achieved` | M-22 | read-model IKU/LKPS/Feeder + audit |
+| `intl.conversion.approved` | M-29 | M-32 |
+| `intl.visa.expiring` | M-29 | read-model IKU/LKPS/Feeder + audit |
+| `ipr.granted` | M-22 | M-07, M-32, M-44 |
+| `journal.article.published` | M-21 | M-07, M-44 |
+| `library.clearance.granted` | M-39 | M-30 |
+| `library.loan.overdue` | M-39 | read-model IKU/LKPS/Feeder + audit |
+| `lms.progress.updated` | M-16 | read-model IKU/LKPS/Feeder + audit |
+| `lms.quiz.completed` | M-16 | M-19 |
+| `lms.submission.graded` | M-16 | M-19 |
+| `lookup.changed` | M-02 | read-model IKU/LKPS/Feeder + audit |
+| `lppm.disbursement.approved` | M-44 | M-10 |
+| `lppm.disbursement.paid` | M-44 | read-model IKU/LKPS/Feeder + audit |
+| `lppm.output.validated` | M-44 | M-07, M-08, M-22, M-32 |
+| `lppm.proposal.funded` | M-44 | read-model IKU/LKPS/Feeder + audit |
+| `mbkm.conversion.approved` | M-38 | M-19, M-32 |
+| `mobile.device.bound` | APP | read-model IKU/LKPS/Feeder + audit |
+| `nim.generated` | M-02 | read-model IKU/LKPS/Feeder + audit |
+| `obe.plo.computed` | M-12 | read-model IKU/LKPS/Feeder + audit |
+| `parameter.versioned` | M-02 | read-model IKU/LKPS/Feeder + audit |
+| `pdp.dsr.due` | M-05 | read-model IKU/LKPS/Feeder + audit |
+| `pin.reserved` | M-35 | M-23, M-27 |
+| `pmb.applicant.submitted` | M-09 | read-model IKU/LKPS/Feeder + audit |
+| `pmb.registration.completed` | M-09 | M-02, M-45 |
+| `pmb.selection.decided` | M-09 | M-10 |
+| `ppks.case.opened` | M-36 | read-model IKU/LKPS/Feeder + audit |
+| `procurement.goods.received` | M-46 | M-40 |
+| `procurement.po.approved` | M-46 | M-10 |
+| `procurement.request.submitted` | M-46 | read-model IKU/LKPS/Feeder + audit |
+| `rbac.assignment.changed` | M-03 | read-model IKU/LKPS/Feeder + audit |
+| `rbac.role.changed` | M-03 | read-model IKU/LKPS/Feeder + audit |
+| `rpl.conversion.approved` | M-12 | M-19 |
+| `rps.approved` | M-12 | read-model IKU/LKPS/Feeder + audit |
+| `schedule.meeting.changed` | M-14 | read-model IKU/LKPS/Feeder + audit |
+| `schedule.published` | M-14 | M-13, M-15 |
+| `scholarship.award.approved` | M-11 | M-10 |
+| `scholarship.award.frozen` | M-11 | read-model IKU/LKPS/Feeder + audit |
+| `security.violation.detected` | M-05 | M-04 |
+| `sister.item.failed` | M-08 | read-model IKU/LKPS/Feeder + audit |
+| `sister.item.pushed` | M-08 | read-model IKU/LKPS/Feeder + audit |
+| `skkm.claim.approved` | M-24 | M-30 |
+| `sla.breached` | M-01 | M-04 |
+| `spmi.finding.closed` | M-37 | read-model IKU/LKPS/Feeder + audit |
+| `spmi.finding.opened` | M-37 | read-model IKU/LKPS/Feeder + audit |
+| `teaching.session.closed` | M-15 | M-16, M-18 |
+| `teaching.session.mode_changed` | M-15 | M-18, M-34 |
+| `tenant.provisioned` | M-01 | read-model IKU/LKPS/Feeder + audit |
+| `tenant.suspended` | M-01 | read-model IKU/LKPS/Feeder + audit |
+| `thesis.defense.scored` | M-20 | read-model IKU/LKPS/Feeder + audit |
+| `thesis.repository.published` | M-20 | M-30, M-39 |
+| `thesis.supervision.logged` | M-20 | M-07, APP |
+| `tracer.response.submitted` | M-27 | M-28, M-32 |
+| `wallet.reconciled` | M-42 | read-model IKU/LKPS/Feeder + audit |
+| `yudisium.batch.approved` | M-30 | M-23, M-27, M-34, M-35 |
+| `yudisium.clearance.changed` | M-30 | read-model IKU/LKPS/Feeder + audit |
+
+### 11.6 Temuan Audit Arsitektur & Resolusinya (2026-10-20)
+
+| ID | Temuan | Resolusi (mengikat) |
+|---|---|---|
+| ARC-01 | §3 Tech Stack menyebut JWT **EdDSA**, sementara SECURITY_COMPLIANCE, RBAC_MATRIX, dan implementasi memakai **RS256** | Kanonik **RS256** (G-08 ditutup); baris §3 diralat |
+| ARC-02 | GUC tenant disebut `app.tenant_id` (ADR-3) vs `app.current_tenant` (AGENTS.md, migrasi) | Kanonik `app.current_tenant`; ADR-3 dibaca sebagai alias (DATA_MODEL §15.4) |
+| ARC-03 | §5 menggambarkan `apps/api` NestJS, implementasi memakai route handler Next.js `apps/web/src/app/api/v1` | Kanonik: route handler Next.js + `apps/worker` + `apps/realtime`; NestJS bukan target |
+| ARC-04 | Tidak ada topologi WebSocket/kontrak event lintas modul | §11.2 & §11.5 |
+| ARC-05 | Katalog modul hanya 19 entitlement | Diperluas ke 47 + APP (§11.3, DATA_MODEL §15.5) |
+| ARC-06 | Aturan ENUM/CHECK statis bertentangan dengan kebijakan zero-hardcoding | DATA_MODEL §15.1 menggantikan aturan ENUM §1 |
+| ARC-07 | `scripts/validate-roadmap.js` dirujuk `package.json` tetapi berkasnya tidak ada | dicatat sebagai tugas R1.0 (ROADMAP) |
+
+<!-- SICA-47:END enterprise-47 -->

@@ -722,3 +722,57 @@ Dokumen ini tetap **sumber kebenaran hak akses**. Dokumen Area Admin yang baru s
 | 6 | **`G-08` (EdDSA vs RS256)** | **CLOSED 2026-10-19** — `.cursor/rules/02-security.mdc` §3.2 telah disinkronkan ke **RS256**, konsisten dengan `SECURITY_COMPLIANCE.md` AUD-11 dan `jwt.service.ts`/`jwt-edge.ts`. |
 
 **Verifikasi klaim sebelum adopsi (bukan salin-bulat):** `G-01` dikonfirmasi di [apps/web/src/modules/entitlement/guards.ts:6-11](file:///C:/SICA/apps/web/src/modules/entitlement/guards.ts#L6-L11) (`ADMIN_TOKENS.some(token => normalized.includes(token))` — pencocokan substring nyata); `G-08` dikonfirmasi di `.cursor/rules/02-security.mdc:103` sebelumnya menulis "JWT EdDSA"; Approval KRS masih `TODO` verifikasi role di [krs/approve/route.ts:31](file:///C:/SICA/apps/web/src/app/api/v1/academic/krs/approve/route.ts#L31) (konsisten dengan status `[~]` ROADMAP §2.3).
+
+---
+
+<!-- SICA-47:BEGIN enterprise-47 -->
+
+## 12. Perluasan Enterprise: Role Baru & Matriks 47 Modul (dikunci 2026-10-20)
+
+### 12.1 Role Tambahan
+
+22 role §2 tetap berlaku. Role berikut ditambahkan (seed `roles.is_system = true`; tenant dapat membuat role kustom turunan via M-03):
+
+| Kode | Label | Scope | Profil dashboard |
+|---|---|---|---|
+| `IT_ADMIN` | Admin IT Kampus | tenant | `ADMIN_IT` |
+| `DEAN` | Dekan | fakultas | `PIMPINAN_AKADEMIK` |
+| `HR_ADMIN` | Admin HRD | tenant | `STAF_OPERASIONAL` |
+| `EMPLOYEE` | Pegawai/Tendik | self | — (modul ber-izin) |
+| `BKD_ASSESSOR` | Asesor BKD | penugasan | `DOSEN` |
+| `LPPM_ADMIN`, `GRANT_REVIEWER` | Admin LPPM, Reviewer hibah | tenant / penugasan | — |
+| `MARKETING_PMB`, `PMB_AGENT`, `SCHOOL_COUNSELOR` | Tim Marketing, Agen/Mitra PMB, Guru BK SMA | tenant / self (eksternal) | — |
+| `SCHOLARSHIP_ADMIN` | Admin Beasiswa | tenant | `STAF_OPERASIONAL` |
+| `PROCUREMENT_COMMITTEE`, `PPK_OFFICER`, `VENDOR` | Panitia PBJ, PPK, Vendor | tenant / self (eksternal) | `STAF_OPERASIONAL` (internal) |
+| `SCHEDULER`, `LAB_STAFF`, `SARPRAS_ADMIN`, `ASSET_ADMIN` | Penjadwal BAAK, Laboran, Admin Sarpras, Admin BMN | tenant/org | `STAF_OPERASIONAL` |
+| `INVIGILATOR`, `THESIS_SUPERVISOR` | Pengawas ujian, Pembimbing TA | kelas / penugasan | `DOSEN` |
+| `JOURNAL_MANAGER`, `IPR_MANAGER` | Pengelola Jurnal, Pengelola HAKI | tenant | — |
+| `GRADUATION_COMMITTEE` | Panitia Wisuda | tenant | `STAF_OPERASIONAL` |
+| `STUDENT_AFFAIRS_ADMIN` | Admin Kemahasiswaan | tenant | — |
+| `FIELD_SUPERVISOR`, `PARTNER_MENTOR`, `MBKM_SUPERVISOR` | DPL, Pembimbing Mitra, Pembimbing MBKM | penugasan / eksternal | `DOSEN` (internal) |
+| `ALUMNI_ADMIN`, `CAREER_ADMIN`, `EMPLOYER` | Admin Alumni, Admin Karir, Mitra Perusahaan | tenant / eksternal | — |
+| `INTL_OFFICE_ADMIN` | Admin KUI | tenant | — |
+| `ENDOWMENT_MANAGER`, `DONOR` | Pengelola Dana Abadi, Donatur | tenant / self | — |
+| `LIBRARIAN`, `CLINIC_DOCTOR`, `COUNSELOR`, `DORM_MANAGER`, `PR_EVENT_ADMIN`, `EVENT_PARTICIPANT` | Pustakawan, Dokter, Konselor, Pengelola Asrama, Humas, Peserta event | tenant / self | — |
+| `PPKS_TASKFORCE`, `PPKS_REPORTER` | Satgas PPKS, Pelapor (anonim) | tenant / anonim | — |
+| `INTERNAL_AUDITOR` | Auditor Mutu Internal | penugasan | — |
+| `ALL_USERS`, `PUBLIC` | pseudo-role: setiap user terautentikasi / anonim | — | — |
+
+Role tanpa profil seed memperoleh dashboard dari modul yang ber-izin READ (PRD §10.3).
+
+### 12.2 Pemetaan Nama Role di Instruksi → Kode
+
+Super Admin → `PLATFORM_OPERATOR`; Admin IT → `TENANT_ADMIN`/`IT_ADMIN`; Security Auditor → `COMPLIANCE_OFFICER`; BAAK → `ADMIN_ACADEMIC`/`SCHEDULER`; BAUK → `ADMIN_FINANCE`/`TREASURER`; Rektorat → `LEADER`; Kaprodi → `HEAD_OF_PROGRAM`; Dosen Wali/DPA → `ADVISER`; Dosen Penguji → `EXAMINER`; Admin PDDikti → `FEEDER_OPERATOR`; Admin PMB → `PMB_OPERATOR`; Camaba → `APPLICANT`; LPM → `QUALITY_OFFICER`; Admin Kepegawaian → `HR_BKD_OFFICER`.
+
+
+### 12.3 Matriks Role × Modul × Aksi
+
+Matriks detail 11 aksi untuk seluruh role × 47 modul + APP **hanya didefinisikan satu kali** di [SECURITY_COMPLIANCE.md §10.4](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md) (sumber tunggal) — tidak disalin di sini untuk mencegah duplikasi/drift. Cakupan matriks: M-01, M-02, …, M-47 dan APP (seluruh 47 modul + SuperApp). Seed `role_permissions` dibangkitkan dari tabel tersebut.
+
+### 12.4 Catatan Rekonsiliasi
+
+- Hibah READ yang ditambahkan agar profil dashboard instruksi konsisten: `LECTURER`→M-13 (R), `STUDENT`→M-27 (R, survei exit), `HEAD_OF_PROGRAM`→M-14 (R), M-44 (RX), `DEAN`→M-07/M-13/M-19/M-20/M-25/M-37/M-38/M-44, `IT_ADMIN`→M-35 (R), `TENANT_ADMIN`→M-01 (R, status langganan sendiri).
+- **G-10** (litabmas/persuratan/kerjasama) — `litabmas` ditutup oleh M-44, `kerjasama` oleh `partners` (M-25/M-28/M-38); `documents/persuratan` tetap terbuka (di luar 47 modul).
+- Matriks detail per aksi: [SECURITY_COMPLIANCE.md §10.4](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md).
+
+<!-- SICA-47:END enterprise-47 -->
