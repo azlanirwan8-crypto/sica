@@ -1607,8 +1607,8 @@ Format: daftar tabel milik modul (bounded context, [ARCHITECTURE.md §11.3](file
 
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
-| `tenants` | **sudah didefinisikan di §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, code, legal_name, status_id→lookup_values, plan_id, shard_key, region, go_live_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK plans; GLOBAL (tanpa RLS, hanya PLATFORM_OPERATOR) |
-| `tenant_subscriptions` | id, tenant_id, plan_id, valid_from, valid_to, billing_cycle_id→lookup_values, seats | FK tenants, plans; RLS tenant_isolation + platform bypass via sica_platform |
+| `tenants` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, code, legal_name, status_id→lookup_values, plan_id, shard_key, region, go_live_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK plans; GLOBAL (tanpa RLS, hanya PLATFORM_OPERATOR) |
+| `subscriptions` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, plan_id, valid_from, valid_to, billing_cycle_id→lookup_values, seats` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK tenants, plans; RLS tenant_isolation + platform bypass via sica_platform |
 | `sla_policies` | id, tenant_id, metric_id→lookup_values, target_value numeric, window_id→lookup_values | FK tenants |
 | `sla_measurements` | id, tenant_id, sla_policy_id, measured_at, value, breached bool | FK sla_policies; partisi bulanan |
 | `tenant_shard_map` | tenant_id, ring_position bigint, pool_name, assigned_at | FK tenants |
@@ -1637,13 +1637,13 @@ Kategori lookup dinamis (`lookup_categories.code`): `lookup_domain`, `data_type`
 
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
-| `roles` | **sudah didefinisikan di §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, code, name, scope_kind_id, is_system, dashboard_profile_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | UNIQUE(tenant_id,code); RLS |
-| `permissions` | **sudah didefinisikan di §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, module_code, resource, action_id→lookup_values(permission_action), code` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | GLOBAL katalog |
-| `role_permissions` | **sudah didefinisikan di §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, role_id, permission_id, action_mask bigint, conditions jsonb` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK roles, permissions; RLS |
-| `user_role_assignments` | **sudah didefinisikan di §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, user_id, role_id, scope_org_id, scope_program_id, scope_class_id, scope_period_id, valid_from, valid_to` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK users, roles; RLS |
+| `roles` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, code, name, scope_kind_id, is_system, dashboard_profile_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | UNIQUE(tenant_id,code); RLS |
+| `permissions` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, module_code, resource, action_id→lookup_values(permission_action), code` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | GLOBAL katalog |
+| `role_permissions` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, role_id, permission_id, action_mask bigint, conditions jsonb` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK roles, permissions; RLS |
+| `user_role_assignments` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, user_id, role_id, scope_org_id, scope_program_id, scope_class_id, scope_period_id, valid_from, valid_to` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK users, roles; RLS |
 | `parameter_restrictions` | id, tenant_id, role_id, param_key, allowed_values jsonb | FK roles; batasi PARAM_EDIT per kunci |
 | `rls_policy_map` | id, table_name, policy_kind_id, predicate_template | GLOBAL; dibaca generator RLS |
-| `access_change_requests` | **sudah didefinisikan di §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, requested_by, approved_by, payload jsonb, status_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | CHECK requested_by<>approved_by |
+| `access_change_requests` | **sudah didefinisikan di DATA_MODEL §3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, requested_by, approved_by, payload jsonb, status_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | CHECK requested_by<>approved_by |
 
 Parameter (`system_parameters`, CRUD + versi): `rbac.cache_ttl_seconds` (int, default `300`) — TTL cache izin; `rbac.four_eyes_required` (bool, default `true`) — perubahan izin wajib empat-mata
 
@@ -1665,11 +1665,11 @@ Kategori lookup dinamis (`lookup_categories.code`): `ticket_category`, `ticket_p
 
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
-| `audit_logs` | **sudah didefinisikan di §4 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, seq bigint, actor_id, action, resource, before jsonb, after jsonb, prev_hash, row_hash, occurred_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | append-only; GRANT tanpa UPDATE/DELETE; partisi bulanan |
+| `audit_logs` | **sudah didefinisikan di DATA_MODEL §4 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, seq bigint, actor_id, action, resource, before jsonb, after jsonb, prev_hash, row_hash, occurred_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | append-only; GRANT tanpa UPDATE/DELETE; partisi bulanan |
 | `audit_anchors` | id, tenant_id, day date, merkle_root, leaf_count, signed_by | FK tenants |
 | `pii_masking_rules` | id, tenant_id, table_name, column_name, mask_strategy_id, unmask_permission | FK lookup_values |
 | `security_violations` | id, tenant_id, kind_id, severity_id, actor_id, ip, detail jsonb, status_id | FK lookup_values |
-| `data_subject_requests` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, subject_user_id, request_type_id, status_id, due_at, decision_reason` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK users |
+| `data_subject_requests` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, subject_user_id, request_type_id, status_id, due_at, decision_reason` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK users |
 
 Parameter (`system_parameters`, CRUD + versi): `audit.anchor_cron` (string, default `0 1 * * *`) — jadwal anchor harian; `pdp.breach_notify_hours` (int, default `72`) — batas notifikasi kegagalan PDP; `pii.default_mask` (lookup, default `PARTIAL`) — strategi masking default
 
@@ -1679,12 +1679,13 @@ Kategori lookup dinamis (`lookup_categories.code`): `mask_strategy`, `violation_
 
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
-| `employees` | id, tenant_id, user_id, nip, nidn, nuptk, employment_type_id, functional_rank_id, org_unit_id, hired_at, status_id | FK users, org_units, lookup_values; RLS + SELF |
-| `leave_requests` | id, tenant_id, employee_id, leave_type_id, start_date, end_date, status_id, approver_id | FK employees; CHECK approver_id<>employee.user_id via trigger SoD |
-| `employee_attendance` | id, tenant_id, employee_id, work_date, check_in, check_out, source_id | FK employees; partisi bulanan |
-| `kpi_scorecards` | id, tenant_id, employee_id, period_id, indicator_id, target, actual, score | FK employees, periods |
+| `lecturers` | **sudah didefinisikan di DATA_MODEL §11.3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `perluasan HR: hired_at, functional_rank_id→lookup_values, status_id→lookup_values` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | dosen; RLS + SELF |
+| `staff` | **sudah didefinisikan di DATA_MODEL §11.3 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `perluasan HR: hired_at, functional_rank_id→lookup_values, status_id→lookup_values` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | tendik; RLS + SELF |
+| `leave_requests` | id, tenant_id, membership_id, leave_type_id, start_date, end_date, status_id, approver_id | FK tenant_memberships (lecturers/staff); CHECK approver_id<>employee.user_id via trigger SoD |
+| `employee_attendance` | id, tenant_id, membership_id, work_date, check_in, check_out, source_id | FK tenant_memberships (lecturers/staff); partisi bulanan |
+| `kpi_scorecards` | id, tenant_id, membership_id, period_id, indicator_id, target, actual, score | FK tenant_memberships (lecturers/staff), periods |
 | `payroll_runs` | id, tenant_id, period_month, status_id, locked_at, locked_by | FK users; LOCK/UNLOCK |
-| `payroll_lines` | id, tenant_id, payroll_run_id, employee_id, component_id, amount_idr bigint | FK payroll_runs; append-only setelah LOCK |
+| `payroll_lines` | id, tenant_id, payroll_run_id, membership_id, component_id, amount_idr bigint | FK payroll_runs; append-only setelah LOCK |
 | `tax_brackets` | id, tenant_id NULL, scheme_id, lower_idr, upper_idr, rate_bp, effective_from, effective_to | global+tenant override, berversi |
 | `ptkp_rates` | id, status_code_id, amount_idr, ter_category_id, effective_from | global berversi |
 
@@ -1697,7 +1698,7 @@ Kategori lookup dinamis (`lookup_categories.code`): `employment_type`, `function
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
 | `bkd_periods` | id, tenant_id, academic_period_id, status_id, locked_at | FK periods |
-| `bkd_activities` | id, tenant_id, bkd_period_id, lecturer_id, dharma_id, activity_type_id, sks numeric(4,2), start_at, end_at, evidence_doc_id, source_module, source_ref_id | FK employees, documents; source_ref → event asal (M-13/M-18/M-44/M-21) |
+| `bkd_activities` | id, tenant_id, bkd_period_id, lecturer_id, dharma_id, activity_type_id, sks numeric(4,2), start_at, end_at, evidence_doc_id, source_module, source_ref_id | FK tenant_memberships (lecturers/staff), documents; source_ref → event asal (M-13/M-18/M-44/M-21) |
 | `bkd_assessments` | id, tenant_id, bkd_activity_id, assessor_id, verdict_id, score, note | FK bkd_activities, users; CHECK assessor_id<>lecturer via trigger |
 | `ewmp_rubrics` | id, tenant_id, activity_type_id, sks_formula_ast jsonb, max_sks, effective_from | FK lookup_values |
 
@@ -1739,15 +1740,15 @@ Kategori lookup dinamis (`lookup_categories.code`): `pmb_track_type`, `pmb_doc_t
 
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
-| `fee_components` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, code, name, gl_account_id, is_recurring` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK chart_of_accounts |
+| `fee_components` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, code, name, gl_account_id, is_recurring` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK chart_of_accounts |
 | `tariff_rules` | id, tenant_id, fee_component_id, dimension_key jsonb, amount_idr, effective_from, effective_to, version | FK fee_components; berversi |
-| `invoices` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, student_id, applicant_id, period_id, total_idr, status_id, due_at, va_number` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK students, pmb_applicants; RLS + SELF |
-| `invoice_lines` | id, tenant_id, invoice_id, fee_component_id, amount_idr, rule_version, calc_trace jsonb | FK invoices; append-only |
-| `payments` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, invoice_id, channel_id, amount_idr, paid_at, external_ref UNIQUE, raw_payload_hash` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK invoices; idempoten |
+| `invoices` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, student_id, applicant_id, period_id, total_idr, status_id, due_at, va_number` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK students, pmb_applicants; RLS + SELF |
+| `invoice_items` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, invoice_id, fee_component_id, amount_idr, rule_version, calc_trace jsonb` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK invoices; append-only |
+| `payments` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, invoice_id, channel_id, amount_idr, paid_at, external_ref UNIQUE, raw_payload_hash` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK invoices; idempoten |
 | `finance_journals` | id, tenant_id, journal_no, source_module, source_ref_id, posted_at, reversed_journal_id | append-only |
 | `finance_journal_lines` | id, tenant_id, journal_id, account_id, debit_idr, credit_idr | FK finance_journals; trigger Σdebit=Σcredit |
 | `budget_lines` | id, tenant_id, fiscal_year, org_unit_id, account_id, ceiling_idr, committed_idr, realized_idr | FK org_units; dipakai M-46/M-44 |
-| `financial_holds` | id, tenant_id, student_id, reason_id, active, released_by | FK students; gate KRS/ujian/yudisium |
+| `blockades` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, student_id, reason_id, active, released_by` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK students; gate KRS/ujian/yudisium |
 
 Parameter (`system_parameters`, CRUD + versi): `finance.va.expiry_hours` (int, default `72`) — masa VA; `finance.hold.krs_block` (bool, default `true`) — tunggakan memblok KRS; `finance.installment.max` (int, default `3`) — maks cicilan
 
@@ -1771,11 +1772,11 @@ Kategori lookup dinamis (`lookup_categories.code`): `sponsor`, `scholarship_stat
 
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
-| `curricula` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, program_id, code, year, total_sks, status_id, locked_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK programs |
+| `curricula` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, program_id, code, year, total_sks, status_id, locked_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK programs |
 | `graduate_profiles` | id, tenant_id, curriculum_id, code, description | FK curricula |
 | `plos` | id, tenant_id, curriculum_id, code, domain_id, description | CPL; FK curricula, lookup_values |
-| `courses` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, curriculum_id, code, name, sks_theory, sks_practice, semester, course_type_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK curricula |
-| `course_prerequisites` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, course_id, prereq_course_id, rule_type_id, min_grade_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK courses; tanpa CHECK statis — validasi DAG di service |
+| `courses` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, curriculum_id, code, name, sks_theory, sks_practice, semester, course_type_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK curricula |
+| `course_prerequisites` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, course_id, prereq_course_id, rule_type_id, min_grade_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK courses; tanpa CHECK statis — validasi DAG di service |
 | `clos` | id, tenant_id, course_id, code, description | CPMK; FK courses |
 | `clo_plo_maps` | id, tenant_id, clo_id, plo_id, weight numeric | FK clos, plos |
 | `rps_documents` | id, tenant_id, course_id, version, content jsonb, status_id, approved_by | FK courses |
@@ -1794,9 +1795,9 @@ Kategori lookup dinamis (`lookup_categories.code`): `plo_domain`, `course_type`,
 | `advising_sessions` | id, tenant_id, period_id, adviser_id, student_id, scheduled_at, status_id | FK; RLS scope ADVISER |
 | `advising_logs` | id, tenant_id, session_id, note, follow_up, created_by | FK advising_sessions; append-only |
 | `krs_headers` | id, tenant_id, student_id, period_id, status_id, max_sks, submitted_at, approved_by, approved_at | FK; RLS + SELF |
-| `krs_items` | id, tenant_id, krs_header_id, class_id, sks, status_id, reserved_token | FK krs_headers, classes |
+| `enrollments` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, krs_header_id, class_id, sks, status_id, reserved_token` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK krs_headers, classes |
 | `krs_war_windows` | id, tenant_id, period_id, cohort_filter jsonb, open_at, close_at | FK periods |
-| `sks_limit_rules` | id, tenant_id, gpa_min, gpa_max, max_sks, effective_from | berversi |
+| `academic_rules` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, gpa_min, gpa_max, max_sks, effective_from` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | berversi |
 
 Parameter (`system_parameters`, CRUD + versi): `krs.reservation_ttl_seconds` (int, default `600`) — TTL kursi tertahan; `krs.war.rate_limit_per_min` (int, default `30`) — rate limit per mahasiswa; `krs.require_adviser_approval` (bool, default `true`) — wajib ACC dosen wali
 
@@ -1806,11 +1807,11 @@ Kategori lookup dinamis (`lookup_categories.code`): `krs_status`, `advising_stat
 
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
-| `rooms` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, building_id, code, capacity, room_type_id, geofence_id, is_active` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK buildings, geofences |
+| `rooms` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, building_id, code, capacity, room_type_id, geofence_id, is_active` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK buildings, geofences |
 | `time_slots` | id, tenant_id, day_of_week_id, start_time, end_time, shift_id | FK lookup_values |
 | `schedule_constraints` | id, tenant_id, kind_id, hardness_id, subject_ref jsonb, params jsonb, weight | FK lookup_values |
 | `schedule_runs` | id, tenant_id, period_id, status_id, score, conflicts, started_at, finished_at | FK periods |
-| `class_meetings` | id, tenant_id, class_id, room_id, time_slot_id, lecturer_id, mode_id, run_id, locked | FK classes, rooms, time_slots |
+| `class_schedules` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, class_id, room_id, time_slot_id, lecturer_id, mode_id, run_id, locked` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK classes, rooms, time_slots |
 | `room_bookings` | id, tenant_id, room_id, start_at, end_at, purpose, booked_by, status_id | EXCLUDE gist (room_id, tstzrange) — invarian struktural |
 
 Parameter (`system_parameters`, CRUD + versi): `schedule.solver_timeout_seconds` (int, default `120`) — batas waktu solver; `schedule.min_break_minutes` (int, default `10`) — jeda antar sesi
@@ -1822,7 +1823,7 @@ Kategori lookup dinamis (`lookup_categories.code`): `room_type`, `day_of_week`, 
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
 | `learning_modes` | id, tenant_id, code, label, feeder_tag | lookup khusus; feeder_tag ∈ lookup feeder_mode (F/O/M) |
-| `lecture_sessions` | id, tenant_id, class_id, meeting_no, starts_at, ends_at, mode_id, room_id, online_meeting_id, shift_id, status_id | FK classes, learning_modes, rooms, online_meetings |
+| `class_sessions` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, class_id, meeting_no, starts_at, ends_at, mode_id, room_id, online_meeting_id, shift_id, status_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK classes, learning_modes, rooms, online_meetings |
 | `online_meetings` | id, tenant_id, provider_id, external_meeting_id, join_url_enc, host_user_id | FK lookup_values |
 | `shift_allocations` | id, tenant_id, class_id, student_id, shift_id | FK |
 | `reconciliation_rules` | id, tenant_id, mode_id, onsite_evidence_id, online_evidence_id, result_status_id, priority | FK lookup_values |
@@ -1836,11 +1837,11 @@ Kategori lookup dinamis (`lookup_categories.code`): `learning_mode`, `feeder_mod
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
 | `lms_courses` | id, tenant_id, class_id, title, status_id | FK classes |
-| `lms_materials` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, course_id, type_id, storage_key, scorm_manifest jsonb, duration_s, published_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK lms_courses |
+| `lms_materials` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, course_id, type_id, storage_key, scorm_manifest jsonb, duration_s, published_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK lms_courses |
 | `lms_progress` | id, tenant_id, material_id, student_id, progress_pct, last_position_s, completed_at | FK; RLS + SELF |
 | `xapi_statements` | id, tenant_id, actor_id, verb_iri, object_iri, result jsonb, stored_at | append-only; partisi |
-| `lms_assignments` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, course_id, title, due_at, max_score, grade_component_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK grade_components (M-19) |
-| `lms_submissions` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, assignment_id, student_id, storage_key, score, graded_by` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK |
+| `lms_assignments` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, course_id, title, due_at, max_score, grade_component_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK grade_components (M-19) |
+| `lms_submissions` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, assignment_id, student_id, storage_key, score, graded_by` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK |
 | `lms_quizzes` | id, tenant_id, course_id, settings jsonb, grade_component_id | FK |
 | `lms_discussions` | id, tenant_id, course_id, parent_id, author_id, body | FK self |
 | `search_index_terms` | id, tenant_id, term, doc_ref, tf, idf | indeks lokal |
@@ -1868,10 +1869,10 @@ Kategori lookup dinamis (`lookup_categories.code`): `exam_kind`, `flag_type`, `s
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
 | `geofences` | id, tenant_id, name, lat, lng, radius_m, accuracy_max_m | FK |
-| `attendance_sessions` | id, tenant_id, lecture_session_id, opened_by, opened_at, closed_at, totp_secret_enc, status_id | FK lecture_sessions |
-| `attendance_records` | id, tenant_id, attendance_session_id, student_id, method_id, status_id, lat, lng, distance_m, online_join_ratio, feeder_tag_id, recorded_at | FK; UNIQUE(session,student); RLS + SELF |
+| `attendance_sessions` | id, tenant_id, class_session_id, opened_by, opened_at, closed_at, totp_secret_enc, status_id | FK class_sessions |
+| `attendances` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, attendance_session_id, student_id, method_id, status_id, lat, lng, distance_m, online_join_ratio, feeder_tag_id, recorded_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK; UNIQUE(session,student); RLS + SELF |
 | `attendance_corrections` | id, tenant_id, record_id, requested_by, approved_by, reason | FK; SoD |
-| `lecturer_attendance` | id, tenant_id, lecture_session_id, lecturer_id, checked_in_at | FK; feed BKD |
+| `lecturer_attendance` | id, tenant_id, class_session_id, lecturer_id, checked_in_at | FK; feed BKD |
 
 Parameter (`system_parameters`, CRUD + versi): `attendance.qr_step_seconds` (int, default `5`) — langkah TOTP; `attendance.qr_tolerance_steps` (int, default `1`) — toleransi; `attendance.geofence_radius_m` (int, default `30`) — radius default; `attendance.min_presence_ratio` (numeric, default `0.75`) — syarat ujian
 
@@ -1881,14 +1882,14 @@ Kategori lookup dinamis (`lookup_categories.code`): `attendance_method`, `attend
 
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
-| `grade_scales` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, code, effective_from` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | berversi |
-| `grade_scale_items` | id, tenant_id, scale_id, letter, min_score, max_score, point | FK grade_scales |
-| `grade_components` | **sudah didefinisikan di §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, class_id, code, weight, source_module, clo_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK classes, clos |
+| `grade_scales` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, code, effective_from` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | berversi |
+| `grade_scale_bands` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, scale_id, letter, min_score, max_score, point` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK grade_scales |
+| `grade_components` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, class_id, code, weight, source_module, clo_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK classes, clos |
 | `grade_formulas` | id, tenant_id, class_id, expression, ast jsonb, version | FK |
 | `grade_values` | id, tenant_id, class_id, student_id, component_id, score, source_ref | FK; RLS + SELF baca |
-| `final_grades` | id, tenant_id, class_id, student_id, score, letter, point, formula_version, locked_at | FK |
+| `grades` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, class_id, student_id, score, letter, point, formula_version, locked_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK |
 | `khs` | id, tenant_id, student_id, period_id, ips, ipk, sks_total, published_at | FK |
-| `grade_change_requests` | id, tenant_id, final_grade_id, requested_by, approved_by, reason, status_id | SoD |
+| `grade_corrections` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, grade_id, requested_by, approved_by, reason, status_id` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | SoD |
 
 Parameter (`system_parameters`, CRUD + versi): `grading.publish_requires_lock` (bool, default `true`) — KHS hanya dari nilai terkunci; `grading.rounding_digits` (int, default `2`) — pembulatan
 
@@ -2033,7 +2034,7 @@ Kategori lookup dinamis (`lookup_categories.code`): `mobility_direction`, `credi
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
 | `clearance_rules` | id, tenant_id, program_id, requirement_id, source_event, predicate jsonb, is_mandatory, effective_from | FK lookup_values |
-| `clearance_states` | id, tenant_id, student_id, requirement_id, satisfied, evidence_ref, updated_at | FK; RLS SELF + scope |
+| `clearances` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, student_id, requirement_id, satisfied, evidence_ref, updated_at` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK; RLS SELF + scope |
 | `yudisium_batches` | id, tenant_id, period_id, org_unit_id, held_at, status_id, approved_by | FK |
 | `yudisium_members` | id, tenant_id, batch_id, student_id, gpa, predicate_id, graduated_at | FK |
 | `skpi_documents` | id, tenant_id, student_id, content jsonb, number, signed_at, file_key | FK |
@@ -2086,8 +2087,8 @@ Kategori lookup dinamis (`lookup_categories.code`): `incident_kind`, `severity`
 |---|---|---|
 | `feeder_staging` | id, tenant_id, entity_type_id, local_id, payload jsonb, payload_hash, status_id, errors jsonb | FK |
 | `feeder_rules` | id, tenant_id NULL, entity_type_id, rule_def jsonb, severity_id | global+tenant |
-| `feeder_sync_jobs` | id, tenant_id, entity_type_id, status_id, attempts, next_attempt_at, last_error | FK |
-| `feeder_corrections` | id, tenant_id, staging_id, field, before, after, score, approved_by | FK |
+| `pddikti_sync_runs` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, entity_type_id, status_id, attempts, next_attempt_at, last_error` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK |
+| `pddikti_correction_requests` | **sudah didefinisikan di DATA_MODEL §5 — tidak didefinisikan ulang.** Perluasan: kolom standar §15.3 + `id, tenant_id, staging_id, field, before, after, score, approved_by` (hanya kolom yang belum ada, via expand-contract MIGRATION_SOP §3) | FK |
 
 Parameter (`system_parameters`, CRUD + versi): `feeder.fuzzy_threshold` (numeric, default `0.92`) — ambang koreksi otomatis; `feeder.retry_max` (int, default `10`) — retry
 
@@ -2219,7 +2220,7 @@ Kategori lookup dinamis (`lookup_categories.code`): `event_status`, `registratio
 | Tabel | Kolom kunci (PK `id` UUIDv7; `tenant_id` wajib kecuali ditandai GLOBAL) | FK / RLS / catatan |
 |---|---|---|
 | `grant_schemes` | id, tenant_id, code, name, funding_source_id, ceiling_idr, call_open_at, call_close_at, rubric_id | FK lookup_values, rubrics |
-| `grant_proposals` | id, tenant_id, scheme_id, lead_lecturer_id, title, abstract, budget_idr, status_id, nb_score, nb_model_version | FK grant_schemes, employees |
+| `grant_proposals` | id, tenant_id, scheme_id, lead_lecturer_id, title, abstract, budget_idr, status_id, nb_score, nb_model_version | FK grant_schemes, tenant_memberships |
 | `grant_proposal_members` | id, tenant_id, proposal_id, person_id, role_id | FK grant_proposals |
 | `grant_reviews` | id, tenant_id, proposal_id, reviewer_id, blind_alias, scores jsonb, total, recommendation_id | FK; RLS: reviewer hanya assignment-nya, identitas pengusul di-mask |
 | `grant_contracts` | id, tenant_id, proposal_id, contract_no, amount_idr, signed_at, status_id | FK grant_proposals |

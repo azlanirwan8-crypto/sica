@@ -41,7 +41,7 @@
 ### R1. Super Admin & Admin IT — fondasi platform
 
 - [ ] **R1.1 M-01 SaaS Foundation** — role: `PLATFORM_OPERATOR`, `COMPLIANCE_OFFICER`
-  - [ ] Migrasi + RLS: `tenants`, `tenant_subscriptions`, `sla_policies`, `sla_measurements`, `tenant_shard_map` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `tenants`, `subscriptions`, `sla_policies`, `sla_measurements`, `tenant_shard_map` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (tenant_status, billing_cycle, sla_metric, sla_window) & parameter (platform.ring.virtual_nodes, platform.sla.availability_target, platform.provision.default_modules).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT, LOCK, UNLOCK.
   - [ ] Engine lokal: Consistent Hashing (ring 256 virtual node) untuk penempatan tenant ke shard/pool koneksi + Redis keyspace — unit test deterministik + golden dataset.
@@ -154,7 +154,7 @@
   - [ ] UI Velzon (UI_UX §10.4): kartu Pendaftar per jalur, Dokumen menunggu verifikasi, Lulus seleksi, Daftar ulang; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:pmb`.
   - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
 - [ ] **R4.2 M-10 Keuangan & Billing** — role: `ADMIN_FINANCE`, `TREASURER`, `STUDENT`, `LEADER`
-  - [ ] Migrasi + RLS: `fee_components`, `tariff_rules`, `invoices`, `invoice_lines`, `payments`, `finance_journals`, `finance_journal_lines`, `budget_lines`, `financial_holds` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `fee_components`, `tariff_rules`, `invoices`, `invoice_items`, `payments`, `finance_journals`, `finance_journal_lines`, `budget_lines`, `blockades` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (payment_channel, invoice_status, hold_reason, ukt_group, gl_account_type) & parameter (finance.va.expiry_hours, finance.hold.krs_block, finance.installment.max).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, UNLOCK.
   - [ ] Engine lokal: Multi-Variable Billing Matrix — unit test deterministik + golden dataset.
@@ -186,7 +186,7 @@
   - [ ] UI Velzon (UI_UX §10.4): kartu Total aset, Nilai buku, Belum ter-tag, Penyusutan bulan ini; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:assets`.
   - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
 - [ ] **R4.6 M-14 Jadwal & Ruang** — role: `SCHEDULER`, `LAB_STAFF`
-  - [ ] Migrasi + RLS: `rooms`, `time_slots`, `schedule_constraints`, `schedule_runs`, `class_meetings`, `room_bookings` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `rooms`, `time_slots`, `schedule_constraints`, `schedule_runs`, `class_schedules`, `room_bookings` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (room_type, day_of_week, shift, constraint_kind, constraint_hardness) & parameter (schedule.solver_timeout_seconds, schedule.min_break_minutes).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, UNLOCK.
   - [ ] Engine lokal: CSP Solver — unit test deterministik + golden dataset.
@@ -194,7 +194,7 @@
   - [ ] UI Velzon (UI_UX §10.4): kartu Konflik jadwal, Utilisasi ruang, Run terakhir, Booking hari ini; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:scheduling`.
   - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
 - [ ] **R4.7 M-15 Moda Perkuliahan** — role: `ADMIN_ACADEMIC`, `LECTURER`
-  - [ ] Migrasi + RLS: `learning_modes`, `lecture_sessions`, `online_meetings`, `shift_allocations`, `reconciliation_rules` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `learning_modes`, `class_sessions`, `online_meetings`, `shift_allocations`, `reconciliation_rules` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (learning_mode, feeder_mode, shift, meeting_provider, evidence_type) & parameter (mode.online_min_join_ratio, mode.meeting_provider).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: CREATE, EXPORT, LOCK, UPDATE.
   - [ ] Engine lokal: Hybrid Reconciliation Matrix — unit test deterministik + golden dataset.
@@ -213,7 +213,7 @@
 ### R5. Dosen — SDM, pengajaran, penilaian, riset
 
 - [ ] **R5.1 M-06 HRIS & Payroll** — role: `HR_ADMIN`, `ADMIN_FINANCE`, `LECTURER`, `EMPLOYEE`
-  - [ ] Migrasi + RLS: `employees`, `leave_requests`, `employee_attendance`, `kpi_scorecards`, `payroll_runs`, `payroll_lines`, `tax_brackets`, `ptkp_rates` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `lecturers`, `staff`, `leave_requests`, `employee_attendance`, `kpi_scorecards`, `payroll_runs`, `payroll_lines`, `tax_brackets`, `ptkp_rates` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (employment_type, functional_rank, leave_type, pay_component, tax_scheme, ter_category) & parameter (payroll.cutoff_day, payroll.rounding, leave.annual_quota_days).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, REJECT, UNLOCK, UPDATE.
   - [ ] Engine lokal: PPh 21 Dynamic Bracket Calculator — unit test deterministik + golden dataset.
@@ -245,7 +245,7 @@
   - [ ] UI Velzon (UI_UX §10.4): kartu Kelas aktif, Tugas jatuh tempo, Progres materi, Diskusi baru; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:lms`.
   - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
 - [ ] **R5.5 M-18 Presensi Smart** — role: `LECTURER`, `STUDENT`, `ADMIN_ACADEMIC`
-  - [ ] Migrasi + RLS: `geofences`, `attendance_sessions`, `attendance_records`, `attendance_corrections`, `lecturer_attendance` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `geofences`, `attendance_sessions`, `attendances`, `attendance_corrections`, `lecturer_attendance` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (attendance_method, attendance_status, feeder_mode) & parameter (attendance.qr_step_seconds, attendance.qr_tolerance_steps, attendance.geofence_radius_m, attendance.min_presence_ratio).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, READ, REJECT.
   - [ ] Engine lokal: HMAC-SHA256 TOTP (step 5 s, toleransi ±1 step) + Haversine distance ≤ radius geofence (default 30 m) + cek akurasi GPS — unit test deterministik + golden dataset.
@@ -261,7 +261,7 @@
   - [ ] UI Velzon (UI_UX §10.4): kartu Ujian berlangsung, Flag real-time, Attempt selesai, Persetujuan biometrik; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:cbt`.
   - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
 - [ ] **R5.7 M-19 Nilai & KHS** — role: `LECTURER`, `HEAD_OF_PROGRAM`, `STUDENT`
-  - [ ] Migrasi + RLS: `grade_scales`, `grade_scale_items`, `grade_components`, `grade_formulas`, `grade_values`, `final_grades`, `khs`, `grade_change_requests` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `grade_scales`, `grade_scale_bands`, `grade_components`, `grade_formulas`, `grade_values`, `grades`, `khs`, `grade_corrections` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (grade_component_type, grade_change_status) & parameter (grading.publish_requires_lock, grading.rounding_digits).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, READ, REJECT, UNLOCK, UPDATE.
   - [ ] Engine lokal: AST Math Evaluator — unit test deterministik + golden dataset.
@@ -304,7 +304,7 @@
 ### R6. Mahasiswa — layanan mandiri & kemahasiswaan
 
 - [ ] **R6.1 M-13 KRS Online & Perwalian** — role: `ADVISER`, `STUDENT`, `ADMIN_ACADEMIC`
-  - [ ] Migrasi + RLS: `advising_sessions`, `advising_logs`, `krs_headers`, `krs_items`, `krs_war_windows`, `sks_limit_rules` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `advising_sessions`, `advising_logs`, `krs_headers`, `enrollments`, `krs_war_windows`, `academic_rules` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (krs_status, advising_status) & parameter (krs.reservation_ttl_seconds, krs.war.rate_limit_per_min, krs.require_adviser_approval).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, CREATE, EXPORT, LOCK, REJECT, UNLOCK, UPDATE.
   - [ ] Engine lokal: Redis Redlock + Lua atomic seat decrement (DECR jika >0) dengan token antrean FIFO — unit test deterministik + golden dataset.
@@ -387,7 +387,7 @@
 ### R7. Penutupan siklus lintas-role — kelulusan, regulasi, alumni
 
 - [ ] **R7.1 M-30 Yudisium & SKPI** — role: `ADMIN_ACADEMIC`, `DEAN`, `STUDENT`, `UNIT_CLEARANCE_OFFICER`
-  - [ ] Migrasi + RLS: `clearance_rules`, `clearance_states`, `yudisium_batches`, `yudisium_members`, `skpi_documents` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `clearance_rules`, `clearances`, `yudisium_batches`, `yudisium_members`, `skpi_documents` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (clearance_requirement, graduation_predicate, yudisium_status) & parameter (yudisium.predicate_rules).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, READ, REJECT.
   - [ ] Engine lokal: DFA Clearance Engine — unit test deterministik + golden dataset.
@@ -419,7 +419,7 @@
   - [ ] UI Velzon (UI_UX §10.4): kartu Response rate, Bekerja < 6 bulan (IKU 1), Alumni terdata, Blast berjalan; tombol aksi tergating izin; topik WebSocket `tenant:{tid}:tracer_iku`.
   - [ ] Matriks izin (SECURITY §10.4) diuji per role: allow + deny.
 - [ ] **R7.5 M-34 Feeder PDDikti** — role: `FEEDER_OPERATOR`, `IT_ADMIN`
-  - [ ] Migrasi + RLS: `feeder_staging`, `feeder_rules`, `feeder_sync_jobs`, `feeder_corrections` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
+  - [ ] Migrasi + RLS: `feeder_staging`, `feeder_rules`, `pddikti_sync_runs`, `pddikti_correction_requests` (DATA_MODEL §15.6) — `pnpm db:lint` & tes RLS lintas-tenant hijau.
   - [ ] Seed lookup (feeder_entity_type, feeder_status) & parameter (feeder.fuzzy_threshold, feeder.retry_max).
   - [ ] Kontrak Zod + endpoint (API_SPEC §6.5) termasuk CRUD/TOGGLE_ACTIVE/EXPORT dan aksi: APPROVE, EXPORT, LOCK, REJECT, UPDATE.
   - [ ] Engine lokal: Local Fuzzy String Matcher (Jaro-Winkler + normalisasi) untuk koreksi referensi (wilayah, sekolah, nama ibu) + pre-sync rule engine — unit test deterministik + golden dataset.

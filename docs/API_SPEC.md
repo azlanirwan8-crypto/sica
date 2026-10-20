@@ -817,7 +817,7 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 | `POST /platform/tenants/:id/toggle-active` | TOGGLE_ACTIVE | `platform_saas.tenants.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
 | `DELETE /platform/tenants/:id` | DELETE | `platform_saas.tenants.delete` | hanya jika `GET /platform/tenants/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
 | `GET /platform/tenants/export` | EXPORT | `platform_saas.tenants.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
-| `GET /platform/subscriptions` | READ | `platform_saas.subscriptions.read` | list (filter/sort/cursor); detail `GET /platform/subscriptions/:id` — `tenant_subscriptions` |
+| `GET /platform/subscriptions` | READ | `platform_saas.subscriptions.read` | list (filter/sort/cursor); detail `GET /platform/subscriptions/:id` — `subscriptions` |
 | `POST /platform/subscriptions` | CREATE | `platform_saas.subscriptions.create` | wajib `Idempotency-Key` |
 | `PATCH /platform/subscriptions/:id` | UPDATE | `platform_saas.subscriptions.update` | wajib `If-Match` (versi baris) |
 | `POST /platform/subscriptions/:id/toggle-active` | TOGGLE_ACTIVE | `platform_saas.subscriptions.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
@@ -952,12 +952,8 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 
 | Method & Path (`/api/v1`) | Aksi kanonik | Permission | Keterangan |
 |---|---|---|---|
-| `GET /hr/employees` | READ | `hr_bkd.employees.read` | list (filter/sort/cursor); detail `GET /hr/employees/:id` — `employees` |
-| `POST /hr/employees` | CREATE | `hr_bkd.employees.create` | wajib `Idempotency-Key` |
-| `PATCH /hr/employees/:id` | UPDATE | `hr_bkd.employees.update` | wajib `If-Match` (versi baris) |
-| `POST /hr/employees/:id/toggle-active` | TOGGLE_ACTIVE | `hr_bkd.employees.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
-| `DELETE /hr/employees/:id` | DELETE | `hr_bkd.employees.delete` | hanya jika `GET /hr/employees/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
-| `GET /hr/employees/export` | EXPORT | `hr_bkd.employees.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
+| → `/admin/dosen` (§4.6) | CRUD + TOGGLE_ACTIVE + EXPORT | `admin.dosen` | `lecturers` adalah objek master §4.6 — **kanonik di sana**, tidak didefinisikan ulang |
+| → `/admin/tendik` (§4.6) | CRUD + TOGGLE_ACTIVE + EXPORT | `admin.tendik` | `staff` adalah objek master §4.6 — **kanonik di sana**, tidak didefinisikan ulang |
 | `GET /hr/leave-requests` | READ | `hr_bkd.leave_requests.read` | list (filter/sort/cursor); detail `GET /hr/leave-requests/:id` — `leave_requests` |
 | `POST /hr/leave-requests` | CREATE | `hr_bkd.leave_requests.create` | wajib `Idempotency-Key` |
 | `PATCH /hr/leave-requests/:id` | UPDATE | `hr_bkd.leave_requests.update` | wajib `If-Match` (versi baris) |
@@ -1248,7 +1244,7 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 | `POST /enrollment/krs/:id/toggle-active` | TOGGLE_ACTIVE | `enrollment.krs.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
 | `DELETE /enrollment/krs/:id` | DELETE | `enrollment.krs.delete` | hanya jika `GET /enrollment/krs/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
 | `GET /enrollment/krs/export` | EXPORT | `enrollment.krs.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
-| `GET /enrollment/krs-items` | READ | `enrollment.krs_items.read` | list (filter/sort/cursor); detail `GET /enrollment/krs-items/:id` — `krs_items` |
+| `GET /enrollment/krs-items` | READ | `enrollment.krs_items.read` | list (filter/sort/cursor); detail `GET /enrollment/krs-items/:id` — `enrollments` |
 | `POST /enrollment/krs-items` | CREATE | `enrollment.krs_items.create` | wajib `Idempotency-Key` |
 | `PATCH /enrollment/krs-items/:id` | UPDATE | `enrollment.krs_items.update` | wajib `If-Match` (versi baris) |
 | `POST /enrollment/krs-items/:id/toggle-active` | TOGGLE_ACTIVE | `enrollment.krs_items.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
@@ -1260,12 +1256,7 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 | `POST /enrollment/war-windows/:id/toggle-active` | TOGGLE_ACTIVE | `enrollment.war_windows.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
 | `DELETE /enrollment/war-windows/:id` | DELETE | `enrollment.war_windows.delete` | hanya jika `GET /enrollment/war-windows/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
 | `GET /enrollment/war-windows/export` | EXPORT | `enrollment.war_windows.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
-| `GET /enrollment/sks-limit-rules` | READ | `enrollment.sks_limit_rules.read` | list (filter/sort/cursor); detail `GET /enrollment/sks-limit-rules/:id` — `sks_limit_rules` |
-| `POST /enrollment/sks-limit-rules` | CREATE | `enrollment.sks_limit_rules.create` | wajib `Idempotency-Key` |
-| `PATCH /enrollment/sks-limit-rules/:id` | UPDATE | `enrollment.sks_limit_rules.update` | wajib `If-Match` (versi baris) |
-| `POST /enrollment/sks-limit-rules/:id/toggle-active` | TOGGLE_ACTIVE | `enrollment.sks_limit_rules.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
-| `DELETE /enrollment/sks-limit-rules/:id` | DELETE | `enrollment.sks_limit_rules.delete` | hanya jika `GET /enrollment/sks-limit-rules/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
-| `GET /enrollment/sks-limit-rules/export` | EXPORT | `enrollment.sks_limit_rules.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
+| → `/admin/pengaturan-akademik` (§4.6) | CRUD + TOGGLE_ACTIVE + EXPORT | `admin.pengaturan-akademik` | `academic_rules` adalah objek master §4.6 — **kanonik di sana**, tidak didefinisikan ulang |
 | `POST /enrollment/krs/:id/items/reserve` | CREATE | `enrollment.krs.create` | reservasi kursi (Redlock, idempoten) |
 | → `POST /academic/krs/submit (§4.2.2)` | UPDATE | — | **kanonik di §4**; tidak didefinisikan ulang (anti-duplikasi) |
 | `POST /enrollment/krs/:id/approve` | APPROVE | `enrollment.krs.approve` | enrollment.krs.approve oleh dosen wali |
@@ -1297,12 +1288,7 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 | `POST /schedule/runs/:id/toggle-active` | TOGGLE_ACTIVE | `scheduling.runs.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
 | `DELETE /schedule/runs/:id` | DELETE | `scheduling.runs.delete` | hanya jika `GET /schedule/runs/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
 | `GET /schedule/runs/export` | EXPORT | `scheduling.runs.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
-| `GET /schedule/meetings` | READ | `scheduling.meetings.read` | list (filter/sort/cursor); detail `GET /schedule/meetings/:id` — `class_meetings` |
-| `POST /schedule/meetings` | CREATE | `scheduling.meetings.create` | wajib `Idempotency-Key` |
-| `PATCH /schedule/meetings/:id` | UPDATE | `scheduling.meetings.update` | wajib `If-Match` (versi baris) |
-| `POST /schedule/meetings/:id/toggle-active` | TOGGLE_ACTIVE | `scheduling.meetings.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
-| `DELETE /schedule/meetings/:id` | DELETE | `scheduling.meetings.delete` | hanya jika `GET /schedule/meetings/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
-| `GET /schedule/meetings/export` | EXPORT | `scheduling.meetings.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
+| → `/admin/jadwal` (§4.6) | CRUD + TOGGLE_ACTIVE + EXPORT | `admin.jadwal` | `class_schedules` adalah objek master §4.6 — **kanonik di sana**, tidak didefinisikan ulang |
 | `GET /schedule/room-bookings` | READ | `scheduling.room_bookings.read` | list (filter/sort/cursor); detail `GET /schedule/room-bookings/:id` — `room_bookings` |
 | `POST /schedule/room-bookings` | CREATE | `scheduling.room_bookings.create` | wajib `Idempotency-Key` |
 | `PATCH /schedule/room-bookings/:id` | UPDATE | `scheduling.room_bookings.update` | wajib `If-Match` (versi baris) |
@@ -1319,7 +1305,7 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 
 | Method & Path (`/api/v1`) | Aksi kanonik | Permission | Keterangan |
 |---|---|---|---|
-| `GET /teaching/sessions` | READ | `teaching.sessions.read` | list (filter/sort/cursor); detail `GET /teaching/sessions/:id` — `lecture_sessions` |
+| `GET /teaching/sessions` | READ | `teaching.sessions.read` | list (filter/sort/cursor); detail `GET /teaching/sessions/:id` — `class_sessions` |
 | `POST /teaching/sessions` | CREATE | `teaching.sessions.create` | wajib `Idempotency-Key` |
 | `PATCH /teaching/sessions/:id` | UPDATE | `teaching.sessions.update` | wajib `If-Match` (versi baris) |
 | `POST /teaching/sessions/:id/toggle-active` | TOGGLE_ACTIVE | `teaching.sessions.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
@@ -1441,7 +1427,7 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 | `POST /attendance/sessions/:id/toggle-active` | TOGGLE_ACTIVE | `attendance.sessions.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
 | `DELETE /attendance/sessions/:id` | DELETE | `attendance.sessions.delete` | hanya jika `GET /attendance/sessions/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
 | `GET /attendance/sessions/export` | EXPORT | `attendance.sessions.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
-| `GET /attendance/records` | READ | `attendance.records.read` | list (filter/sort/cursor); detail `GET /attendance/records/:id` — `attendance_records` |
+| `GET /attendance/records` | READ | `attendance.records.read` | list (filter/sort/cursor); detail `GET /attendance/records/:id` — `attendances` |
 | `POST /attendance/records` | CREATE | `attendance.records.create` | wajib `Idempotency-Key` |
 | `PATCH /attendance/records/:id` | UPDATE | `attendance.records.update` | wajib `If-Match` (versi baris) |
 | `POST /attendance/records/:id/toggle-active` | TOGGLE_ACTIVE | `attendance.records.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
@@ -1480,7 +1466,7 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 | `POST /grading/values/:id/toggle-active` | TOGGLE_ACTIVE | `assessment.values.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
 | `DELETE /grading/values/:id` | DELETE | `assessment.values.delete` | hanya jika `GET /grading/values/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
 | `GET /grading/values/export` | EXPORT | `assessment.values.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
-| `GET /grading/change-requests` | READ | `assessment.change_requests.read` | list (filter/sort/cursor); detail `GET /grading/change-requests/:id` — `grade_change_requests` |
+| `GET /grading/change-requests` | READ | `assessment.change_requests.read` | list (filter/sort/cursor); detail `GET /grading/change-requests/:id` — `grade_corrections` |
 | `POST /grading/change-requests` | CREATE | `assessment.change_requests.create` | wajib `Idempotency-Key` |
 | `PATCH /grading/change-requests/:id` | UPDATE | `assessment.change_requests.update` | wajib `If-Match` (versi baris) |
 | `POST /grading/change-requests/:id/toggle-active` | TOGGLE_ACTIVE | `assessment.change_requests.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
@@ -1853,7 +1839,7 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 | `POST /yudisium/clearance-rules/:id/toggle-active` | TOGGLE_ACTIVE | `graduation.clearance_rules.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
 | `DELETE /yudisium/clearance-rules/:id` | DELETE | `graduation.clearance_rules.delete` | hanya jika `GET /yudisium/clearance-rules/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
 | `GET /yudisium/clearance-rules/export` | EXPORT | `graduation.clearance_rules.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
-| `GET /yudisium/clearance-states` | READ | `graduation.clearance_states.read` | list (filter/sort/cursor); detail `GET /yudisium/clearance-states/:id` — `clearance_states` |
+| `GET /yudisium/clearance-states` | READ | `graduation.clearance_states.read` | list (filter/sort/cursor); detail `GET /yudisium/clearance-states/:id` — `clearances` |
 | `POST /yudisium/clearance-states` | CREATE | `graduation.clearance_states.create` | wajib `Idempotency-Key` |
 | `PATCH /yudisium/clearance-states/:id` | UPDATE | `graduation.clearance_states.update` | wajib `If-Match` (versi baris) |
 | `POST /yudisium/clearance-states/:id/toggle-active` | TOGGLE_ACTIVE | `graduation.clearance_states.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
@@ -1970,13 +1956,13 @@ Tabel berikut mencantumkan, untuk setiap resource, enam endpoint standar dan aks
 | `POST /feeder/rules/:id/toggle-active` | TOGGLE_ACTIVE | `feeder_pddikti.rules.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
 | `DELETE /feeder/rules/:id` | DELETE | `feeder_pddikti.rules.delete` | hanya jika `GET /feeder/rules/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
 | `GET /feeder/rules/export` | EXPORT | `feeder_pddikti.rules.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
-| `GET /feeder/jobs` | READ | `feeder_pddikti.jobs.read` | list (filter/sort/cursor); detail `GET /feeder/jobs/:id` — `feeder_sync_jobs` |
+| `GET /feeder/jobs` | READ | `feeder_pddikti.jobs.read` | list (filter/sort/cursor); detail `GET /feeder/jobs/:id` — `pddikti_sync_runs` |
 | `POST /feeder/jobs` | CREATE | `feeder_pddikti.jobs.create` | wajib `Idempotency-Key` |
 | `PATCH /feeder/jobs/:id` | UPDATE | `feeder_pddikti.jobs.update` | wajib `If-Match` (versi baris) |
 | `POST /feeder/jobs/:id/toggle-active` | TOGGLE_ACTIVE | `feeder_pddikti.jobs.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
 | `DELETE /feeder/jobs/:id` | DELETE | `feeder_pddikti.jobs.delete` | hanya jika `GET /feeder/jobs/:id/impact` = 0 referensi; selain itu 409 `REFERENCED` |
 | `GET /feeder/jobs/export` | EXPORT | `feeder_pddikti.jobs.export` | CSV/XLSX async job, PII ter-mask sesuai izin |
-| `GET /feeder/corrections` | READ | `feeder_pddikti.corrections.read` | list (filter/sort/cursor); detail `GET /feeder/corrections/:id` — `feeder_corrections` |
+| `GET /feeder/corrections` | READ | `feeder_pddikti.corrections.read` | list (filter/sort/cursor); detail `GET /feeder/corrections/:id` — `pddikti_correction_requests` |
 | `POST /feeder/corrections` | CREATE | `feeder_pddikti.corrections.create` | wajib `Idempotency-Key` |
 | `PATCH /feeder/corrections/:id` | UPDATE | `feeder_pddikti.corrections.update` | wajib `If-Match` (versi baris) |
 | `POST /feeder/corrections/:id/toggle-active` | TOGGLE_ACTIVE | `feeder_pddikti.corrections.toggle_active` | soft (`is_active`), tidak menghapus riwayat |
