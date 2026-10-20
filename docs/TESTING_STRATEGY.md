@@ -369,3 +369,7 @@ cd apps/mobile
 flutter test --coverage
 genhtml coverage/lcov.info -o coverage/html
 ```
+
+## 6. Pengujian Enterprise 47 Modul (2026-10-20)
+
+Kasus uji kanonik tidak disalin di sini; sumbernya: rantai I-1…I-10 & simulasi S-1…S-6 ([PRD.md §10.4–10.5](file:///c:/SICA/docs/PRD.md)), acceptance criteria [PRD §10.6](file:///c:/SICA/docs/PRD.md), deny-by-default per sel matriks [SECURITY_COMPLIANCE §10.4](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md), golden dataset engine [ARCHITECTURE §11.4](file:///c:/SICA/docs/ARCHITECTURE.md). Lapisan wajib per modul: unit engine (deterministik), integrasi RLS lintas-tenant (0 baris bocor), kontrak event Zod (versi), E2E rantai lintas modul, beban WebSocket (p95 ≤ 2 s).

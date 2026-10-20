@@ -82,3 +82,16 @@ Dokumen ini mendefinisikan istilah domain akademik, regulasi pendidikan tinggi I
 | **Pepper** | Kriptografi | Rahasia kunci statis tambahan yang disimpan terpisah di KMS (Key Management Service) dan digabungkan sebelum hashing password untuk melindungi database jika dump SQL bocor. |
 | **CSP** | *Content Security Policy* | Header HTTP respons keamanan (`Content-Security-Policy`) yang menginstruksikan browser untuk membatasi eksekusi skrip hanya pada sumber terpercaya dan skrip ber-`nonce` dinamis untuk mencegah XSS. |
 | **DPA** | *Data Processing Agreement* | Perjanjian hukum pemrosesan data pribadi antara SICA (sebagai *Data Processor*) dan Kampus (sebagai *Data Controller*) sesuai mandat UU PDP. |
+
+## 6. Istilah Enterprise 47 Modul (2026-10-20)
+
+| Istilah | Arti |
+|---|---|
+| SSOT | Single Source of Truth — satu modul pemilik per entitas (ARCHITECTURE §11.1) |
+| Outbox | baris event yang ditulis dalam transaksi yang sama dengan data (ADR-7) |
+| Lookup dinamis | nilai pilihan di `lookup_values` dengan CRUD + `TOGGLE_ACTIVE`, pengganti ENUM (DATA_MODEL §15.1) |
+| Regulatory floor | batas minimum regulasi yang tidak boleh dilonggarkan tenant pada parameter |
+| Empat-mata (four-eyes) | aksi wajib disetujui orang kedua yang berbeda dari pemohon |
+| Tag feeder `F`/`O`/`M` | moda perkuliahan tatap muka / daring / campuran untuk pelaporan PDDikti |
+| MD-xx | kode objek data master di BENCHMARK_SEVIMA (bukan kode modul `M-xx`) |
+| RPL Tipe A | Rekognisi Pembelajaran Lampau untuk melanjutkan pendidikan formal (transfer SKS) |

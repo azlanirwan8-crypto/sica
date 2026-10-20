@@ -178,3 +178,7 @@ Setiap AI Agent yang menerima instruksi terkait SICA **harus** mengikuti alur be
 ---
 
 *File ini adalah sumber kebenaran utama. Setiap perubahan arsitektur atau kebijakan harus diperbarui di sini terlebih dahulu.*
+
+## 8. Cakupan Enterprise 47 Modul + SuperApp (2026-10-20)
+
+Sebelum mengerjakan modul apa pun, baca: PRD §10 (katalog & simulasi), ARCHITECTURE §11 (SSOT, real-time, engine lokal), DATA_MODEL §15 (zero-hardcoding & skema), API_SPEC §6, SECURITY_COMPLIANCE §10, UI_UX_DESIGN §10, INTEGRATIONS §5, ROADMAP_TASKS §0. GUC tenant kanonik: `app.current_tenant`. Aturan anti-duplikasi: setiap tabel, endpoint (method+path), role, event, dan matriks izin hanya didefinisikan di satu tempat; dokumen lain merujuk.
