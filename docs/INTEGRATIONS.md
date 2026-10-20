@@ -354,4 +354,6 @@ Semua kredensial disimpan sebagai referensi secret (`*_secret_ref`) — tidak pe
 
 Rantai I-1…I-10 ([PRD.md §10.4](file:///c:/SICA/docs/PRD.md)) diimplementasikan murni lewat event outbox ([ARCHITECTURE.md §11.5](file:///c:/SICA/docs/ARCHITECTURE.md)); tidak ada integrasi titik-ke-titik antar modul internal. Kontrak payload event berada di `packages/contracts/src/events/<domain>.ts` (Zod, versi `v1`); perubahan breaking → versi baru dan konsumen lama tetap dilayani sampai migrasi selesai.
 
+**Modul tanpa adaptor eksternal sendiri** (terhubung lewat event bus internal/outbox atau memakai adaptor milik modul lain di katalog di atas, mis. M-44 memakai adaptor SINTA milik M-21): M-01, M-02, M-03, M-04, M-05, M-06, M-07, M-09, M-11, M-12, M-13, M-14, M-16, M-17, M-18, M-19, M-23, M-24, M-25, M-26, M-28, M-29, M-30, M-31, M-32, M-33, M-36, M-37, M-40, M-41, M-42, M-43, M-44, M-46, M-47. Dengan daftar ini seluruh M-01…M-47 + APP tercakup di dokumen integrasi.
+
 <!-- SICA-47:END enterprise-47 -->

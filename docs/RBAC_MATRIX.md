@@ -767,7 +767,7 @@ Super Admin → `PLATFORM_OPERATOR`; Admin IT → `TENANT_ADMIN`/`IT_ADMIN`; Sec
 
 ### 12.3 Matriks Role × Modul × Aksi
 
-Matriks detail 11 aksi untuk seluruh role × 47 modul + APP **hanya didefinisikan satu kali** di [SECURITY_COMPLIANCE.md §10.4](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md) (sumber tunggal) — tidak disalin di sini untuk mencegah duplikasi/drift. Seed `role_permissions` dibangkitkan dari tabel tersebut.
+Matriks detail 11 aksi untuk seluruh role × 47 modul + APP **hanya didefinisikan satu kali** di [SECURITY_COMPLIANCE.md §10.4](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md) (sumber tunggal) — tidak disalin di sini untuk mencegah duplikasi/drift. Cakupan matriks: M-01, M-02, …, M-47 dan APP (seluruh 47 modul + SuperApp). Seed `role_permissions` dibangkitkan dari tabel tersebut.
 
 ### 12.4 Catatan Rekonsiliasi
 
