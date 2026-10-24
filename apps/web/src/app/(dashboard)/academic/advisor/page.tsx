@@ -1,8 +1,20 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { AlertTriangle, BadgeCheck, CheckCircle2, Clock3, Inbox, Search, Users } from 'lucide-react';
+import { Alert } from '@/components/ui/alert';
+import { Avatar } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardDescription, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
+import { Drawer } from '@/components/ui/drawer';
+import { Input } from '@/components/ui/input';
+import { MetaRow, PageHeader } from '@/components/ui/page-header';
+import { Progress } from '@/components/ui/progress';
 import { StatCard } from '@/components/ui/stat-card';
-import { VelzonDataGrid, type ColumnDef } from '@/components/ui/velzon-data-grid';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 
 interface AdviseeStudent {
   id: string;
@@ -86,11 +98,15 @@ const INITIAL_ADVISEES: AdviseeStudent[] = [
   },
 ];
 
+type SortKey = 'fullName' | 'ipsPrevious' | 'ipkCumulative' | 'totalSksSubmitted' | 'submittedAt' | 'status';
+
 export default function AdvisorApprovalPage() {
   const [advisees, setAdvisees] = useState<AdviseeStudent[]>(INITIAL_ADVISEES);
-  // NOTE: drawer detail mahasiswa bimbingan belum diimplementasikan (tech debt — lihat docs/ISSUE_RESOLUTION.md).
-  const [, setSelectedStudent] = useState<AdviseeStudent | null>(null);
+  const [selectedStudent, setSelectedStudent] = useState<AdviseeStudent | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   const totalAdvisees = advisees.length;
   const pendingCount = advisees.filter((a) => a.status === 'PENDING').length;
@@ -115,254 +131,337 @@ export default function AdvisorApprovalPage() {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  const columns: ColumnDef<AdviseeStudent>[] = [
-    {
-      key: 'nim',
-      header: 'NIM & MAHASISWA',
-      width: '240px',
-      render: (item) => (
-        <div>
-          <div style={{ fontWeight: 600, color: 'var(--sica-text-heading)' }}>
-            {item.fullName}
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--sica-text-muted)' }}>
-            NIM: {item.nim} • Sem. {item.semester}
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'academicScore',
-      header: 'IPS / IPK',
-      width: '130px',
-      render: (item) => (
-        <div>
-          <div style={{ fontSize: '12px', fontWeight: 600 }}>
-            IPS Lalu: <span style={{ color: 'var(--sica-color-primary)' }}>{item.ipsPrevious.toFixed(2)}</span>
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--sica-text-muted)' }}>
-            IPK: {item.ipkCumulative.toFixed(2)}
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'totalSksSubmitted',
-      header: 'BEBAN SKS',
-      width: '140px',
-      align: 'center',
-      render: (item) => {
-        const isExceeded = item.totalSksSubmitted > item.maxSksAllowed;
-        return (
-          <div>
-            <span
-              style={{
-                fontWeight: 700,
-                color: isExceeded ? 'var(--sica-color-danger)' : 'var(--sica-color-success)',
-                fontSize: '13px',
-              }}
-            >
-              {item.totalSksSubmitted} SKS
-            </span>
-            <span style={{ fontSize: '11px', color: 'var(--sica-text-muted)' }}>
-              {' '}/ Maks. {item.maxSksAllowed}
-            </span>
-            {isExceeded && (
-              <div style={{ fontSize: '10px', color: 'var(--sica-color-danger)', fontWeight: 600 }}>
-                ⚠️ Melampaui Batas
-              </div>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      key: 'submittedAt',
-      header: 'WAKTU PENGAJUAN',
-      render: (item) => (
-        <span style={{ fontSize: '12px', color: 'var(--sica-text-muted)' }}>
-          {item.submittedAt}
-        </span>
-      ),
-    },
-    {
-      key: 'status',
-      header: 'STATUS',
-      width: '120px',
-      align: 'center',
-      render: (item) => {
-        const statusMap = {
-          PENDING: { label: 'Menunggu', color: 'var(--sica-color-warning)', bg: 'var(--sica-color-warning-light)' },
-          APPROVED: { label: 'Disetujui', color: 'var(--sica-color-success)', bg: 'var(--sica-color-success-light)' },
-          REJECTED: { label: 'Revisi', color: 'var(--sica-color-danger)', bg: 'var(--sica-color-danger-light)' },
-        };
-        const s = statusMap[item.status];
-        return (
-          <span
-            style={{
-              padding: '3px 10px',
-              borderRadius: 'var(--sica-radius-full)',
-              backgroundColor: s.bg,
-              color: s.color,
-              fontWeight: 600,
-              fontSize: '11px',
-            }}
-          >
-            {s.label}
-          </span>
-        );
-      },
-    },
-    {
-      key: 'actions',
-      header: 'AKSI',
-      width: '160px',
-      align: 'center',
-      sortable: false,
-      render: (item) => (
-        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-          {item.status === 'PENDING' ? (
-            <>
-              <button
-                onClick={() => handleApprove(item.id)}
-                style={{
-                  padding: '4px 10px',
-                  backgroundColor: 'var(--sica-color-success)',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: 'var(--sica-radius-sm)',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Setujui
-              </button>
-              <button
-                onClick={() => handleReject(item.id)}
-                style={{
-                  padding: '4px 10px',
-                  backgroundColor: 'var(--sica-color-danger)',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: 'var(--sica-radius-sm)',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Tolak
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => setSelectedStudent(item)}
-              style={{
-                padding: '4px 10px',
-                backgroundColor: 'var(--sica-surface-hover)',
-                color: 'var(--sica-text-body)',
-                border: '1px solid var(--sica-border-color)',
-                borderRadius: 'var(--sica-radius-sm)',
-                fontSize: '11px',
-                cursor: 'pointer',
-              }}
-            >
-              Lihat Detail
-            </button>
-          )}
-        </div>
-      ),
-    },
-  ];
+  const visibleRows = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    const filtered = query
+      ? advisees.filter(
+          (item) =>
+            item.fullName.toLowerCase().includes(query) || item.nim.toLowerCase().includes(query),
+        )
+      : advisees;
+
+    if (!sortKey) return filtered;
+
+    return [...filtered].sort((left, right) => {
+      const a = left[sortKey];
+      const b = right[sortKey];
+      const direction = sortOrder === 'asc' ? 1 : -1;
+      if (typeof a === 'number' && typeof b === 'number') return (a - b) * direction;
+      return String(a).localeCompare(String(b)) * direction;
+    });
+  }, [advisees, searchTerm, sortKey, sortOrder]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      if (sortOrder === 'asc') {
+        setSortOrder('desc');
+      } else {
+        setSortKey(null);
+        setSortOrder('asc');
+      }
+      return;
+    }
+    setSortKey(key);
+    setSortOrder('asc');
+  };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Header */}
-      <div>
-        <h1
-          style={{
-            fontSize: '20px',
-            fontWeight: 700,
-            color: 'var(--sica-text-heading)',
-            margin: 0,
-          }}
-        >
-          Approval KRS Dosen Pembimbing Akademik (DPA)
-        </h1>
-        <p
-          style={{
-            fontSize: '13px',
-            color: 'var(--sica-text-muted)',
-            margin: '4px 0 0 0',
-          }}
-        >
-          Verifikasi rencana studi dan beban SKS mahasiswa bimbingan akademik Anda • Semester Ganjil 2025/2026
-        </p>
-      </div>
-
-      {notification && (
-        <div
-          style={{
-            padding: '12px 18px',
-            backgroundColor: 'var(--sica-color-success-light)',
-            color: 'var(--sica-color-success)',
-            borderRadius: 'var(--sica-radius-md)',
-            border: '1px solid var(--sica-color-success)',
-            fontSize: '13px',
-          }}
-        >
-          ✅ {notification}
-        </div>
-      )}
-
-      {/* KPI Cards */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '16px',
-        }}
-      >
-        <StatCard
-          title="Total Bimbingan"
-          value={totalAdvisees}
-          subtitle="Mahasiswa Aktif"
-          icon="👥"
-          variant="primary"
-        />
-        <StatCard
-          title="Menunggu Review"
-          value={pendingCount}
-          subtitle="Perlu Tindakan Cepat"
-          icon="⏳"
-          variant="warning"
-        />
-        <StatCard
-          title="Telah Disetujui"
-          value={approvedCount}
-          subtitle="KRS Terverifikasi"
-          icon="✅"
-          variant="success"
-        />
-        <StatCard
-          title="Perlu Revisi"
-          value={rejectedCount}
-          subtitle="Dikembalikan ke Mahasiswa"
-          icon="⚠️"
-          variant="danger"
-        />
-      </div>
-
-      {/* Grid Mahasiswa Bimbingan */}
-      <VelzonDataGrid
-        title="Daftar Mahasiswa Bimbingan Akademik"
-        subtitle="Klik tombol Setujui untuk meratifikasi KRS atau Tolak jika rencana studi tidak sesuai beban SKS."
-        columns={columns}
-        data={advisees}
-        keyExtractor={(row) => row.id}
-        searchPlaceholder="Cari nama atau NIM mahasiswa..."
-        searchKeys={['fullName', 'nim']}
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Approval KRS Dosen Pembimbing Akademik (DPA)"
+        description="Verifikasi rencana studi dan beban SKS mahasiswa bimbingan akademik Anda • Semester Ganjil 2025/2026"
+        crumbs={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Akademik' }, { label: 'Approval DPA' }]}
+        actions={
+          pendingCount > 0 ? (
+            <Badge tone="warning" look="label" size="lg">
+              <Clock3 size={13} strokeWidth={2} aria-hidden />
+              {pendingCount} menunggu review
+            </Badge>
+          ) : (
+            <Badge tone="success" look="label" size="lg">
+              <CheckCircle2 size={13} strokeWidth={2} aria-hidden />
+              Semua pengajuan selesai
+            </Badge>
+          )
+        }
       />
+
+      {notification ? <Alert tone="success" title="Pengajuan diperbarui">{notification}</Alert> : null}
+
+      <section aria-label="Ringkasan bimbingan" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Total Bimbingan"
+          value={String(totalAdvisees)}
+          hint="Mahasiswa Aktif"
+          icon={<Users size={16} strokeWidth={2} aria-hidden />}
+        />
+        <StatCard
+          label="Menunggu Review"
+          value={String(pendingCount)}
+          hint="Perlu Tindakan Cepat"
+          icon={<Clock3 size={16} strokeWidth={2} aria-hidden />}
+        />
+        <StatCard
+          label="Telah Disetujui"
+          value={String(approvedCount)}
+          hint="KRS Terverifikasi"
+          icon={<BadgeCheck size={16} strokeWidth={2} aria-hidden />}
+        />
+        <StatCard
+          label="Perlu Revisi"
+          value={String(rejectedCount)}
+          hint="Dikembalikan ke Mahasiswa"
+          icon={<AlertTriangle size={16} strokeWidth={2} aria-hidden />}
+        />
+      </section>
+
+      <Card>
+        <CardHeader className="flex-wrap">
+          <CardHeading>
+            <CardTitle>Daftar Mahasiswa Bimbingan Akademik</CardTitle>
+            <CardDescription>
+              Klik tombol Setujui untuk meratifikasi KRS atau Tolak jika rencana studi tidak sesuai
+              beban SKS.
+            </CardDescription>
+          </CardHeading>
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge tone="secondary" look="label">
+              {visibleRows.length} dari {totalAdvisees} entri
+            </Badge>
+            <Input
+              type="search"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Cari nama atau NIM mahasiswa..."
+              aria-label="Cari nama atau NIM mahasiswa"
+              startIcon={<Search size={15} strokeWidth={2} aria-hidden />}
+              className="w-full sm:w-72"
+            />
+          </div>
+        </CardHeader>
+
+        {visibleRows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 px-6 py-14 text-center">
+            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+              <Inbox size={18} strokeWidth={2} aria-hidden />
+            </span>
+            <p className="text-sm font-semibold text-[color:var(--sica-text-heading)]">
+              Tidak ada data ditemukan.
+            </p>
+            <p className="max-w-sm text-[13px] leading-relaxed text-[color:var(--sica-text-muted)]">
+              Belum ada mahasiswa bimbingan yang cocok dengan kata kunci
+              {searchTerm.trim() ? ` “${searchTerm.trim()}”` : ''}. Kosongkan pencarian untuk melihat
+              seluruh pengajuan.
+            </p>
+            {searchTerm ? (
+              <Button variant="soft" size="sm" className="mt-1" onClick={() => setSearchTerm('')}>
+                Bersihkan pencarian
+              </Button>
+            ) : null}
+          </div>
+        ) : (
+          <Table>
+            <THead>
+              <TH sortable active={sortKey === 'fullName'} onSort={() => toggleSort('fullName')}>
+                Mahasiswa
+              </TH>
+              <TH sortable active={sortKey === 'ipsPrevious'} onSort={() => toggleSort('ipsPrevious')}>
+                IPS / IPK
+              </TH>
+              <TH
+                align="center"
+                sortable
+                active={sortKey === 'totalSksSubmitted'}
+                onSort={() => toggleSort('totalSksSubmitted')}
+              >
+                Beban SKS
+              </TH>
+              <TH
+                sortable
+                active={sortKey === 'submittedAt'}
+                onSort={() => toggleSort('submittedAt')}
+              >
+                Waktu Pengajuan
+              </TH>
+              <TH align="center" sortable active={sortKey === 'status'} onSort={() => toggleSort('status')}>
+                Status
+              </TH>
+              <TH align="right">Aksi</TH>
+            </THead>
+            <TBody>
+              {visibleRows.map((item) => {
+                const isExceeded = item.totalSksSubmitted > item.maxSksAllowed;
+                const ratio =
+                  item.maxSksAllowed > 0
+                    ? Math.min(100, (item.totalSksSubmitted / item.maxSksAllowed) * 100)
+                    : 0;
+                return (
+                  <TR key={item.id}>
+                    <TD>
+                      <div className="flex items-center gap-3">
+                        <Avatar name={item.fullName} size="sm" />
+                        <div className="min-w-0">
+                          <p className="truncate text-[13.5px] font-medium text-[color:var(--sica-text-heading)]">
+                            {item.fullName}
+                          </p>
+                          <p className="text-[11.5px] tabular text-[color:var(--sica-text-muted)]">
+                            NIM: {item.nim} • Sem. {item.semester}
+                          </p>
+                        </div>
+                      </div>
+                    </TD>
+                    <TD>
+                      <div className="flex flex-col gap-0.5 text-[12px] text-[color:var(--sica-text-muted)]">
+                        <span>
+                          IPS Lalu:{' '}
+                          <span className="font-semibold tabular text-primary-hover">
+                            {item.ipsPrevious.toFixed(2)}
+                          </span>
+                        </span>
+                        <span>
+                          IPK:{' '}
+                          <span className="font-semibold tabular text-[color:var(--sica-text-heading)]">
+                            {item.ipkCumulative.toFixed(2)}
+                          </span>
+                        </span>
+                      </div>
+                    </TD>
+                    <TD align="center">
+                      <div className="mx-auto flex w-40 flex-col gap-1.5">
+                        <p
+                          className={cn(
+                            'text-[13px] font-semibold tabular',
+                            isExceeded
+                              ? 'text-danger-hover'
+                              : 'text-[color:var(--sica-text-heading)]',
+                          )}
+                        >
+                          {item.totalSksSubmitted} SKS
+                          <span className="font-normal text-[color:var(--sica-text-muted)]">
+                            {' '}/ Maks. {item.maxSksAllowed}
+                          </span>
+                        </p>
+                        <Progress
+                          value={ratio}
+                          size="sm"
+                          tone={isExceeded ? 'danger' : 'success'}
+                          label={`Beban SKS ${item.totalSksSubmitted} dari maksimum ${item.maxSksAllowed}`}
+                        />
+                        {isExceeded ? (
+                          <p className="flex items-center justify-center gap-1 text-[11px] font-semibold text-danger-hover">
+                            <AlertTriangle size={12} strokeWidth={2.2} aria-hidden />
+                            Melampaui Batas
+                          </p>
+                        ) : null}
+                      </div>
+                    </TD>
+                    <TD className="whitespace-nowrap text-[12.5px] tabular text-[color:var(--sica-text-muted)]">
+                      {item.submittedAt}
+                    </TD>
+                    <TD align="center">
+                      <StatusBadge status={item.status} />
+                    </TD>
+                    <TD align="right">
+                      <div className="flex justify-end gap-2">
+                        {item.status === 'PENDING' ? (
+                          <>
+                            <Button variant="soft" size="xs" onClick={() => handleApprove(item.id)}>
+                              Setujui
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="xs"
+                              onClick={() => handleReject(item.id)}
+                            >
+                              Tolak
+                            </Button>
+                          </>
+                        ) : (
+                          <Button variant="outline" size="xs" onClick={() => setSelectedStudent(item)}>
+                            Lihat Detail
+                          </Button>
+                        )}
+                      </div>
+                    </TD>
+                  </TR>
+                );
+              })}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      <Drawer
+        open={selectedStudent !== null}
+        onClose={() => setSelectedStudent(null)}
+        title={selectedStudent?.fullName ?? 'Detail mahasiswa'}
+        description={
+          selectedStudent
+            ? `${selectedStudent.studyProgram} • Semester ${selectedStudent.semester}`
+            : undefined
+        }
+        footer={
+          <Button variant="soft" onClick={() => setSelectedStudent(null)}>
+            Tutup
+          </Button>
+        }
+      >
+        {selectedStudent ? (
+          <div className="flex flex-col gap-6">
+            <div className="flex items-center justify-between gap-4">
+              <MetaRow
+                items={[
+                  { label: 'NIM', value: selectedStudent.nim },
+                  { label: 'Diajukan', value: selectedStudent.submittedAt },
+                ]}
+              />
+              <StatusBadge status={selectedStudent.status} look="label" />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-4">
+                <span className="section-label">Prestasi</span>
+                <span className="text-[13px] font-semibold tabular text-[color:var(--sica-text-heading)]">
+                  IPS {selectedStudent.ipsPrevious.toFixed(2)} · IPK {selectedStudent.ipkCumulative.toFixed(2)}
+                </span>
+              </div>
+              <p className="text-[13px] leading-relaxed text-[color:var(--sica-text-body)]">
+                IPS terakhir dipakai sebagai dasar kuota maksimum SKS pada semester berjalan.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-4">
+                <span className="section-label">Beban SKS</span>
+                <span
+                  className={cn(
+                    'text-[13px] font-semibold tabular',
+                    selectedStudent.totalSksSubmitted > selectedStudent.maxSksAllowed
+                      ? 'text-danger-hover'
+                      : 'text-[color:var(--sica-text-heading)]',
+                  )}
+                >
+                  {selectedStudent.totalSksSubmitted} / Maks. {selectedStudent.maxSksAllowed}
+                </span>
+              </div>
+              <Progress
+                value={
+                  selectedStudent.maxSksAllowed > 0
+                    ? Math.min(
+                        100,
+                        (selectedStudent.totalSksSubmitted / selectedStudent.maxSksAllowed) * 100,
+                      )
+                    : 0
+                }
+                tone={
+                  selectedStudent.totalSksSubmitted > selectedStudent.maxSksAllowed ? 'danger' : 'success'
+                }
+                label="Beban SKS terhadap maksimum"
+              />
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
     </div>
   );
 }

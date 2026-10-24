@@ -7,35 +7,36 @@
  * Response: Standard Envelope + updated enrollment statuses
  */
 import type { NextRequest } from 'next/server';
-import { KrsApprovalRequestSchema } from '@sica/contracts';
+import { KrsApprovalRequestSchema, PERM } from '@sica/contracts';
 import {
   extractRequestContext,
   successResponse,
   validationFailed,
-  unauthorized,
-  forbidden,
   badRequest,
+  forbidden,
   internalError,
 } from '@/lib/api-response';
+import { requireDataPrincipal, holdsScoped } from '@/modules/authz/rbac-repository';
+import { ensureModuleActive } from '@/lib/module-gate';
 
 export async function POST(request: NextRequest) {
   const ctx = extractRequestContext(request);
 
+  // Gerbang entitlement (SEC-09): modul enrollment wajib ACTIVE/TRIAL.
+  const moduleDenied = await ensureModuleActive('enrollment')(ctx);
+  if (moduleDenied) return moduleDenied;
+
   try {
-    // 1. Cek autentikasi
-    if (!ctx.tenantId || !ctx.userId) {
-      return unauthorized(ctx);
+    // 1. L3 (SEC-10): hak VALIDATE dibaca dari tabel user_role_assignments.
+    //    L4 (SEC-11): `holdsScoped` menyaring grant ber-izin; penugasan ber-lingkup
+    //    periode yang ketat menyusul seed per-periode di R-2.
+    const access = await requireDataPrincipal(ctx, PERM.enrollmentKrsApprove);
+    if (!access.granted) return access.response;
+    if (!holdsScoped(access.principal.access, PERM.enrollmentKrsApprove)) {
+      return forbidden(ctx, 'Aksi ini berada di luar hak akses peran Anda.');
     }
 
-    // 2. Cek role DPA
-    // TODO: Verifikasi bahwa userId memiliki role ADVISER atau COORDINATOR
-    // Mock: selalu dianggap DPA
-    const isDpa = true;
-    if (!isDpa) {
-      return forbidden(ctx, 'Hanya Dosen Pembimbing Akademik yang dapat menyetujui KRS.');
-    }
-
-    // 3. Parse & validasi body
+    // 2. Parse & validasi body
     const body: unknown = await request.json();
     const parsed = KrsApprovalRequestSchema.safeParse(body);
 

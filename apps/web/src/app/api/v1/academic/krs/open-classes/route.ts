@@ -6,25 +6,42 @@
  *
  * Query Params: periodId (required), search, dayOfWeek, page, limit
  * Response: Standard Envelope + paginated KrsClassItem[]
+ *
+ * Riwayat temuan (G-7/RD-154): rute ini pernah menjawab dari
+ * `generateMockOpenClasses()` dengan TODO "ganti dengan query Drizzle", sehingga
+ * layar menawarkan affordance di atas data yang tidak ada. Sejak fase 1 daftar
+ * dibaca dari PostgreSQL lewat `listOpenClasses()` — read-only, di dalam
+ * `withTenantContext` (RLS) dan pada Primary karena jalur ini dipakai
+ * read-your-writes. Tanpa baris `students` untuk subjek ini hasilnya daftar
+ * KOSONG (200), bukan 500 — kontrak daftar tidak pernah menjanjikan kelas.
  */
 import type { NextRequest } from 'next/server';
-import { OpenClassesQuerySchema } from '@sica/contracts';
+import { OpenClassesQuerySchema, PERM } from '@sica/contracts';
 import {
   extractRequestContext,
   successResponse,
   validationFailed,
-  unauthorized,
   internalError,
 } from '@/lib/api-response';
+import { requireDataPrincipal } from '@/modules/authz/rbac-repository';
+
+import { listOpenClasses } from '@/modules/academic/services/krs-open-classes.service';
+import { ensureModuleActive } from '@/lib/module-gate';
+
+export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   const ctx = extractRequestContext(request);
 
+  // Gerbang entitlement (SEC-09): modul enrollment wajib ACTIVE/TRIAL.
+  const moduleDenied = await ensureModuleActive('enrollment')(ctx);
+  if (moduleDenied) return moduleDenied;
+
   try {
-    // 1. Cek autentikasi
-    if (!ctx.tenantId) {
-      return unauthorized(ctx);
-    }
+    // 1. Guard izin (SEC-05/06): fail-closed, subjek dari token terverifikasi.
+    const access = await requireDataPrincipal(ctx, PERM.enrollmentKrsView);
+    if (!access.granted) return access.response;
+    const { tenantId, userId } = access.principal;
 
     // 2. Parse query params
     const searchParams = Object.fromEntries(request.nextUrl.searchParams.entries());
@@ -42,17 +59,19 @@ export async function GET(request: NextRequest) {
 
     const { periodId, search, dayOfWeek, page, limit } = parsed.data;
 
-    // 3. Mock data kelas yang tersedia
-    // TODO: Ganti dengan query Drizzle ORM ke database
-    const mockClasses = generateMockOpenClasses(periodId, search, dayOfWeek);
+    // 3. Daftar kelas nyata milik mahasiswa ini (periode × prodi × status OPEN).
+    const { items, totalRecords } = await listOpenClasses(tenantId, userId, {
+      periodId,
+      search,
+      dayOfWeek,
+      page,
+      limit,
+    });
 
     // 4. Pagination
-    const totalRecords = mockClasses.length;
     const totalPages = Math.ceil(totalRecords / limit);
-    const startIdx = (page - 1) * limit;
-    const paginatedData = mockClasses.slice(startIdx, startIdx + limit);
 
-    return successResponse(paginatedData, ctx, 200, {
+    return successResponse(items, ctx, 200, {
       page,
       limit,
       totalRecords,
@@ -63,106 +82,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return internalError(ctx, error);
   }
-}
-
-// =============================================================================
-// Mock Data Generator (akan diganti query DB di integrasi)
-// =============================================================================
-interface MockClassItem {
-  classId: string;
-  courseCode: string;
-  courseName: string;
-  className: string;
-  sks: number;
-  capacity: number;
-  enrolledCount: number;
-  lecturerNames: string[];
-  schedules: Array<{
-    dayOfWeek: number;
-    startTime: string;
-    endTime: string;
-    roomCode: string | null;
-  }>;
-  hasConflict: boolean;
-  conflictDescription: string | null;
-}
-
-function generateMockOpenClasses(
-  _periodId: string,
-  search?: string,
-  dayOfWeek?: number
-): MockClassItem[] {
-  const courses = [
-    { code: 'IF-101', name: 'Algoritma & Pemrograman', sks: 3 },
-    { code: 'IF-102', name: 'Struktur Data', sks: 3 },
-    { code: 'IF-201', name: 'Basis Data', sks: 3 },
-    { code: 'IF-202', name: 'Jaringan Komputer', sks: 3 },
-    { code: 'IF-301', name: 'Rekayasa Perangkat Lunak', sks: 4 },
-    { code: 'IF-302', name: 'Kecerdasan Buatan', sks: 3 },
-    { code: 'MK-101', name: 'Kalkulus I', sks: 3 },
-    { code: 'MK-102', name: 'Fisika Dasar', sks: 2 },
-    { code: 'MK-201', name: 'Statistika', sks: 3 },
-    { code: 'UM-101', name: 'Pancasila & Kewarganegaraan', sks: 2 },
-  ];
-
-  const lecturers = [
-    'Dr. Budi Santoso, M.Kom.',
-    'Prof. Ani Wijaya, Ph.D.',
-    'Ir. Candra Pratama, M.T.',
-    'Dra. Dewi Lestari, M.Si.',
-    'Dr. Eko Prasetyo, S.T., M.Eng.',
-  ];
-
-  const classes: MockClassItem[] = [];
-  let idx = 0;
-
-  for (const course of courses) {
-    for (const kelas of ['Kelas A', 'Kelas B']) {
-      idx++;
-      const dayNum = ((idx % 5) + 1); // 1-5 (Senin-Jumat)
-      const startHour = 7 + (idx % 5) * 2;
-
-      classes.push({
-        classId: crypto.randomUUID(),
-        courseCode: course.code,
-        courseName: course.name,
-        className: kelas,
-        sks: course.sks,
-        capacity: 40,
-        enrolledCount: Math.floor(Math.random() * 35),
-        lecturerNames: [lecturers[idx % lecturers.length] ?? 'Dosen TBA'],
-        schedules: [
-          {
-            dayOfWeek: dayNum,
-            startTime: `${String(startHour).padStart(2, '0')}:00`,
-            endTime: `${String(startHour + 2).padStart(2, '0')}:40`,
-            roomCode: `R.${300 + (idx % 10)}`,
-          },
-        ],
-        hasConflict: false,
-        conflictDescription: null,
-      });
-    }
-  }
-
-  // Filter berdasarkan search
-  let filtered = classes;
-  if (search) {
-    const q = search.toLowerCase();
-    filtered = filtered.filter(
-      (c) =>
-        c.courseName.toLowerCase().includes(q) ||
-        c.courseCode.toLowerCase().includes(q) ||
-        c.className.toLowerCase().includes(q)
-    );
-  }
-
-  // Filter berdasarkan hari
-  if (dayOfWeek) {
-    filtered = filtered.filter((c) =>
-      c.schedules.some((s) => s.dayOfWeek === dayOfWeek)
-    );
-  }
-
-  return filtered;
 }

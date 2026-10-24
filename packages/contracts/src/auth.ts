@@ -101,6 +101,34 @@ export type MfaVerifyResponseData = z.infer<typeof MfaVerifyResponseDataSchema>;
 export const MfaVerifyResponseEnvelopeSchema = createSuccessEnvelope(MfaVerifyResponseDataSchema);
 export type MfaVerifyResponseEnvelope = z.infer<typeof MfaVerifyResponseEnvelopeSchema>;
 
+// ── MFA self-service (enroll + konfirmasi) — R-1 `BLUEPRINT_ROLE_BY_ROLE §1.7`: aksi tulis
+// platform mewajibkan sesi `amr=['mfa']`, yang hanya bisa lahir setelah faktor terkonfirmasi.
+export const MfaEnrollRequestSchema = z.object({
+  label: z.string().max(80).optional(),
+});
+export type MfaEnrollRequest = z.infer<typeof MfaEnrollRequestSchema>;
+
+export const MfaEnrollResponseDataSchema = z.object({
+  factorId: z.string().uuid(),
+  secret: z.string().min(16),          // hanya keluar pada respons ini; tak ada jalur baca setelahnya
+  otpauthUri: z.string().url(),
+});
+export type MfaEnrollResponseData = z.infer<typeof MfaEnrollResponseDataSchema>;
+
+export const MfaConfirmRequestSchema = z.object({
+  code: z
+    .string()
+    .length(6, { message: 'Kode OTP harus tepat 6 digit angka.' })
+    .regex(/^\d+$/, { message: 'Kode OTP hanya boleh berisi angka.' }),
+});
+export type MfaConfirmRequest = z.infer<typeof MfaConfirmRequestSchema>;
+
+export const MfaConfirmResponseDataSchema = z.object({
+  verified: z.literal(true),
+  mfaRequired: z.boolean(),
+});
+export type MfaConfirmResponseData = z.infer<typeof MfaConfirmResponseDataSchema>;
+
 // ==========================================
 // 4. Token Refresh Schemas
 // ==========================================

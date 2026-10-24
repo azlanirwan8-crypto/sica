@@ -8,7 +8,7 @@
 
 ## 1. Kredensial Login Default untuk Pengujian (Testing Accounts)
 
-Untuk mempermudah pengujian otentikasi lintas role (RBAC) pada Web Portal dan Mobile App, seluruh akun seed menggunakan password seragam dengan hash Argon2id yang telah digenerate:
+Untuk mempermudah pengujian otentikasi lintas role (RBAC) pada Web Portal dan Mobile App, seluruh akun seed memakai **satu sandi seragam**. *Catatan akurasi (diralat 2026-10-19, `AUDIT_READINESS RD-24`): paragraf ini dulu mengklaim hash Argon2id. Kenyataan kode hari ini = **Scrypt peppered** karena paket `argon2` native belum menjadi dependensi (lihat §1.1 di bawah dan `SECURITY_COMPLIANCE §2.1`); contoh hash di bawah hanyalah ilustrasi bentuk, **bukan** nilai yang ada di basis data seed.*
 
 > **Password Default Seluruh Akun Testing:**  
 > `SicaDemo2026!`  
@@ -16,7 +16,7 @@ Untuk mempermudah pengujian otentikasi lintas role (RBAC) pada Web Portal dan Mo
 
 | Role | Username / Identifier | Email Login | Nama Lengkap | Unit / Keterangan |
 | :--- | :--- | :--- | :--- | :--- |
-| **Super Admin (Tenant)** | `adm.nusantara` | `admin@sica.ac.id` | **Bambang Wijaya, S.Kom., M.T.** | Kepala Biro Administrasi Akademik (BAAK) |
+| **Admin Akademik (operasional, bukan Admin IT)** | `adm.nusantara` | `admin@sica.ac.id` | **Bambang Wijaya, S.Kom., M.T.** | Kepala Biro Administrasi Akademik (BAAK); assignment/izin mengikuti RBAC, bukan alias login |
 | **Dosen / DPA** | `0412088501` | `dosen@sica.ac.id` | **Dr. Eng. Ir. Hendra Gunawan, S.T., M.T.** | Dosen Teknik Informatika / DPA Utama |
 | **Mahasiswa Aktif** | `220601001` | `mahasiswa@sica.ac.id` | **Ahmad Rizky Pratama** | Mahasiswa S1 Teknik Informatika (Sem 5) |
 
@@ -24,13 +24,24 @@ Untuk mempermudah pengujian otentikasi lintas role (RBAC) pada Web Portal dan Mo
 Skrip nyata: `apps/web/src/scripts/dev-seed.ts` → `pnpm --filter @sica/web seed:dev` (idempoten).
 Hash sandi memakai **Scrypt peppered** (bukan Argon2id — `argon2` native belum terpasang; adapter siap tukar). Akun & kredensial aktual saat ini (tenant slug **`demo`**):
 
-| Role | Identifier (NIM/NIDN/Email) | Password dev |
-| :--- | :--- | :--- |
-| tenant_admin | `admin@demo.sica.test` / `ADMIN01` | `AdminPass!23` |
-| dosen | `dosen@demo.sica.test` / `NIDN9001` | `LecturerPass!23` |
-| mahasiswa | `mhs@demo.sica.test` / `2201010045` | `StudentPass!23` |
+| Role | Identifier (NIM/NIDN/Email) | Password dev | MFA dev |
+| :--- | :--- | :--- | :--- |
+| platform operator (R-1) | `platform@demo.sica.test` (slug tenant `platform`) | `PlatformPass!23` | **wajib** |
+| tenant_admin | `admin@demo.sica.test` / `ADMIN01` | `AdminPass!23` | tidak — sengaja, agar gerbang `401 MFA_REQUIRED` tetap teruji |
+| tenant_admin (pemohon) | `admin2@demo.sica.test` / `ADMIN02` | `Admin2Pass!23` | **wajib** |
+| tenant_admin (penyetuju kedua) | `admin3@demo.sica.test` / `ADMIN03` | `Admin3Pass!23` | **wajib** |
+| dosen | `dosen@demo.sica.test` / `NIDN9001` | `LecturerPass!23` | tidak |
+| mahasiswa | `mhs@demo.sica.test` / `2201010045` | `StudentPass!23` | tidak |
 
-> Tabel §1/§2+ (2 fakultas, 10 dosen, periode, Argon2id) = **spesifikasi target**, belum di-seed penuh. Seed dev kini mengaktifkan 9 modul **core** untuk tenant `demo` agar UI/entitlement tidak kosong. Terverifikasi login HTTP 200 (JWT RS256 nyata), 401 salah sandi, 422 tenant asing.
+**Secret TOTP dev (HANYA lokal, vektor RFC 6238, dicetak seed sebagai `otpauth://`):** `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ`. Kode 6 digit dihitung dari secret ini; `node .tools/totp-dev.mjs` mencetak kode yang sedang berlaku. Dua admin ber-MFA (`admin2`/`admin3`) adalah fixture uji **empat-mata tingkat akun** pada `PENDING → APPROVED`: bukti yang dapat diperoleh hanya pemohon dan penyetuju memiliki `userId` berbeda, **bukan dua manusia berbeda**. Satu manusia dapat mengendalikan kedua akun; fixture ini tidak membuktikan pencegahannya.
+
+> Tabel §1/§2+ (2 fakultas, 10 dosen, periode, Argon2id) = **spesifikasi target**, belum di-seed penuh. Seed dev kini mengaktifkan 9 modul **core** untuk tenant `demo` (`identity · academic · teaching · enrollment · attendance · assessment · finance · feeder_pddikti · audit`) agar UI/entitlement tidak kosong. Terverifikasi login HTTP 200 (JWT RS256 nyata), 401 salah sandi, 422 tenant asing.
+>
+> **Residu uji — mekanisme cleanup ada, tetapi tidak aman untuk apply rutin (`RD-146`, ralat forensik Fase 1).** `apps/web/src/scripts/dev-seed-clean.ts` menolak `NODE_ENV=production` dan mencari tenant `demo`, tetapi dua pagar itu **bukan bukti kepemilikan satu run**. Predikat `access_change_requests.status = 'PENDING'` mencakup semua permintaan tertunda tenant tersebut, bukan hanya fixture; predikat `users.email LIKE 'r2-%@demo.sica.test'` bersifat global, dan penghapusan user dapat menyentuh relasi/cascade di luar run uji. Pola `UJI%` dan `attendance.uji_e2e%` juga bukan identitas run unik. Hitungan dry-run tidak merinci seluruh relasi yang akan dihapus.
+>
+> **Jangan jalankan `--apply` dengan mekanisme yang ada.** Status residu tidak ditutup hanya karena pembersih tersedia. Perbaikan mendatang wajib: manifest kepemilikan `run_id` + tenant + ID eksplisit setiap fixture/relasi; dry-run berdaftar-ID dan dampak FK/cascade; snapshot sebelum tindakan; persetujuan atas diff; pengecekan tenant serta kepemilikan ulang dalam transaksi; dan pembandingan data non-run sebelum/sesudah. Pengguna global atau relasi tenant lain tidak boleh dihapus hanya berdasarkan pola email. Siklus docs-only ini tidak menjalankan penghapusan maupun memperbaiki skrip.
+>
+> **Bukti audit terpisah dari cleanup.** Tidak adanya `DELETE audit_logs` di skrip tidak membuktikan rantai lama tetap utuh. Verifikasi mendatang harus membaca **tenant yang sama**, segmen/rentang historis yang sama, jumlah baris serta checkpoint hash sebelum/sesudah; ketidaksesuaian dibuka sebagai insiden, bukan diperbaiki dengan menghitung ulang hash. `apps/web/src/scripts/verify-audit-chain.ts` membuat tenant sintetis baru, menambah tiga baris baik dan satu sisipan dengan hash salah: itu menguji deteksi fixture, **bukan** bukti bahwa audit tenant `demo` setelah cleanup tetap utuh.
 
 ---
 
@@ -57,7 +68,7 @@ Hash sandi memakai **Scrypt peppered** (bukan Argon2id — `argon2` native belum
 - **Kode:** `2026/2027-1`
 - **Nama:** `Tahun Akademik 2026/2027 Semester Ganjil`
 - **Tipe Semester:** `GANJIL` (Odd)
-- **Status Operasional:** `OPEN_ENROLLMENT` (Jendela Pengisian KRS Aktif)
+- **Status Operasional:** `OPEN` (enum `period_status` = `DRAFT|OPEN|CLOSING|CLOSED`; jendela pengisian KRS aktif). *Diralat 2026-10-19 — `AUDIT_READINESS RD-13`: nilai lama `OPEN_ENROLLMENT` bukan anggota enum, sehingga seed ini tidak dapat dimuat apa adanya.*
 - **Rentang Tanggal:** 01 September 2026 s.d. 31 Januari 2027
 
 ---
@@ -168,7 +179,7 @@ Hash sandi memakai **Scrypt peppered** (bukan Argon2id — `argon2` native belum
 
 ## 7. Master Data 50 Mahasiswa (Sampel Distribusi Multi-Prodi)
 
-Seluruh 50 mahasiswa berstatus **AKTIF** pada semester berjalan dan telah terdaftar dalam database. Berikut adalah rincian profil representatif dari masing-masing program studi:
+Tabel berikut adalah **target fixture fiktif** 50 mahasiswa berstatus AKTIF, bukan hasil query atau bukti sudah terdaftar dalam database. Identitas/kode contoh bukan fakta nasional terverifikasi; penggunaan referensi resmi memerlukan sumber, versi, lisensi dan verifikasi sebagaimana INTEGRATIONS §6.5.
 
 ### 7.1 Mahasiswa S1 Teknik Informatika (20 Mahasiswa, Angkatan 2022 - 2024)
 
@@ -236,3 +247,60 @@ Seluruh 50 mahasiswa berstatus **AKTIF** pada semester berjalan dan telah terdaf
 | 48 | `230604003` | **Uus Rizki** | 3 | 2.65 | Wahyu Hidayat, M.Ak. |
 | 49 | `240604001` | **Vanesha Prescilla** | 1 | 0.00 | Siti Farida, M.Si. |
 | 50 | `240604002` | **Wika Salim** | 1 | 0.00 | Wahyu Hidayat, M.Ak. |
+
+## 8. Seed kanal vicon, kosakata modus, dan parameter (audit dewan 2026-10-21 — `RD-68`)
+
+**Kenapa bagian ini ada.** Sebelum 2026-10-21, `SEED_DATA.md` berhenti di §7 (mahasiswa sampel) sementara `DATA_MODEL §21.3` menuntut katalog parameter, `§20.4` menuntut kamus enam gugus, dan `§21.10` menuntut enum kanal + kosakata modus. Artinya: semua itu **spesifikasi tanpa jalan uji**. Seed adalah bukti bahwa spesifikasi bisa ditegakkan, karena itu bagian ini ditulis sebagai *kontrak seed*, bukan sebagai skrip jadi. Jumlah tiap tuntutan dicetak oleh `node .tools/seed-count.mjs` (lihat `RD-76`: angka tetap di kalimat adalah sumber kesalahan, bukan bukti).
+
+### 8.1 Status bukti seed (bukan pengukuran database)
+
+Inventaris lama “7 migrasi, tertinggi 0011, semua seed 0” bukan keadaan terkini: berkas `0047`/`0049` sudah ada. **Berkas migrasi/seed ada ≠ diterapkan pada database**. Sinkronisasi docs-only ini tidak membaca jumlah baris database atau menjalankan seed, sehingga jumlah nyata tidak dinyatakan nol maupun lengkap.
+
+| Objek | Target yang perlu dibuktikan | Bukti yang masih diperlukan |
+|---|---|---|
+| `master_system_parameters` | katalog kanonik DATA_MODEL §21.3, hanya konsumen aktif yang dinyatakan aktif | run migrasi/seed terotorisasi, tenant/run ID, jumlah dan versi dibanding katalog |
+| `reference_kinds` / `reference_items` | register §20.4 termasuk item nonaktif untuk baca historis | manifest fixture, digest dan hasil query tenant yang sama |
+| `reference_dictionary_entries` kelas B nasional | sumber, versi, lisensi dan verifikasi manusia sebelum kirim Feeder | `[VERIFIKASI-KAMUS]` INTEGRATIONS; salinan nilai nasional bukan fakta resmi terverifikasi |
+| `conference_connections` | register kanal + satu default yang sah per tenant dev | migrasi/kode/kredensial-ref dan uji kontrak kanal, bukan hitungan tabel dokumen |
+| `attendance.online_min_join_ratio` | contoh default `0.75` sebagai kebijakan configurable berversi | rentang mengikuti katalog kanonik DATA_MODEL/PRD; tidak menetapkan rentang kedua di seed |
+
+### 8.2 Kontrak seed yang harus ada sebelum satu kanal pun diklaim
+
+1. **Dev, idempoten, dan tanpa rahasia.** Seed hanya menulis `credential_ref` menunjuk entri ENV (`env:TEAMS_CLIENT_SECRET_REF` dsb.), tidak pernah nilai rahasia; seed yang mengandung token harus ditolak penguji (`SECURITY §7`).
+2. **Deterministik.** Urutan baca `ORDER BY sort_order, code` (norma `AGENTS §3.10`); tidak ada seed yang bergantung pada urutan UUIDv7.
+3. **Kelas B tidak dapat diubah tenant.** Entri nasional (wilayah, `sifat_pembelajaran` `F`/`O`/`M`) di-seed sebagai `is_system = true`; tenant hanya memetakan label. Uji penolakan: `UPDATE` oleh peran kampus harus gagal.
+4. **Parameter kanal ikut riwayat.** Seed menulis baris `parameter_history` dengan `requested_by` ≠ `approved_by` (empat-mata ditegakkan `CHECK` di DB, bukan oleh niat).
+5. **Alias kosakata dimigrasi, bukan dibiarkan.** Seed dev memakai `BLENDED`; pengujian wajib menolak `HYBRID`/`OFFLINE`/`TEAMS`/`BUILTIN` pada jalur tulis (`DATA_MODEL §21.10.2`, `0075`).
+
+### 8.3 Kriteria selesai bagian ini (terukur, bukan naratif)
+
+- Setelah migrasi terkait tersedia **dan diterapkan** pada DB uji berizin, bandingkan katalog spesifikasi dengan baris/versi/digest seed pada tenant/run yang sama, termasuk default kanal dan kelas B yang tidak dapat disunting tenant. `seed-count.mjs` tidak menggantikan bukti query DB; angka lama 61/33 adalah snapshot dokumen, bukan jumlah seed sekarang. Simpan artefak run bertanggal/commit, bukan angka tetap yang cepat basi.
+- `PRD §5.15` AC-VIC-2 dapat dieksekusi: ambang 0,75 dibaca dari DB, bukan dari kode.
+- Penutupan memerlukan artefak run pada DB tenant/run yang disetujui; siklus ini tidak mengeksekusinya. Inventaris dokumen tidak membuktikan jumlah seed atau kemampuan konsumen parameter.
+
+### 8.4 Peta modul → kelompok seed (menutup temuan "modul tanpa rujukan seed") — 2026-10-21
+
+**Temuan yang memaksa bagian ini ada.** `node .tools/module-provenance.mjs` mengukur berapa modul yang sama sekali tidak disebut di `SEED_DATA.md`, dan hasilnya termasuk modul enterprise (`0051`–`0072`) yang DDL-nya sudah ditulis. Artinya spesifikasi punya tabel tetapi tidak punya **jalur uji data awal**, dan itu membuat "CRUD lengkap" tidak dapat dibuktikan di CI. Ini lubang kontrak seed, bukan kelalaian estetika: tanpa seed, gerbang `NOT NULL`, `CHECK`, `EXCLUDE`, dan RLS tidak pernah teruji nilainya. Angka hari ini dicetak alat, bukan diturunkan dari tabel di bawah.
+
+**Aturan main (tidak berubah dari §8.1–§8.3).** Seed ditulis per **kelompok**, bukan per tabel acak; satu kelompok = satu berkas seed idempoten; tenant sampel `SICN-DEMO` + satu tenant kedua khusus uji silang (NFR-S1). Nilai kamus wajib lewat `reference_items` (§20) dan **tidak pernah** hardcode di seed; parameter hanya dari katalog §21.3.
+
+| Kelompok seed | Modul yang dilayani | Objek inti | Baris minimum agar uji bermakna | Status |
+|---|---|---|---|---|
+| `S-01 platform` | M-01, M-02, M-03, M-05 | tenants, tenant_settings, users/roles/assignments, permissions, master_system_parameters | 2 tenant · 12 peran-assignment · seluruh katalog parameter §21.3 · 4 kanal notifikasi | spesifikasi ada (`§8.2`) |
+| `S-02 kamus` | M-02 (data master) | reference_kinds + reference_items (§20.4) | ≥ 1 item per kind + 1 item `is_active=false` untuk uji `?at=` | target §8.3; belum ada bukti run DB pada siklus ini |
+| `S-03 akademik inti` | M-12…M-19 | academic_periods, curricula, courses, study_programs, classes, `class_distributions`, `krs_packages`/`krs_package_lines`, enrollments, grades, attendances | 1 prodi × 2 periode × 8 kelas × 40 mahasiswa · 1 paket `PUBLISHED` untuk cohort (2 baris wajib + 1 opsional; total `sks_snapshot = packed_sks` ≤ plafon BR-R2) · 1 paket `DRAFT` dengan version 2 untuk uji optimistic lock · kelas tanpa sebaran/jadwal untuk uji penolakan | kontrak diperluas di §26.8; migrasi `0023` belum tersedia, seed tetap `spec-only` (`G-02`) |
+| `S-04 keuangan` | M-10, M-11 | invoices, fee_tariff_groups, tuition_tariff_matrix, virtual_accounts, scholarships | 3 golongan tarif × 2 jalur + 2 tagihan tertunggak untuk uji gerbang KRS | berkas migrasi belum ada → seed tidak dapat dijalankan (`G-02`) |
+| `S-05 kepegawaian & iuran` | M-06, M-07, M-08 | employees, payroll_runs, leave, `social_insurance_participations`, `anomaly_domain_settings` | 6 dosen (1 dengan lebih dari satu kepesertaan) + 4 staff + 2 program iuran | **baru: `0079`/`0081` (2026-10-21)** — menunggu berkas diterapkan |
+| `S-06 intake & siklus hidup` | M-09, M-14, M-23, M-27, M-30, M-35 | pmb_* , nim_assignments, graduation_records, documents, student_cards, tracer_* | 2 jalur × 2 gelombang (1 beririsan = **wajib ditolak**) + 1 pendaftar lolos 2 prodi | **baru: `0021`/`0076`/`0077`** (`DATA_MODEL §23`) |
+| `S-07 sarana & fasilitas` | M-39, M-40, M-41, M-42, M-43 | pustaka (item/peminjaman), aset + penyusutan, rekam klinik, asrama, acara | 20 aset (1 rusak untuk tiket) + 1 pinjaman lewat jatuh tempo (denda) | `0067`–`0070` belum berberkas |
+| `S-08 mutu & regulasi` | M-30…M-34 | sertifikat/legalisir, staging Feeder, bukti akreditasi, sumber IKU | 1 borang 9 kriteria + 1 staging run CP1/CP2 | sebagian objek tanpa DDL (`CRD-6`) |
+| `S-09 kelas khusus PDP` | M-36, M-41 | kasus PPKS (terenkripsi), rekam klinik (terenkripsi) | 2 kasus + access-log; **tanpa nilai rahasia di seed** | wajib DPIA sebelum produksi |
+| `S-10 kemahasiswaan & publikasi` | M-21, M-24, M-25, M-26, M-28, M-29 | kegiatan & poin SKKM, magang/KKN, jurnal & publikasi, simulasi kelulusan, karier, mobilitas | 1 mahasiswa dengan 3 aktivitas (2 lolos konversi, 1 ditolak) + 1 publikasi ber-ISSN + 1 skenario simululus "belum lulus" | kontrak belum ditulis (`SED-1`) |
+| `S-11 tata kelola non-akademik` | M-04, M-37, M-44, M-45, M-46, M-47 | tiket helpdesk, temuan SPMI, hibah/LPPM, lead CRM, paket pengadaan, dana abadi | 3 tiket (1 escalasi) + 2 temuan mutu (1 closed) + 1 hibah + 1 lead + 1 paket pengadaan | kontrak belum ditulis (`SED-1`) |
+| `S-12 jejak audit, jangkar & DSAR` | M-05 dan domain terkait | `audit_logs`, `audit_chain_head`; jangkar/run Merkle dan `data_subject_requests`/retensi adalah desain lanjutan | target dua tenant, segmen tertutup, fixture baik/rusak terisolasi; DSAR `ACCESS` disetujui dan `ERASURE` ditolak/parsial karena retensi atau legal hold | hash-chain JSON sudah memiliki fixture sintetis, **bukan** bukti histori demo pascacleanup; Merkle/DSAR dan run historis belum terbukti. `pii_privacy_requests` hanya alias desain `data_subject_requests`, bukan seed tabel kedua |
+| `S-13 kepegawaian, gaji & KPI` | M-06 (bersama `S-05` yang sudah melayani objek lamanya) | `leave_policies`, `paycomponents`, `payroll_runs`, `payslip_lines`, `payroll_adjustments`, `kpi_components`, `kpi_results`, `pph21_brackets`, `employee_tax_profiles` | 3 versi kebijakan cuti (1 `ACTIVE`, 1 kedaluwarsa, 1 `DRAFT` tanpa penyetuju = **wajib ditolak** saat aktivasi) · 6 komponen gaji (1 tanpa `gl_account_code` ⇒ tidak dapat `ACTIVE`) · 1 run `PAID` beku + 1 run `DRAFT` + 1 `VOID` beralasan · 1 penyesuaian `APPROVED` belum terpasang · bobot KPI: satu jabatan berjumlah 10.000 dan **satu jabatan sengaja 8.800** untuk uji penolakan · 1 potret tarif PPh 21 berversi | kontrak belum ditulis (`SED-1`, tiket `HRS-5`); **nol nominal hasil hitungan seed** — angka gaji datang dari engine atas snapshot, seed hanya menyediakan komponen & tarif |
+
+**Cara ukur.** `module-provenance.mjs` dan `seed-count.mjs` memeriksa rujukan/cakupan dokumen sesuai implementasi alat; hasilnya bukan query jumlah baris database. Target nol modul tanpa rujukan tidak berarti seed lengkap. Bukti nyata membutuhkan manifest run + tenant, migrasi diterapkan, query/digest fixture dan uji konsumen; jumlah database pada siklus ini **tidak diukur**.
+
+**Yang TIDAK dilakukan di sini.** Tidak ada angka seed yang dikarang untuk modul yang objeknya belum punya DDL; sebelas kelompok di atas adalah **kontrak**, dan barisnya ditulis pada tiket `SED-1` (`ROADMAP §2.25`) setelah objeknya nyata. Menaruh puluhan baris fixture palsu akan membuat CI hijau di atas kertas — persis kegagalan generator yang dibuang pada `RD-83`.
+

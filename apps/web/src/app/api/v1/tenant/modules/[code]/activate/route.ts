@@ -12,8 +12,6 @@ import {
   successResponse,
   errorResponse,
   validationFailed,
-  unauthorized,
-  forbidden,
   internalError,
 } from '@/lib/api-response';
 import {
@@ -23,7 +21,9 @@ import {
 } from '@sica/contracts';
 import { createDrizzleEntitlementRepository } from '@/modules/entitlement/entitlement.repository';
 import { activateModule } from '@/modules/entitlement/entitlement.service';
-import { isAdminRole } from '@/modules/entitlement/guards';
+import { requireDataPrincipal } from '@/modules/authz/rbac-repository';
+
+import { PERM } from '@sica/contracts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,12 +35,10 @@ export async function POST(
   context: { params: Promise<{ code: string }> }
 ): Promise<Response> {
   const ctx = extractRequestContext(request);
-  if (!ctx.authenticated || !ctx.tenantId) {
-    return unauthorized(ctx, 'Autentikasi diperlukan untuk mengaktifkan modul.');
-  }
-  if (!isAdminRole(ctx.role)) {
-    return forbidden(ctx, 'Hanya administrator tenant yang dapat mengaktifkan modul.');
-  }
+
+  const access = await requireDataPrincipal(ctx, PERM.entitlementModuleActivate);
+  if (!access.granted) return access.response;
+  const { tenantId, userId } = access.principal;
 
   const { code } = await context.params;
   const codeResult = ModuleCodeSchema.safeParse(code);
@@ -63,7 +61,7 @@ export async function POST(
   }
 
   try {
-    const result = await activateModule(ctx.tenantId, ctx.userId, codeResult.data, parsed.data, repo);
+    const result = await activateModule(tenantId, userId, codeResult.data, parsed.data, repo);
     if (!result.ok) {
       return errorResponse(
         ModuleDependencyUnmetCode,

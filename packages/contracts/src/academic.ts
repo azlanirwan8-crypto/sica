@@ -78,17 +78,13 @@ export type KrsApprovalRequest = z.infer<typeof KrsApprovalRequestSchema>;
 // 3. Skema Input Nilai (Grading)
 // =============================================================================
 
-/** Satu entry input nilai dosen */
+/** Satu entry input nilai dosen — SERVER_ONLY: `letterCode`/`pointValue` tidak pernah dari body (SEC-02). */
 export const GradeInputEntrySchema = z.object({
   enrollmentId: UUIDSchema,
   rawScore: z
     .number()
     .min(0, 'Skor minimal 0.')
     .max(100, 'Skor maksimal 100.')
-    .optional(),
-  letterCode: z
-    .string()
-    .max(3, 'Kode huruf maksimal 3 karakter.')
     .optional(),
 });
 export type GradeInputEntry = z.infer<typeof GradeInputEntrySchema>;

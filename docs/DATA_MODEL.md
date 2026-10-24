@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Versi | 0.1 |
+| Versi | 0.2 (tambah §16 — empat gugus enterprise, registrasi `0030`–`0035`, register retensi §16.5 dan kepemilikan lintas dokumen §16.6; 2026-10-20) |
 | Engine | PostgreSQL 16, skema tunggal multi-tenant (pooled) dengan RLS |
 | Konvensi | TypeScript di `packages/db/schema.ts` ↔ SQL di bawah adalah **satu sumber** (Drizzle), dokumen ini menampilkan SQL untuk auditabilitas |
 | Dokumen terkait | [INDEX.md](file:///c:/SICA/docs/INDEX.md) · [PRD.md](file:///c:/SICA/docs/PRD.md) · [ARCHITECTURE.md](file:///c:/SICA/docs/ARCHITECTURE.md) · [SECURITY_COMPLIANCE.md](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md) · [GLOSSARY.md](file:///c:/SICA/docs/GLOSSARY.md) |
@@ -25,6 +25,8 @@
 | JSONB | hanya untuk parameter yang benar-benar bebas bentuk (`academic_rules.params`) — **bukan** pengganti kolom yang di-query | integritas & indexability |
 | Audit | semua tabel mutable memiliki pemicu penulisan `audit_logs` via outbox dalam transaksi yang sama | tidak ada jejak yang tertinggal sendirian |
 | Kolom pelacak | `created_by uuid`, `updated_by uuid`, `version integer` (optimistic lock untuk KRS/nilai/tarif) | cegah lost-update saat dua admin bekerja paralel |
+| **Satu tabel satu blok DDL** (aturan baru 2026-10-19 — `RD-06`) | satu nama tabel/`CREATE TYPE` **hanya boleh muncul sekali** di dokumen ini. Penomoran ulang/penamaan ulang memakai **Expand-and-Contract**: blok lama **diganti pointer satu baris** ("didefinisikan di §X"), kolomnya lebih dulu digabung ke blok kanonik; view/kolom alias menjaga pembaca lama selama satu rilis, lalu dilepas di migrasi berikutnya | dua `CREATE TABLE` dengan nama sama membuat replay migrasi abort (`relation already exists`) dan tidak memberi siapa pun bentuk kanonik — defek `AUD-09` pada `graduation_records`/`student_status_history`/`permission_verb` |
+| **Kontrak GUC RLS** | satu-satunya nama GUC yang dibaca policy adalah **`app.current_tenant`**; helper SQL-nya `app.tenant_id()` | `0001_init_rls_policies.sql:14` + `packages/database/src/client.ts:46`. `app.tenant_id`/`app.current_tenant_id` **tidak pernah** ada — menyalinnya menghasilkan policy yang tidak pernah cocok (diralat 2026-10-19 — `AUDIT_READINESS RD-01`/`K-1`) |
 
 ---
 
@@ -115,8 +117,42 @@ CREATE TYPE invoice_status    AS ENUM ('DRAFT','ISSUED','PARTIAL','PAID','OVERDU
 CREATE TYPE payment_status    AS ENUM ('INITIATED','PENDING','SETTLED','FAILED','REFUNDED');
 CREATE TYPE period_status     AS ENUM ('DRAFT','OPEN','CLOSING','CLOSED');
 CREATE TYPE academic_year_term AS ENUM ('GANJIL','GENAP','ANTAR');
+-- Carrier login per-tenant. BUKAN sumber hak akses: hak dibaca dari user_role_assignments
+-- (scope + valid_to). Sumber kebenaran nyata: `0006_member_role.sql` + `schema/auth.ts:57`
+-- (sebelum ralat ini `CREATE TYPE member_role` dan kolom `tenant_memberships.role` tidak terdokumentasi — `K-16`).
+CREATE TYPE member_role       AS ENUM ('super_admin','tenant_admin','dosen','mahasiswa','staff');
+-- Satu kosakata untuk DUA mekanisme penahan (cekal `blockades` & `clearances`) — `BENCH-103`/`K-11`.
+-- `clearances` lama hanya ber-4 nilai sehingga dimensi kemahasiswaan hilang secara senyap.
+CREATE TYPE clearance_dimension AS ENUM
+  ('ACADEMIC','FINANCE','LIBRARY','LAB','STUDENT_AFFAIRS','ADMINISTRATIVE');
+-- Hak subjek data UU PDP Ps 6–12 +Status penanganan (dinormalisasi dari free text — `RD-29`).
+CREATE TYPE dsr_kind    AS ENUM ('ACCESS','COPY','CORRECTION','OBJECTION','WITHDRAW_CONSENT','ERASURE');
+CREATE TYPE dsr_status  AS ENUM ('RECEIVED','IN_PROGRESS','ANSWERED','REJECTED','CLOSED');
+CREATE TYPE dsr_outcome AS ENUM ('GRANTED','PARTIAL','DENIED');
 
 -- ── TENANT ──────────────────────────────────────────────────────────────────
+```
+
+### 3.1 Platform & siklus hidup langganan (M-01)
+
+Enam tabel berikutnya adalah rumah M-01: `tenants`, `tenant_domains`, `plans`, `subscriptions`,
+`tenant_quotas`, `tenant_usage` (plus `plan_modules` + `tenant_modules` di §12.1). Heading ini
+diberi label modul **sengaja** — sebelumnya bagian `## 3` tematik ("Platform & Identity Core")
+sehingga enam tabel M-01 dan dua belas tabel M-03 tidak dapat dibedakan oleh alat mana pun
+(celah atribusi `PRV-4`, diukur `.tools/module-provenance.mjs` kolom `DDL berlabel`).
+
+**Transisi `tenant_status`** (kosakata kelas A di §15.1; yang dinormakan di sini hanyalah *arah*,
+karena tanpa tabel ini setiap implementasi bebas menyimpulkan bahwa `ARCHIVED` bisa di-`UPDATE` balik):
+
+| dari | ke | pemilik aksi (`RBAC §4.5.3`) | penjaga yang ditegakkan server | kode gagal |
+|---|---|---|---|---|
+| `ONBOARDING` | `ACTIVE` | `platform.tenant.provision` (303) | target aktivasi setelah domain, katalog peran terapan, admin pertama dan parameter tersedia; provisioning aktual berhenti pada ONBOARDING (`API_SPEC §4.20`). Transisi aktivasi final belum boleh disamakan dengan keberhasilan membuat tenant | 150 |
+| `ACTIVE` | `SUSPENDED` | `platform.tenant.suspend` (304) | alasan 10–500 + MFA + baris `audit_logs`; seluruh tulis tenant-level berhenti, `GET` tetap untuk bahan penagihan (AC-PLT-2) | 151 |
+| `SUSPENDED` | `ACTIVE` | `platform.tenant.suspend` (304) | satu kode untuk dua arah transisi keadaan (verba `UPDATE`, bukan `INSERT`/`DELETE`): keputusan pemulihanpun beralasan dan ter-audit; tidak ada `platform.tenant.activate` kedua (pola `RD-32`) | 151 |
+| `ACTIVE`/`SUSPENDED` | `ARCHIVED` | `platform.tenant.suspend` (304) | **terminal** — tidak ada transisi keluar; baris tetap terbaca untuk laporan periode lamanya (BR-R12); `DELETE FROM tenants` tidak tersedia di jalur mana pun | — |
+
+```sql
+
 CREATE TABLE tenants (
   id                uuid PRIMARY KEY,
   slug              text NOT NULL UNIQUE,
@@ -184,6 +220,19 @@ CREATE TABLE tenant_usage (
   PRIMARY KEY (tenant_id, bucket_month)
 );
 
+```
+
+### 3.2 Identitas & akses (M-03)
+
+Dua belas tabel mulai `users` adalah rumah **M-03** (registri [PRD §5.12.1](file:///c:/SICA/docs/PRD.md):
+"Menyimpan dan menegakkan penugasan peran ber-scope"). Pemisahannya dari §3.1 bukan selera: hak
+dibaca dari `user_role_assignments` (scope + `valid_to`), sedangkan `tenants`/`plans`/`subscriptions`
+adalah keadaan komersial yang hanya dapat ditulis jalur platform (`RBAC §4.5.3` baris 302–318).
+Tanpa dua heading berlabel ini, alat pemeta modul tidak bisa membedakan enam tabel M-01 dari dua
+belas tabel M-03 karena keduanya berada di bawah judul tematik yang sama (celah atribusi `PRV-4`).
+
+```sql
+
 -- ── IDENTITAS GLOBAL ────────────────────────────────────────────────────────
 -- Keputusan desain: user = identitas GLOBAL (satu orang), keanggotaan per tenant.
 -- Konsekuensi: dosen yang pindah/kolaborasi antar kampus tidak dibuat akun ganda,
@@ -217,6 +266,7 @@ CREATE TABLE tenant_memberships (
   tenant_id    uuid NOT NULL REFERENCES tenants(id),
   user_id      uuid NOT NULL REFERENCES users(id),
   member_code  text,                          -- NIM untuk mahasiswa / NIP-NIDN untuk dosen
+  role         member_role NOT NULL DEFAULT 'mahasiswa',  -- carrier login (0006) — BUKAN sumber hak
   status       member_status NOT NULL DEFAULT 'PENDING',
   joined_at    timestamptz NOT NULL DEFAULT now(),
   left_at      timestamptz,
@@ -269,6 +319,37 @@ CREATE TABLE mfa_factors (
   revoked_at  timestamptz
 );
 
+-- mfa_challenges — tantangan MFA SEKALI PAKAI (syarat ke-4 pencabutan `501`, API_SPEC §2.3 baris 144;
+-- rumah objek = sub-bagian ini, nomor migrasi `0084`; dinormakan 2026-10-23 untuk Fase 1A `R-1`).
+-- Bentuk token tantangan: `<tenant_id>.<random>`; yang disimpan hanyalah SHA-256 dari `<random>`
+-- sehingga bocornya tabel tidak memberi bahan untuk menolak/memalsukan tantangan orang lain.
+-- `attempts` membatasi tebak-kode per tantangan (CHECK 0..5); `consumed_at` membuat pakai-kedua
+-- mustahil; kedaluwarsa dicek pada waktu verifikasi, bukan dipercaya dari kolom.
+CREATE TABLE mfa_challenges (
+  id             uuid PRIMARY KEY,
+  tenant_id      uuid NOT NULL REFERENCES tenants(id),
+  user_id        uuid NOT NULL REFERENCES users(id),
+  challenge_hash text NOT NULL UNIQUE,           -- SHA-256(hex random), bukan token mentah
+  factor_id      uuid REFERENCES mfa_factors(id),
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  expires_at     timestamptz NOT NULL,
+  consumed_at    timestamptz,
+  attempts       int NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
+  outcome        text NOT NULL DEFAULT 'PENDING' CHECK (outcome IN ('PENDING','SUCCESS','FAILED','EXPIRED')),
+  CHECK (expires_at > created_at),
+  CHECK (expires_at <= created_at + interval '10 minutes')
+);
+CREATE INDEX idx_mfa_challenges_user ON mfa_challenges(user_id, created_at DESC);
+
+-- **Ralat penyelarasan `0084` (SEC-14).** Bentuk di atas adalah yang **kanonik**; kode lama
+-- (`0001:168-177`) menulis `factor_type text` + `secret text` + `is_primary`, tanpa `tenant_id`
+-- dan tanpa RLS. `0084_mfa_hardening.sql` menyelaraskan: rename `factor_type`→`kind`,
+-- `secret text`→`credential_encrypted bytea`, tambah `tenant_id`+RLS+`FORCE`, tambah `label`/
+-- `last_used_at`/`revoked_at`, dan menjatuhkan `is_primary` (tidak pernah dibaca kode mana pun).
+-- **Kejujuran:** sampai `0035`/KMS mendarat (`TENANT_ENCRYPTION_MASTER_KEY` belum ada), kolom
+-- `bytea` menyimpan secret TOTP **mentah (base32)**, bukan terenkripsi. Bentuk kolomnya benar,
+-- pembungkusan kuncinya menyusul — tidak ada dokumen yang boleh menyebutnya terenkripsi hari ini.
+
 CREATE TABLE login_events (
   id         uuid PRIMARY KEY,
   tenant_id  uuid,                              -- NULL bila email tidak dikenal (tetap dicatat)
@@ -281,33 +362,51 @@ CREATE TABLE login_events (
 CREATE INDEX idx_login_events_time ON login_events(occurred_at DESC);
 
 -- ── AUTHZ: RBAC ber-scope ───────────────────────────────────────────────────
+-- REALITAS 0011_rbac_scoped.sql: blok ini dulu pseudo-DDL; bentuk yang tidak dapat
+-- dijalankan PostgreSQL telah dikoreksi di sini agar dokumen = kode.
+CREATE TYPE permission_verb AS ENUM ('READ','INSERT','UPDATE','DELETE','VALIDATE','OTHER');
+CREATE TYPE role_scope_kind  AS ENUM ('TENANT','ORG','PROGRAM','CLASS','PERIOD','SELF');
+CREATE TYPE access_request_status AS ENUM ('PENDING','APPROVED','REJECTED');
+
 CREATE TABLE permissions (                      -- katalog global, kode stabil, tidak diubah tenant
-  id    uuid PRIMARY KEY,
-  code  text NOT NULL UNIQUE,                   -- 'enrollment.krs.submit'
-  module text NOT NULL,                          -- 'enrollment'
+  id    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  code  text NOT NULL UNIQUE,                   -- 'enrollment.krs.submit' — kunci atomik
+  module text NOT NULL,                          -- 'enrollment' — kunci gerbang entitlement
+  resource text NOT NULL,                        -- 'admin.pengguna' — titik menu (FR-IDT-04)
+  verb permission_verb NOT NULL,                 -- READ/INSERT/UPDATE/DELETE/VALIDATE/OTHER
   description text NOT NULL
 );
+-- Ralat G-09: `UNIQUE (resource, verb)` TIDAK dapat dipenuhi katalog — 222 kode hanya
+-- menghasilkan 169 pasangan resource|verb (37 pasangan berisi >1 kode, mis.
+-- `admin.pengguna|UPDATE` = user.update + user.deactivate + membership.update).
+-- pasangan itu dibuat indeks render matriks, kuncinya tetap `code`.
+CREATE INDEX idx_permissions_resource_verb ON permissions(resource, verb);
 
 CREATE TABLE roles (
-  id         uuid PRIMARY KEY,
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id  uuid NOT NULL REFERENCES tenants(id),
   code       text NOT NULL,                     -- 'STUDENT','LECTURER','HEAD_OF_PROGRAM', …
   display_name text NOT NULL,
   is_system  boolean NOT NULL DEFAULT false,     -- role preset: tidak boleh dihapus tenant
-  scope_kind text NOT NULL CHECK (scope_kind IN ('TENANT','ORG','PROGRAM','CLASS','PERIOD','SELF')),
-  UNIQUE (tenant_id, code)
+  scope_kind role_scope_kind NOT NULL,           -- lingkup tempat peran dirancang
+  UNIQUE (tenant_id, code),
+  UNIQUE (tenant_id, id)                         -- target FK komposit tabel anak
 );
 
 CREATE TABLE role_permissions (
+  tenant_id     uuid NOT NULL REFERENCES tenants(id),   -- didenormalisasi agar RLS menempel
   role_id       uuid NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
   permission_id uuid NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
-  PRIMARY KEY (role_id, permission_id)
+  granted_by    uuid REFERENCES users(id),
+  granted_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (role_id, permission_id),
+  FOREIGN KEY (tenant_id, role_id) REFERENCES roles(tenant_id, id)  -- tak mungkin lintas tenant
 );
 
 -- ⚑ Tabel terpenting dalam sistem ini. Satu user bisa memegang role yang sama
 --   di beberapa scope, dengan masa berlaku. Role TIDAK pernah global-temporal-abadi.
 CREATE TABLE user_role_assignments (
-  id             uuid PRIMARY KEY,
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id      uuid NOT NULL REFERENCES tenants(id),
   user_id        uuid NOT NULL REFERENCES users(id),
   role_id        uuid NOT NULL REFERENCES roles(id),
@@ -318,34 +417,49 @@ CREATE TABLE user_role_assignments (
   scope_student_id uuid REFERENCES students(id),   -- untuk pembimbing/PA per mahasiswa
   valid_from     timestamptz NOT NULL DEFAULT now(),
   valid_to       timestamptz,
-  assigned_by    uuid NOT NULL REFERENCES users(id),
+  origin         text NOT NULL DEFAULT 'GRANT' CHECK (origin IN ('SEED','GRANT','IMPORT')),
+  assigned_by    uuid REFERENCES users(id),         -- NULL hanya utk origin='SEED'
   reason         text,
   CHECK (valid_to IS NULL OR valid_to > valid_from),
-  UNIQUE (user_id, role_id, COALESCE(scope_org_id,'00000000-0000-0000-0000-000000000000'::uuid),
-          COALESCE(scope_program_id,'00000000-0000-0000-0000-000000000000'::uuid),
-          COALESCE(scope_class_id,'00000000-0000-0000-0000-000000000000'::uuid),
-          COALESCE(scope_period_id,'00000000-0000-0000-0000-000000000000'::uuid))
+  CHECK (origin = 'SEED' OR assigned_by IS NOT NULL),
+  FOREIGN KEY (tenant_id, role_id) REFERENCES roles(tenant_id, id)
 );
-CREATE INDEX idx_ura_lookup ON user_role_assignments(tenant_id, user_id, role_id)
-  WHERE valid_to IS NULL OR valid_to > now();
+-- `assigned_by` boleh kosong HANYA untuk baris turunan enum carrier (origin='SEED');
+-- memaksa sebuah user tercantum sebagai pemberi hak padahal tidak ada, sama dengan
+-- memalsukan jejak audit.
+-- Keunikan (user, role, scope) tidak dapat ditulis sebagai constraint tabel (UNIQUE
+-- dengan COALESCE bukan sintaks sah) → indeks ekspresi:
+CREATE UNIQUE INDEX uq_ura_scope ON user_role_assignments (
+  user_id, role_id,
+  COALESCE(scope_org_id,'00000000-0000-0000-0000-000000000000'::uuid),
+  COALESCE(scope_program_id,'00000000-0000-0000-0000-000000000000'::uuid),
+  COALESCE(scope_class_id,'00000000-0000-0000-0000-000000000000'::uuid),
+  COALESCE(scope_period_id,'00000000-0000-0000-0000-000000000000'::uuid),
+  COALESCE(scope_student_id,'00000000-0000-0000-0000-000000000000'::uuid)
+);
+-- Ralat: `... WHERE valid_to IS NULL OR valid_to > now()` tidak sah sebagai predikat
+-- indeks (now() tidak IMMUTABLE) → indeks biasa, jendela berlaku disaring saat query.
+CREATE INDEX idx_ura_lookup ON user_role_assignments(tenant_id, user_id, role_id);
 
 CREATE TABLE access_change_requests (           -- empat-mata: tidak ada self-escalation
-  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id),
   requester_id uuid NOT NULL REFERENCES users(id),
   target_user_id uuid NOT NULL REFERENCES users(id),
   role_id uuid NOT NULL REFERENCES roles(id),
   scope jsonb NOT NULL, reason text NOT NULL CHECK (length(reason) >= 10),
-  status text NOT NULL DEFAULT 'PENDING'
-    CHECK (status IN ('PENDING','APPROVED','REJECTED')),
+  status access_request_status NOT NULL DEFAULT 'PENDING',
   approver_id uuid REFERENCES users(id),
   CHECK (approver_id IS NULL OR approver_id <> requester_id),   -- ⚑ self-approval mustahil di DB
-  created_at timestamptz NOT NULL DEFAULT now(), decided_at timestamptz
+  CHECK (status = 'PENDING' OR approver_id IS NOT NULL),
+  requested_at timestamptz NOT NULL DEFAULT now(), decided_at timestamptz
 );
 ```
 
 ---
 
 ## 4. DDL — Audit Log, Outbox, Idempotency
+
+### 4.1 Jejak audit & kepala rantai (M-05)
 
 ```sql
 -- Append-only, hash-chained, dipartisi bulanan.
@@ -370,7 +484,11 @@ CREATE TABLE audit_logs (
 
 CREATE TABLE audit_logs_2026_10 PARTITION OF audit_logs
   FOR VALUES FROM ('2026-10-01') TO ('2026-11-01');
--- buat partisi berikutnya via job bulanan (docs/runbook/audit-partition.md)
+-- buat partisi berikutnya via job bulanan. Runbook-nya **belum ada di repo** (diukur 2026-10-20:
+-- `docs/runbook/` tidak ada) dan pemiliknya [DEPLOYMENT_DEVOPS §4](file:///c:/SICA/docs/DEPLOYMENT_DEVOPS.md)
+-- — pendaftaran tugasnya ada di §16.6. Sejak §16, job yang sama wajib meng-cover EMPAT tabel jejak
+-- (`audit_logs`, `grade_change_logs`, `system_audit_trails`, `encryption_key_events`); gerbang CI §8
+-- nomor 10 menolak bulan yang partisinya belum dibuat.
 CREATE INDEX idx_audit_tenant_time ON audit_logs(tenant_id, occurred_at DESC);
 CREATE INDEX idx_audit_target      ON audit_logs(tenant_id, target_entity, target_id);
 
@@ -391,7 +509,11 @@ CREATE TABLE audit_chain_head (
   last_hash bytea NOT NULL, last_audit_id uuid NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, partition_start)
 );
+```
 
+### 4.2 Outbox & idempotensi lintas modul (M-01)
+
+```sql
 -- Outbox: event ditulis dalam transaksi yang sama dengan perubahan domain.
 CREATE TABLE outbox (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
@@ -440,6 +562,12 @@ CREATE TABLE academic_calendar_events (
     --             'PDDIKTI_STUDY_RESULT_DUE' ≤ 2 bulan setelah kuliah selesai
     --             'PDDIKTI_BETWEEN_DUE'      ≤ 1 bulan setelah semester antara selesai
   starts_at timestamptz NOT NULL, ends_at timestamptz,
+  -- Kolom tampilan & libur (RD-29): tanpa `title` UI terpaksa memakai `kind` sebagai teks;
+  -- `holiday_kind` dibutuhkan karena kalender akademik kampus menandai libur nasional & keagamaan.
+  title text NOT NULL DEFAULT '',                    -- teks agenda untuk kalender & kartu agenda
+  holiday_kind text CHECK (holiday_kind IS NULL OR holiday_kind IN
+    ('NATIONAL','RELIGIOUS','CAMPUS','NONE')),       -- jenis libur; NONE = agenda biasa
+  color text,                                        -- hex token tampilan (#RRGGBB), bukan nama warna
   is_mandatory boolean NOT NULL DEFAULT false,     -- agenda regulasi → tidak boleh dihapus admin
   UNIQUE (tenant_id, period_id, kind, starts_at));
 CREATE INDEX idx_calendar_due ON academic_calendar_events(tenant_id, kind, starts_at);
@@ -466,7 +594,7 @@ CREATE TABLE study_programs (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERE
     ('UNGGUL','BAIK_SANGAT','BAIK','CUKUP','BELUM_AKREDITASI','TIDAK_AKREDITASI','KEDALUWARSA')),
   accreditation_expires_on date,              -- ⚑ BR-R7: prodi tidak boleh meluluskan/menerbitkan ijazah
   -- Penyelenggaraan Kampus (Onsite vs Online vs Hybrid) & Kebijakan Kelas Otomatis
-  delivery_mode text NOT NULL DEFAULT 'ONSITE' CHECK (delivery_mode IN ('ONSITE','ONLINE','HYBRID')),
+  delivery_mode text NOT NULL DEFAULT 'ONSITE' CHECK (delivery_mode IN ('ONSITE','ONLINE','BLENDED')),   -- 'HYBRID' alias kalah (§21.10.2, 0075); kelas A-prime: keadaan tetap, label kampus
   allow_auto_class boolean NOT NULL DEFAULT true,
   waitlist_threshold_min int NOT NULL DEFAULT 15,    -- Ambang batas antrean untuk auto-generate kelas baru
   max_parallel_classes int NOT NULL DEFAULT 4,       -- Plafon kelas paralel (A, B, C, D)
@@ -501,17 +629,28 @@ CREATE TABLE grade_scales (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENC
   name text NOT NULL,
   scale_type text NOT NULL CHECK (scale_type IN ('POINT4','POINT4_WITH_MINUS','PASS_FAIL','NUMERIC_100')),
   is_national_baseline boolean NOT NULL DEFAULT false,   -- seed: A/B/C/D/E = 4/3/2/1/0
-  UNIQUE (tenant_id, name));
+  -- BENCH-94/FR-ADM-16: Feeder menuntut **skala per prodi dibuat lebih dulu**; tanpa dua kolom ini
+  -- skala prodi hanya bisa diwujudkan dengan menyalin baris tanpa jejak (diralat 2026-10-19 — RD-29).
+  owner_level text NOT NULL DEFAULT 'TENANT'
+    CHECK (owner_level IN ('TENANT','PROGRAM')),         -- skala milik kampus atau milik satu prodi
+  program_id uuid REFERENCES study_programs(id),         -- wajib terisi bila owner_level='PROGRAM'
+  CHECK (owner_level = 'TENANT' OR program_id IS NOT NULL),
+  UNIQUE (tenant_id, name), UNIQUE (tenant_id, id));     -- (tenant_id,id) = target FK komposit band
 CREATE TABLE grade_scale_bands (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL, scale_id uuid NOT NULL REFERENCES grade_scales(id) ON DELETE CASCADE,
   min_score numeric(5,2) NOT NULL,                       -- batas bawah inklusif, angka mentah dosen
+  max_score numeric(5,2) NOT NULL,                       -- batas eksklusif; band = [min, max)
   letter_code text NOT NULL,                             -- 'A','A-','B+','B','C','D','E','K','T'
   point_value numeric(3,2) NOT NULL,                     -- 4.00 / 3.70 / … / 0.00
   is_passing boolean NOT NULL,
   is_default_when_blank boolean NOT NULL DEFAULT false,   -- apa yang terisi bila dosen tidak input
-  CHECK (min_score >= 0 AND min_score <= 100),
-  UNIQUE (scale_id, letter_code), EXCLUDE USING gist (scale_id WITH =,
-    int4range(floor(min_score)::int, floor(min_score)::int) WITH &&));  -- tumpang tindih band ditolak
+  CHECK (min_score >= 0 AND max_score <= 100 AND max_score > min_score),
+  UNIQUE (scale_id, letter_code),
+  -- Alasannya satu baris: `int4range(floor(min_score))` menukar 78,00 dengan 78,99 sehingga
+  -- dua band yang tumpang tindih justru TIDAK tertangkap — `numrange` membandingkan nilai asli
+  -- (diralat 2026-10-19 — AUDIT_READINESS BENCH-89).
+  FOREIGN KEY (tenant_id, scale_id) REFERENCES grade_scales(tenant_id, id),
+  EXCLUDE USING gist (scale_id WITH =, numrange(min_score, max_score, '[)') WITH &&));
 
 -- Komposisi nilai: bobot komponen. Aturan "harus 100%" ditegakkan SEBELUM input nilai dibuka.
 CREATE TABLE grade_components (
@@ -531,19 +670,31 @@ CREATE TABLE grade_components (
 -- Perubahan komposisi setelah sebagian nilai terisi → status 'RECALC_REQUIRED' + approval + audit.
 
 -- Cekal: blokir multi-jenis yang ditegakkan pada aksi, bukan hanya ditampilkan.
+-- Kolom dimensi dinamai `dimension` (bukan `kind`) agar SAMA dengan `clearances.dimension` —
+-- dua mekanisme penahan wajib memakai satu kosakata (diralat 2026-10-19 — AUDIT_READINESS K-11/BENCH-103).
 CREATE TABLE blockades (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
   student_id uuid NOT NULL REFERENCES students(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
-  kind text NOT NULL CHECK (kind IN ('ACADEMIC','FINANCE','LIBRARY','STUDENT_AFFAIRS','ADMINISTRATIVE')),
+  dimension clearance_dimension NOT NULL,    -- ACADEMIC|FINANCE|LIBRARY|LAB|STUDENT_AFFAIRS|ADMINISTRATIVE
   blocks jsonb NOT NULL,            -- ["krs.view","krs.submit","krs.short_term","exam.uts","exam.uas","khs.view","yudisium","student.generate"]
   reason text NOT NULL CHECK (length(reason) >= 5),
-  source_entity text, source_id uuid,          -- mis. invoice yang menunggau → taut balik
+  source_entity text, source_id uuid,          -- mis. invoice yang menunggak → taut balik
   severity text NOT NULL DEFAULT 'BLOCK' CHECK (severity IN ('WARN','BLOCK')),
+  expires_at timestamptz,                      -- RD-29: cekal sementara (cuti DO bertahap, tunggakan
+                                               --   dengan jendela bayar) wajib bisa kedaluwarsa sendiri
   imposed_by uuid NOT NULL, lifted_by uuid, lifted_at timestamptz, lift_reason text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  CHECK (lifted_by IS NULL OR lifted_by <> imposed_by)     -- penaruh & penuntas tidak boleh orang yang sama
+  CHECK (lifted_by IS NULL OR lifted_by <> imposed_by),     -- penaruh & penuntas tidak boleh orang yang sama
+  CHECK (expires_at IS NULL OR expires_at > created_at)
 );
-CREATE INDEX idx_blockades_active ON blockades(tenant_id, student_id, period_id) WHERE lifted_at IS NULL;
+CREATE INDEX idx_blockades_active ON blockades(tenant_id, student_id, period_id)
+  WHERE lifted_at IS NULL;
+-- ⚑ Sweep wajib (BENCH-29): job harian menandai `lifted_at = now(), lift_reason='EXPIRED'` untuk baris
+--   ber-`expires_at < now()` yang masih aktif; tanpa sweep, `expires_at` hanya hiasan dan mahasiswa
+--   tetap terkunci setelah tunggakan selesai. Eskalasi `WARN → BLOCK` ikut dijaga job yang sama.
+-- ⚑ Preseden terhadap clearance (BENCH-104): mahasiswa lolos suatu aksi bila **semua** clearance
+--   periode itu `passed = true` **DAN** tidak ada blockade aktif (`lifted_at IS NULL` dan belum
+--   `expires_at`). Keduanya tidak boleh berbeda jawaban — ditegakkan satu fungsi, dua pemanggil.
 
 -- Aturan akademik per prodi/periode — parameter, bukan kode (BR-* di PRD)
 CREATE TABLE academic_rules (
@@ -553,7 +704,7 @@ CREATE TABLE academic_rules (
   -- {
   --  "max_sks_by_ip":[{"min_ip":3.50,"max_sks":24},{"min_ip":3.00,"max_sks":21},
   --                   {"min_ip":2.50,"max_sks":18},{"min_ip":2.00,"max_sks":15},{"min_ip":0,"max_sks":12}],
-  --  "min_sks_per_semester":12, "first_semester_packed_sks":24,   -- "kuliah paket" utk maba
+  --  "min_sks_per_semester":12, "first_semester_packed_sks":20,   -- maba sem 1–2; tunduk BR-R2
   --  "gates":[{"action":"krs.submit","requires":"invoice_settled"},{"action":"khs.view","requires":"survey_done"},
   --            {"action":"exam.uts","requires":["invoice_settled","attendance_min"]}],   -- ⚑ banyak gerbang, bukan satu flag
   --  "gate_blockade_kinds":["FINANCE","LIBRARY"], "late_krs_mode":"APPROVAL_REQUIRED",
@@ -574,24 +725,36 @@ CREATE TABLE students (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES t
   full_name text NOT NULL, entry_year int NOT NULL,
   entry_route text, status student_status NOT NULL DEFAULT 'ACTIVE',
   personal_nik_encrypted bytea,               -- field-level encryption (kelas PII sensitif)
+                                              --   ⚠ **belum ada di kode** (diukur 2026-10-20: tidak ada
+                                              --   kolom NIK apa pun di `packages/database/src/schema`);
+                                              --   bentuk amplop, versi kunci, dan pasangan blind index
+                                              --   (`personal_nik_bidx`) didefinisikan di §16.3.4 / `0035`
   UNIQUE (tenant_id, nim), UNIQUE (tenant_id, membership_id));
 CREATE INDEX idx_students_program ON students(tenant_id, program_id, status);
 
-CREATE TABLE student_status_history (
-  id uuid PRIMARY KEY, tenant_id uuid NOT NULL, student_id uuid NOT NULL REFERENCES students(id),
-  from_status student_status, to_status student_status NOT NULL,
-  reason text NOT NULL, effective_on date NOT NULL, approved_by uuid,
-  created_at timestamptz NOT NULL DEFAULT now());
+-- ⚑ AUD-09 / RD-06 (diselesaikan 2026-10-19): `student_status_history` **didefinisikan di §14.3**
+--   — blok ini dihapus karena duplikat; lihat AUDIT_READINESS RD-06. Kolom blok lama yang tidak
+--   ada di blok kanonik telah digabung ke sana: `effective_on` → dibekukan sebagai `effective_from`
+--   (alias dilepas lewat Expand-and-Contract), `reason` (kini `CHECK (length(reason) >= 5)`),
+--   `from_status`/`to_status`, `approved_by`, `created_at`. Blok kanonik menambahkan `period_id`,
+--   `feeder_status_code`, `evidence_url`, `requested_by` + `approved_at` + CHECK empat-mata.
 
 CREATE TABLE classes (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
   program_id uuid NOT NULL REFERENCES study_programs(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
   course_id uuid NOT NULL REFERENCES courses(id), name text NOT NULL,
   capacity int NOT NULL CHECK (capacity > 0), enrolled_count int NOT NULL DEFAULT 0 CHECK (enrolled_count >= 0),
   CHECK (enrolled_count <= capacity),        -- ⚑ DB menolak over-subscribe walau aplikasi salah
-  status text NOT NULL DEFAULT 'OPEN',
+  -- Kosakata status dibekukan (RD-29): sebelumnya `status text` tanpa CHECK sehingga setiap
+  -- developer menambah nilainya sendiri. Nilai ini = `classes.ts:88` (Open | Closed | Cancelled).
+  status text NOT NULL DEFAULT 'OPEN'
+    CHECK (status IN ('OPEN','CLOSED','CANCELLED')),
   -- Dukungan Dual Delivery Mode & Dynamic Auto-Class Splitting
-  delivery_mode text NOT NULL DEFAULT 'ONSITE' CHECK (delivery_mode IN ('ONSITE','ONLINE_SYNC','ONLINE_ASYNC')),
-  virtual_meeting_provider text CHECK (virtual_meeting_provider IN ('ZOOM','GOOGLE_MEET','TEAMS','BUILTIN_LMS')),
+  -- RALAT 2026-10-21 (RD-71): kolom ini dulau `delivery_mode IN ('ONSITE','ONLINE_SYNC','ONLINE_ASYNC')` —
+  -- satu kolom memuat DUA sumbu dan dua tokennya alias kalah (§21.10.2). Bentuk kanonik §21.4:
+  -- modus = learning_modality (ONSITE/ONLINE/BLENDED); bentuk pertemuan = session_kind (§21.4, kolom class_sessions).
+  learning_modality text NOT NULL DEFAULT 'ONSITE' CHECK (learning_modality IN ('ONSITE','ONLINE','BLENDED')),   -- 'HYBRID' alias kalah (§21.10.2, 0075); kelas A-prime: keadaan tetap, label kampus
+  -- Sumbu kedua (bentuk pertemuan) TIDAK disimpan di sini: ia per-pertemuan, rumahnya `class_sessions.session_kind` (§21.4).
+  virtual_meeting_provider conference_provider,       -- enum kelas A; register tunggal §21.10.1 (`0073`). Ejaan lama 'TEAMS'/'BUILTIN' = alias kalah (§21.10.2), ditolak saat tulis
   virtual_meeting_url text,
   is_auto_generated boolean NOT NULL DEFAULT false,
   parent_class_id uuid REFERENCES classes(id),           -- Merujuk ke Kelas A bila terbentuk dari auto-split
@@ -626,11 +789,14 @@ CREATE TABLE class_assignments (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
 CREATE TABLE class_sessions (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
   class_id uuid NOT NULL REFERENCES classes(id), held_on date NOT NULL, seq int NOT NULL,
   topic text,
-  delivery_type text NOT NULL DEFAULT 'ONSITE' CHECK (delivery_type IN ('ONSITE','SYNC_LIVE','ASYNC_MODULE')),
+  session_kind text NOT NULL DEFAULT 'REGULAR'
+    CHECK (session_kind IN ('REGULAR','SYNC_LIVE','ASYNC_MODULE','PRAKTIKUM','UTS','UAS','SUSULAN')),   -- RALAT 2026-10-21 (RD-71): kolom lama `delivery_type IN ('ONSITE','SYNC_LIVE','ASYNC_MODULE')` mencampur dua sumbu; §21.4 memisahkan modus (induk `classes.learning_modality`) dan bentuk pertemuan (kolom ini)
+  learning_modality text CHECK (learning_modality IS NULL OR learning_modality IN ('ONSITE','ONLINE','BLENDED')),   -- NULL = ikut induk; diisi hanya bila sesi ini berbeda (kelas hybrid punya ketiga bentuk)
   virtual_room_url text,                                 -- Link Zoom/Meet pertemuan spesifik
   duration_minutes int NOT NULL DEFAULT 100,
   is_attendance_open boolean NOT NULL DEFAULT false,
-  min_watch_pct int NOT NULL DEFAULT 80,                 -- Syarat tonton modul asinkron agar terhitung hadir
+  min_watch_pct numeric(5,2)                             -- RALAT 2026-10-21 (RD-72): DEFAULT 80 dilepas — ambang tenant adalah parameter, bukan konstanta kode. NULL = baca `attendance.async_min_watch_ratio` (§21.3 nomor 29); terisi hanya sebagai override per sesi
+    CHECK (min_watch_pct IS NULL OR min_watch_pct BETWEEN 50 AND 100),
   UNIQUE (class_id, seq), CHECK (seq > 0));
 
 -- Modul Pembelajaran Daring (LMS Materials, Discussions & Assignments)
@@ -725,10 +891,15 @@ CREATE TABLE grade_corrections (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(), decided_at timestamptz);
 
 -- ── KEUANGAN ────────────────────────────────────────────────────────────────
-CREATE TABLE fee_tariff_groups (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
-  code text NOT NULL, name text NOT NULL,           -- 'UKT-1'…'UKT-9', 'SPP-DIKTI', 'BEASISWA'
-  scheme text NOT NULL CHECK (scheme IN ('FLAT_UKT','PER_SKS','MIXED')),
-  UNIQUE (tenant_id, code));
+-- `fee_tariff_groups` TIDAK didefinisikan di bagian ini. Definisi fisik tunggal ada di
+-- §19.4 (migrasi `0046_tuition_tariff_matrix.sql`): `component`, `billing_basis`,
+-- `payable_to`, `gl_account_code`, `feeder_cost_kind`, `is_active`, `version`.
+-- Sketsa lama di bagian §5 (kolom `scheme` dengan CHECK 'FLAT_UKT'/'PER_SKS'/'MIXED')
+-- **dicabut 2026-10-21** dan didaftarkan sebagai `AUDIT_READINESS RD-63`: dua `CREATE TABLE`
+-- dengan satu nama berarti migrasi yang jalan pertama menang dan yang kedua gagal,
+-- dan `tuition_tariff_matrix.fee_group_id` menunjuk bentuk yang salah.
+-- Tabel ini **belum pernah diterapkan** (terukur: `grep -c "fee_tariff_groups" packages/database/migrations/*.sql` = 0),
+-- jadi pencabutan ini tidak mengubah keadaan DB — hanya menghentikan dua kebenaran sebelum menjadi satu migrasi.
 
 CREATE TABLE fee_components (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
   program_id uuid NOT NULL REFERENCES study_programs(id),
@@ -742,13 +913,40 @@ CREATE TABLE fee_components (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERE
 CREATE TABLE invoices (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
   student_id uuid NOT NULL REFERENCES students(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
   number text NOT NULL, status invoice_status NOT NULL DEFAULT 'DRAFT',
+  kind text NOT NULL DEFAULT 'UKT'                    -- jenis tagihan; bagian kunci unik baru (BENCH-19)
+    CHECK (kind IN ('UKT','SKS','BETWEEN_TERM','GRADUATION','LEGALISATION','KKN','PMB_FEE','OTHER')),
   issued_at timestamptz, due_at timestamptz NOT NULL,
-  total_rupiah bigint NOT NULL DEFAULT 0 CHECK (total_rupiah >= 0),
-  paid_rupiah bigint NOT NULL DEFAULT 0 CHECK (paid_rupiah >= 0),
+  -- Kosakata nominal kanonik (RD-08/K-14): bruto → diskon → neto → terbayar. Dulu hanya
+  -- `total_rupiah`/`paid_rupiah`, sehingga J2/UKT + beasiswa (credit note, BENCH-30) tidak
+  -- dapat dinyatakan sama sekali (diralat 2026-10-19).
+  gross_amount    bigint NOT NULL DEFAULT 0 CHECK (gross_amount >= 0),      -- jumlah sebelum diskon
+  discount_amount bigint NOT NULL DEFAULT 0 CHECK (discount_amount >= 0),   -- potongan tarif/keringanan
+  net_amount      bigint NOT NULL DEFAULT 0 CHECK (net_amount >= 0),        -- yang benar-benar ditagih
+  paid_amount     bigint NOT NULL DEFAULT 0 CHECK (paid_amount >= 0),       -- akumulasi pembayaran terverifikasi
+  tariff_group_id uuid REFERENCES fee_tariff_groups(id),  -- ⚑ menutup RD-08: `fee_tariff_groups`
+  --   ↔ `invoices` sebelumnya TIDAK terhubung sama sekali → tidak ada jalur tarif → tagihan.
+  waiver_id       uuid,                                   -- keputusan keringanan utama yang membuka
+  --   gerbang (FK ke `payment_waivers(id)` ditambahkan bersama gugus keuangan 0015); keringanan
+  --   tambahan tetap hidup sebagai baris `payment_waivers` lain pada invoice yang sama.
   generation_run_id uuid,                             -- audit batch & jaminan idempotensi
   waived_reason text, void_reason text, voided_by uuid, version int NOT NULL DEFAULT 0,
-  CHECK (paid_rupiah <= total_rupiah),
-  UNIQUE (tenant_id, number), UNIQUE (tenant_id, student_id, period_id));
+  CHECK (net_amount = gross_amount - discount_amount),        -- aritmetika bruto-diskon=neto di DB
+  CHECK (paid_amount <= net_amount),
+  UNIQUE (tenant_id, number),
+  UNIQUE (tenant_id, id),   -- target FK komposit `ledger(tenant_id, invoice_id)` (§5 ledger)
+  -- ⚑ BENCH-19 (BLOCKER): `UNIQUE (tenant_id, student_id, period_id)` DICABUT. Satu periode
+  --   memang memuat banyak tagihan — UKT + wisuda + legalisir + KKN + semester antara — sehingga
+  --   constraint lama membuat mesin tagih gagal pada tagihan kedua. Keunikan yang benar adalah
+  --   (tenant, mahasiswa, periode, kelompok tarif, jenis); dua cicilan/dua keputusan tarif yang
+  --   sama tetap tertolak, sementara tagihan seremoni boleh berdampingan.
+  UNIQUE (tenant_id, student_id, period_id, tariff_group_id, kind));
+-- ⚑ Konsekuensi NULL yang wajib diketahui (agar constraint tidak melonggar diam-diam): baris dengan
+--   `tariff_group_id IS NULL` dianggap **berbeda** satu sama lain oleh UNIQUE PostgreSQL, sehingga
+--   tagihan tanpa kelompok tarif bisa terbit ganda. Mesin tagih **wajib** mengisi `tariff_group_id`
+--   (grup 'UMUM' sebagai fallback), dan bila memang boleh kosong, keunikan dipindah ke indeks ekspresi
+--   ber-COALESCE — pola yang sama dengan `uq_ura_scope` di §3, karena `UNIQUE (...)` tidak menerima
+--   ekspresi: `CREATE UNIQUE INDEX uq_invoices_per_tariff ON invoices (tenant_id, student_id,
+--   period_id, COALESCE(tariff_group_id,'00000000-0000-0000-0000-000000000000'::uuid), kind);`
 CREATE INDEX idx_invoices_status ON invoices(tenant_id, period_id, status, due_at);
 
 CREATE TABLE invoice_items (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
@@ -759,15 +957,29 @@ CREATE TABLE invoice_items (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
 
 CREATE TABLE payments (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
   invoice_id uuid NOT NULL REFERENCES invoices(id),
-  provider text NOT NULL,                             -- 'doku','mandiri_va','qris','manual'
-  provider_ref text NOT NULL,                         -- ⚑ unique → replay/`webhook` ganda tertahan
-  va_number_encrypted bytea,
+  channel_id uuid,                                    -- FK → `payment_channels(id)`; tabelnya lahir di
+  --   `0015_finance_enterprise.sql` (§14.7), jadi `ALTER ... ADD CONSTRAINT` wajib chạy **setelah**
+  --   0015. Menggantikan `provider text` yang hanya menyebut vendor, bukan kanal + bank + biaya.
+  method text NOT NULL DEFAULT 'VA'                   -- cara bayar yang tercatat di kanal
+    CHECK (method IN ('VA','QRIS','BILL','TOPUP','MANUAL','TELLER','CARD','TRANSFER')),
+  external_ref text NOT NULL,                         -- ⚑ id transaksi vendor (dahulu `provider_ref`,
+  --   di `INTEGRATIONS.md` disebut `vendor_transaction_id`) → replay/webhook ganda tertolak
+  va_number_encrypted bytea,                          -- VA yang dipakai membayar baris ini (tetap ada;
+  --   siklus hidup VA sendiri pindah ke `virtual_accounts` — BENCH-20, §14.7 / `0020`)
   amount_rupiah bigint NOT NULL CHECK (amount_rupiah > 0),
   status payment_status NOT NULL DEFAULT 'INITIATED',
-  idempotency_key text NOT NULL, settled_at timestamptz,
-  raw_callback jsonb, recorded_by uuid,               -- untuk rekonsiliasi manual
+  idempotency_key text NOT NULL,
+  recorded_by uuid,                                   -- pencatat manual (kasir) — boleh NULL utk gateway
+  verified_by uuid,                                   -- ⚑ penyetuju dana masuk (SoD: ≠ recorded_by)
+  paid_at timestamptz,                                -- waktu uang benar-benar masuk (dari gateway)
+  settled_at timestamptz,                             -- waktu rekonsiliasi menutup baris ini
+  raw_callback jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, provider, provider_ref), UNIQUE (tenant_id, idempotency_key));
+  CHECK (verified_by IS NULL OR recorded_by IS NULL OR verified_by <> recorded_by),  -- BR-K2
+  UNIQUE (tenant_id, channel_id, external_ref), UNIQUE (tenant_id, idempotency_key));
+-- ⚑ Satu transfer untuk banyak invoice / overpay (BENCH-24) TIDAK dimodelkan di sini: alokasinya
+--   hidup di `payment_allocations` (§14.7 → `0022_finance_channels_receipts.sql`). Baris `payments`
+--   yang mewakili banyak tagihan menyimpan `invoice_id` tagihan utama + baris alokasi per tagihan.
 
 -- Cicilan: satu invoice bisa dipecah; status invoice mengikuti akumulasi, bukan flag manual.
 CREATE TABLE invoice_installments (
@@ -786,113 +998,263 @@ CREATE TABLE deposits (
 );
 CREATE INDEX idx_deposit_student ON deposits(tenant_id, student_id, created_at DESC);
 
-CREATE TABLE ledger (                                 -- append-only; koreksi = reversing entry
-  id uuid PRIMARY KEY, tenant_id uuid NOT NULL, invoice_id uuid NOT NULL REFERENCES invoices(id),
-  occurred_at timestamptz NOT NULL DEFAULT now(),
-  entry_type text NOT NULL CHECK (entry_type IN ('CHARGE','PAYMENT','WAIVER','PENALTY','REVERSAL')),
-  amount_rupiah bigint NOT NULL CHECK (amount_rupiah <> 0),   -- bertanda: +/-
-  reference_id uuid, reason text,
-  sequence bigserial NOT NULL);
-CREATE INDEX idx_ledger_invoice ON ledger(invoice_id, sequence);
+-- Chart of accounts + tutup buku (RD-07/BENCH-31): tanpa keduanya, kosakata debit/kredit tidak
+-- punya tempat mendarat dan jurnal non-piutang (gaji, pembelian, deposit, saldo awal) mustahil.
+CREATE TABLE accounts (                               -- bagan akun per tenant
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('ASSET','LIABILITY','EQUITY','REVENUE','EXPENSE')),
+  normal_balance text NOT NULL CHECK (normal_balance IN ('DEBIT','CREDIT')),
+  parent_code text,                                   -- hierarki akun (induk = tidak postable)
+  is_postable boolean NOT NULL DEFAULT true,
+  is_active boolean NOT NULL DEFAULT true,
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id));
 
+CREATE TABLE accounting_periods (                     -- buku besar punya periodenya sendiri (§SM-3)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  label text NOT NULL,                                -- 'BUKU-2026-GANJIL'
+  starts_on date NOT NULL, ends_on date NOT NULL,
+  status text NOT NULL DEFAULT 'OPEN'
+    CHECK (status IN ('OPEN','CLOSING','CLOSED','REOPENED')),
+  opened_by uuid, closed_by uuid, closed_at timestamptz,
+  reopened_by uuid, reopened_reason text,             -- buka kembali = keputusan, bukan keteledoran
+  CHECK (ends_on > starts_on),
+  CHECK (status <> 'REOPENED' OR (reopened_by IS NOT NULL AND reopened_reason IS NOT NULL)),
+  UNIQUE (tenant_id, label),
+  EXCLUDE USING gist (tenant_id WITH =, daterange(starts_on, ends_on, '[)') WITH &&));  -- tanpa irisan
+
+CREATE TABLE ledger (                                 -- append-only; koreksi = reversing entry (I-4)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  entry_group_id uuid NOT NULL,                       -- satu jurnal = sekelompok baris yang harus balance
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  accounting_period_id uuid REFERENCES accounting_periods(id),   -- tutup buku menolak posting ke CLOSED
+  invoice_id uuid,                                  -- ⚑ NULLABLE (BENCH-31): jurnal non-piutang
+  --   (gaji, ATK, saldo awal, deposit) sebelumnya mustahil karena kolom ini NOT NULL.
+  ref_type text NOT NULL DEFAULT 'invoice',           -- 'invoice'|'payment'|'waiver'|'penalty'|'deposit'|'manual_journal'
+  ref_id uuid,                                        -- entitas pemicu; pair (ref_type, ref_id) = jejak balik
+  account_code text NOT NULL,                         -- ⚑ akun buku besar; menggantikan `entry_type`
+  --   (jenis transaksi bukan lagi properti baris, melainkan properti akun — RD-07/K-15)
+  debit  bigint NOT NULL DEFAULT 0 CHECK (debit  >= 0),   -- dua kolom, bukan satu nilai bertanda
+  credit bigint NOT NULL DEFAULT 0 CHECK (credit >= 0),
+  CHECK ((debit > 0) <> (credit > 0)),                -- tepat satu sisi terisi per baris
+  reverses_entry_id uuid REFERENCES ledger(id),       -- void = baris pembalik, bukan UPDATE/DELETE
+  actor_id uuid, reason text,
+  sequence bigserial NOT NULL,
+  FOREIGN KEY (tenant_id, account_code) REFERENCES accounts(tenant_id, code),
+  FOREIGN KEY (tenant_id, invoice_id)   REFERENCES invoices(tenant_id, id));
+CREATE INDEX idx_ledger_invoice ON ledger(tenant_id, invoice_id, sequence);
+CREATE INDEX idx_ledger_group   ON ledger(tenant_id, entry_group_id);
+CREATE INDEX idx_ledger_account ON ledger(tenant_id, account_code, occurred_at);
+-- ⚑ Invarian balance **tidak bisa** jadi CHECK (agregat lintas baris) → ditegakkan dua arah seperti
+--   `grade_components`: (a) service menolak posting bila SUM(debit) <> SUM(credit) per `entry_group_id`
+--   (AC-KEU-3), (b) constraint DEFERRABLE INITIALLY DEFERRED + trigger sebelum commit.
+-- ⚑ Append-only ditegakkan di peran, bukan di dokumen: `REVOKE UPDATE, DELETE, TRUNCATE ON ledger`
+--   sudah ada di §6.3; `void`/koreksi **wajib** menulis baris baru ber-`reverses_entry_id`.
+```
+
+**Kosakata keuangan kanonik — tabel rename** (RD-07/RD-08/K-14/K-15; `diralat 2026-10-19`).
+Nama kiri pernah hidup di dokumen; nama kanan adalah satu-satunya yang boleh disalin ke kode,
+OpenAPI, dan kontrak Flutter. Penamaan ulang mengikuti Expand-and-Contract (§1): kolom/view lama
+dipertahankan satu rilis sebagai alias, lalu dilepas.
+
+| Nama lama (dan tempatnya) | Nama kanonik | Alasan |
+|---|---|---|
+| `invoices.total_rupiah` | `gross_amount` + `discount_amount` + `net_amount` | J2/UKT & beasiswa butuh bruto≠neto (BENCH-30); kolom tunggal menutup diskon |
+| `invoices.paid_rupiah` | `paid_amount` | sejajar dengan trio nominal di atas |
+| `payments.provider` | `channel_id` (FK `payment_channels`) + `method` | vendor ≠ kanal: satu vendor dapat punya VA bank, QRIS, dan teller dengan cutoff sendiri |
+| `payments.provider_ref` | `external_ref` | netral vendor; inilah kunci idempotensi webhook |
+| `payments.vendor_transaction_id` (`INTEGRATIONS.md` §2.4) | `external_ref` | tiga ejaan untuk satu fakta (RD-08) |
+| `payments.recorded_by` (satu-satunya) | `recorded_by` (pencatat) + `verified_by` (penyetuju) | BR-K2 menuntut empat mata; satu kolom tidak bisa memuat keduanya |
+| `payments.settled_at` (satu-satunya waktu) | `paid_at` (uang masuk) + `settled_at` (rekonsiliasi menutup) | cutoff bank & settlement berbeda; rekonsiliasi salah membaca yang pertama |
+| `ledger.entry_type` (CHARGE/PAYMENT/WAIVER/PENALTY/REVERSAL) | dihapus → `account_code` + `debit`/`credit` + `ref_type` | jenis transaksi = properti akun, bukan baris; tanpa ini postneran ganda tidak mungkin |
+| `ledger.amount_rupiah` (bertanda +/−) | `debit` + `credit` (dua kolom) | saldo normal & laporan piutang tidak dapat dihitung dari nilai bertanda (K-15) |
+| `ledger.invoice_id NOT NULL` | `invoice_id` **nullable** | jurnal non-piutang mustahil sebelumnya (BENCH-31) |
+| `financialLedger` / `accountCode` / `referenceId` (`INTEGRATIONS.md` §2.3) | `ledger` / `account_code` / `invoice_id` | pseudocode integrasi memakai nama camelCase yang tidak pernah ada di DDL mana pun |
+| *tidak ada* | `accounts`, `accounting_periods` | tutup buku & saldo awal (BENCH-31) butuh objeknya sendiri |
+| *tidak ada* | `virtual_accounts`, `payment_windows`, `payment_allocations`, `receipts` | VA ber-nyawa, jatuh tempo banyak sumber, satu transfer banyak invoice, kuitansi (BENCH-20/21/24/33) — didaftarkan di §14.7 |
+
+**Aturan suffix nominal (biar ralat ini tidak melahirkan inkonsistensi baru).** Satu-satunya tabel yang
+melepas suffix `_rupiah` adalah `invoices` (`gross_amount`, `discount_amount`, `net_amount`, `paid_amount`)
+karena keempatnya harus dibaca sebagai satu rangkaian aritmetika (`net = gross − discount`) dan itulah
+ejaan yang dipakai cetak biru. Tabel lain tetap `bigint` rupiah **bersuffix** (`payments.amount_rupiah`,
+`fee_components.amount_rupiah`, `deposits.amount_rupiah`, `invoice_installments.amount_rupiah`) sampai
+`0015` menyeragamkan seluruh gugus keuangan sekaligus; `ledger.debit`/`ledger.credit` memang tanpa suffix
+karena nama kolomnya sudah menyatakan sisinya. Semua kolom uang di gugus ini tetap `bigint` rupiah utuh
+(§1 konvensi; ADR-5).
+
+```sql
 CREATE TABLE payment_waivers (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
   invoice_id uuid NOT NULL REFERENCES invoices(id), amount_rupiah bigint NOT NULL CHECK (amount_rupiah > 0),
   basis text NOT NULL,                              -- 'BEASISWA','KERINGANAN','KESALAHAN_ADMIN'
   requested_by uuid NOT NULL, approved_by uuid NOT NULL,
   CHECK (approved_by <> requested_by), created_at timestamptz NOT NULL DEFAULT now());
 
+-- Clearance = pernyataan "dimensi ini sudah selesai" per mahasiswa per periode.
+-- `kind` → `dimension` dan memakai enum yang SAMA dengan `blockades` (K-11/BENCH-103):
+-- `STUDENT_AFFAIRS` sebelumnya tidak ada di sini sehingga cekal kemahasiswaan hilang diam-diam,
+-- dan `ADMINISTRATION` (ejaan lama) dibekukan menjadi `ADMINISTRATIVE` agar satu kosakata.
 CREATE TABLE clearances (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
   student_id uuid NOT NULL REFERENCES students(id), period_id uuid NOT NULL,
-  kind text NOT NULL CHECK (kind IN ('FINANCE','LIBRARY','LAB','ADMINISTRATION')),
+  dimension clearance_dimension NOT NULL,
   passed boolean NOT NULL DEFAULT false, checked_at timestamptz, evidence jsonb,
-  UNIQUE (tenant_id, student_id, period_id, kind));
+  checked_by uuid,                              -- siapa yang menyatakan selesai (audit & SoD)
+  UNIQUE (tenant_id, student_id, period_id, dimension));
 
--- Rekaman Kelulusan & Yudisium (FR-AKA-13, BR-R6, BR-R7, BR-R12)
-CREATE TABLE graduation_records (
-  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
-  student_id uuid NOT NULL REFERENCES students(id),
-  period_id uuid NOT NULL REFERENCES academic_periods(id),
-  decree_number text NOT NULL,                       -- Nomor SK Yudisium Dekan/Rektor
-  graduation_date date NOT NULL,
-  total_sks numeric(5,1) NOT NULL CHECK (total_sks >= 36),
-  final_gpa numeric(3,2) NOT NULL CHECK (final_gpa BETWEEN 0 AND 4),
-  predicate text NOT NULL,                           -- 'CUMLAUDE','SANGAT_MEMUASKAN','MEMUASKAN' (BR-R6)
-  national_diploma_number text,                      -- Nomor PIN / PISN (Permenristekdikti 59/2018)
-  pddikti_reported_at timestamptz,
-  is_locked boolean NOT NULL DEFAULT true,           -- BR-R12: arsip kelulusan permanen & immutable
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, student_id),                    -- satu kelulusan per mahasiswa per jenjang
-  UNIQUE (tenant_id, decree_number, student_id)
-);
-CREATE INDEX idx_grad_period ON graduation_records(tenant_id, period_id, graduation_date);
+-- ⚑ AUD-09 / RD-06 (diselesaikan 2026-10-19): `graduation_records` **didefinisikan di §5** — lihat
+--   blok berheader `BLOK KANONIK` beberapa baris di bawah; blok ini dihapus 2026-10-19 karena
+--   duplikat — lihat AUDIT_READINESS RD-06/BENCH-99. Kolomnya telah
+--   digabung ke blok definitif: `period_id`, `decree_number`, `total_sks CHECK (>= 36)`,
+--   `final_gpa` → `ipk_final`, `predicate` (nama kanonik, `honors` jadi alias),
+--   `national_diploma_number` → `diploma_number`, `pddikti_reported_at`, `is_locked`,
+--   `graduation_date` → `conferred_on`, plus `UNIQUE (tenant_id, decree_number, student_id)`.
 
 -- ── PDDIKTI ─────────────────────────────────────────────────────────────────
-CREATE TABLE pddikti_mappings (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
-  entity text NOT NULL,                             -- 'mahasiswa','kelas','nilai','dosen','riwayat'
-  local_field text NOT NULL, pddikti_field text NOT NULL, transform jsonb,
-  active_version int NOT NULL DEFAULT 1,
-  UNIQUE (tenant_id, entity, local_field, active_version));
+-- ⚑ BENCH-123 (diralat 2026-10-19): SATU bentuk kanonik untuk `pddikti_mappings`.
+--   Sebelumnya dokumen ini memetakan "field→field" sementara BLUEPRINT §4.8 memetakan
+--   "nilai→kode kamus" dan INTEGRATIONS §1.4(d) menulis "satu baris `entity='sex_type'`" —
+--   tiga bentuk untuk dua hal yang berbeda. Satu tabel, **dua jenis baris** yang dibedakan
+--   `kind`, sehingga generator kontrak tidak lagi mencampur kamus nilai dengan peta field.
+CREATE TABLE pddikti_mappings (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind IN ('FIELD','VALUE')),
+  entity text NOT NULL,            -- FIELD: 'mahasiswa','mata_kuliah','kelas','nilai','riwayat'
+                                   -- VALUE: nama kamus, mis. 'sex_type','agama','wilayah','pekerjaan'
+  local_field text,                -- FIELD saja: kolom SICA, mis. 'students.nim'
+  feeder_field text,               -- FIELD saja: kolom Feeder, mis. 'nim'
+  transform jsonb,                 -- FIELD saja: aturan konversi, mis. {"fn":"semester_from_date"}
+  local_code text,                 -- VALUE saja: kode/enum SICA, mis. 'M'
+  feeder_code text,                -- VALUE saja: kode resmi pusat, mis. 'L' (PDDikti pakai L/P!)
+  feeder_label text,               -- VALUE saja: label kamus pusat hasil sinkron (bekas BLUEPRINT)
+  source text NOT NULL DEFAULT 'MANUAL' CHECK (source IN ('SYNC','MANUAL')),
+  verified_at timestamptz, active_version int NOT NULL DEFAULT 1,
+  CHECK ((kind = 'FIELD') = (local_field IS NOT NULL AND feeder_field IS NOT NULL)),
+  CHECK ((kind = 'VALUE') = (local_code IS NOT NULL AND feeder_code IS NOT NULL)));
+-- Keunikan per jenis (NULL tidak boleh dianggap sama): indeks ekspresi, pola yang sama dengan
+-- `uq_ura_scope` di §3 — `UNIQUE (...)` biasa tidak sah memakai COALESCE.
+CREATE UNIQUE INDEX uq_pddikti_mappings ON pddikti_mappings (tenant_id, kind, entity, active_version,
+  COALESCE(local_field,''), COALESCE(local_code,''));
+-- Aturan baca: kode generator memakai `WHERE kind='FIELD'`; layar "Pemetaan Sumber" & validasi
+-- pra-kirim memakai `WHERE kind='VALUE'`; kamus nilai hasil `Get*` **di-upsert** ke `reference_items`
+-- (§14.2) dan `pddikti_mappings VALUE` hanyalah peta kode-lokal↔kode-pusat, bukan pengganti kamus.
 CREATE TABLE pddikti_sync_runs (id uuid PRIMARY KEY, tenant_id uuid NOT NULL,
   period_id uuid NOT NULL, started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz,
   total_rows int, accepted_rows int, rejected_rows int, error_breakdown jsonb,
   status text NOT NULL DEFAULT 'VALIDATING'
     CHECK (status IN ('VALIDATING','READY','PARTIAL','SENT','FAILED')),
+  direction text NOT NULL DEFAULT 'OUTBOUND'          -- BENCH-128: rekonsiliasi migration butuh pull
+    CHECK (direction IN ('OUTBOUND','INBOUND')),
+  environment text NOT NULL DEFAULT 'SANDBOX'         -- BENCH-135: kredensial sandbox ≠ endpoint produksi
+    CHECK (environment IN ('LOCAL','SANDBOX','PRODUCTION')),
   dry_run boolean NOT NULL DEFAULT true,            -- ⚑ tidak pernah menulis ke PDDIKTI tanpa dry-run
-  operator_id uuid NOT NULL);
+  operator_id uuid NOT NULL,                        -- pemohon kirim
+  approved_by uuid, approved_at timestamptz,        -- ⚑ BENCH-134 two-person approval untuk PRODUCTION
+  CHECK (approved_by IS NULL OR approved_by <> operator_id),
+  CHECK (environment <> 'PRODUCTION' OR (dry_run = false AND approved_by IS NOT NULL
+                                         AND approved_at IS NOT NULL)));
+  --   artinya: tidak ada satu pun percobaan ke endpoint produksi yang bisa dilepas tanpa
+  --   persetujuan orang kedua yang tercatat (BR-R11).
 ```
 
 -- ── KEWAJIBAN REGULATORI (BR-R7 / R9 / R10 / R12 / R15) ────────────────────
+```sql
 -- BR-R10: data PDDikti tidak dapat dihapus; ubah semester lalu butuh persetujuan kementerian.
 -- Karena itu "ubah data periode lampau" BUKAN edit — ia objek kerja ber-status.
 CREATE TABLE period_reopen_requests (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
   period_id uuid NOT NULL REFERENCES academic_periods(id),
   reason text NOT NULL CHECK (length(reason) >= 15),
+  reopen_type text NOT NULL                          -- BENCH-125/126: dua jenis reopen, dua hak tulis
+    CHECK (reopen_type IN ('TYPE1','TYPE2')),        -- TYPE1 = INSERT (data pokok + transaksional)
+  --   TYPE2 = UPDATE (hanya transaksional; MENOLAK insert data pokok dan menolak hapus biodata)
+  bap_number text,                                   -- ⚑ Berita Acara Pemeriksaan — syarat persetujuan
+  llidikti_decision_ref text,                        -- nomor keputusan LLDIKTI (BEKAS nama: `ministry_reference`)
   affected_actions jsonb NOT NULL,            -- ["grade.correct","enrollment.add", …]
-  requested_by uuid NOT NULL, approved_by uuid,
-  ministry_reference text,                    -- nomor persetujuan PDDikti bila disyaratkan
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  ministry_reference text,                    -- alias deprecation: pakai `llidikti_decision_ref`
   status text NOT NULL DEFAULT 'PENDING'
     CHECK (status IN ('PENDING','APPROVED','REJECTED','EXPIRED','USED')),
   opens_at timestamptz, closes_at timestamptz,   -- window sempit: reopened bukan berarti "selamanya"
   CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  -- Persetujuan TYPE1/TYPE2 tidak sah tanpa BAP + nomor keputusan LLDIKTI + jendela (BENCH-126):
+  CHECK (status <> 'APPROVED' OR (bap_number IS NOT NULL AND llidikti_decision_ref IS NOT NULL
+                                  AND approved_at IS NOT NULL AND closes_at IS NOT NULL)),
+  CHECK ((opens_at IS NULL) = (closes_at IS NULL)),
   created_at timestamptz NOT NULL DEFAULT now());
 
 CREATE TABLE pddikti_correction_requests (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL, sync_run_id uuid REFERENCES pddikti_sync_runs(id),
   entity text NOT NULL, local_record_id uuid NOT NULL,
   rejection_code text, rejection_message text,
+  -- ⚑ Enam kolom inti PDM (BENCH-133): portal PDDikti memohon koreksi dengan **identitas**, bukan
+  --   dengan id baris kita. Keenamnya wajib tersimpan sebagai snapshot pemohon, bukan hanya `proposed_fix`.
+  pdm_nim text, pdm_name text, pdm_mother_name text,
+  pdm_birth_place text, pdm_birth_date date, pdm_registration_period text,
+  sptjm_number text,                               -- nomor Surat Pernyataan Tanggung Jawab Mutlak pimpinan
+  attachment_ids jsonb NOT NULL DEFAULT '[]'::jsonb,  -- [attachments.id…] surat permohonan + SPTJM +
+  --   ijazah/KRS-KHS/BAP; FK array tidak dapat dinyatakan di DB → validasi service + §14.7 `attachments`
+  eksepsi_masa_studi jsonb,                        -- eksepsi masa studi: butuh kalender akademik + bukti cuti
+  pisn_requires_sk_yudisium boolean NOT NULL DEFAULT false,  -- PISN hanya bila SK Yudisium dilampirkan
   proposed_fix jsonb, status text NOT NULL DEFAULT 'OPEN'
     CHECK (status IN ('OPEN','FIXED','RESUBMITTED','ACCEPTED','ABANDONED')),
   resolved_by uuid, resolved_at timestamptz,
+  -- PDM yang diajukan ke portal wajib punya SPTJM + lampiran (BENCH-133), bukan wacana bebas:
+  CHECK (status <> 'RESUBMITTED' OR (sptjm_number IS NOT NULL
+                                     AND jsonb_array_length(attachment_ids) > 0)),
   UNIQUE (tenant_id, entity, local_record_id, rejection_code));
 
 -- BR-R12: rekaman kelulusan adalah arsip negara/kampus → disimpan sebagai snapshot final.
 -- Nilai tidak "dibiarkan hidup"; nilai dibekukan supaya transkrip 20 tahun lagi bisa direkonstruksi
 -- persis, termasuk bila kurikulum atau skala nilai berubah setelahnya.
+-- ⚑ BLOK KANONIK — satu-satunya definisi `graduation_records` di dokumen ini (AUD-09 ditutup
+--   2026-10-19, RD-06/BENCH-99). Kolom bertanda ← hasil gabungan dari blok lama yang dihapus.
 CREATE TABLE graduation_records (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
   student_id uuid NOT NULL REFERENCES students(id),
-  conferred_on date NOT NULL, ipk_final numeric(3,2) NOT NULL,
-  honors text,                                  -- predikat: parameter PT (BR-R6), bukan tabel nasional
-  total_sks numeric(5,1) NOT NULL,
-  diploma_number text,                          -- PIN 15 digit: prodi(5)+tahun(4)+urut(5)+checksum(1)
+  period_id uuid NOT NULL REFERENCES academic_periods(id),      -- ← blok lama; blok 2 tidak punya periode
+  decree_number text NOT NULL,                                  -- ← Nomor SK Yudisium (FR-LOG-01)
+  conferred_on date NOT NULL,                                   -- ← `graduation_date` (alias dilepas)
+  total_sks numeric(5,1) NOT NULL CHECK (total_sks >= 36),      -- ← CHECK dari blok lama
+  ipk_final numeric(3,2) NOT NULL CHECK (ipk_final BETWEEN 0 AND 4),  -- ← `final_gpa` (alias dilepas).
+  --   ⚑ BENCH-85: yang disimpan di sini adalah **IPK Lulus** (Σbobot ÷ SKS lulus) — bukan IPK Total
+  --   (÷ SKS tempuh); predikat BR-R6 membaca angka ini. Keduanya wajib tampil di KHS, satu di arsip.
+  predicate text NOT NULL,                                      -- ← nama kanonik predikat (BR-R6);
+  --   `honors` (ejaan blok ini) dipertahankan satu rilis sebagai alias lalu dilepas
+  diploma_number text,                                          -- nomor ijazah/PIN dari **portal nasional**
+  --   (BENCH-110): SICA menyimpan & memverifikasi, TIDAK mengarang pola dan TIDAK membuat CHECK
+  --   format 15-digit — dulu kolom ini dideskripsikan sebagai `prodi(5)+tahun(4)+urut(5)+checksum(1)`
   pin_batch_id uuid,                            -- generate dibatasi per batch (praktik PISN ≤1.000)
   pisn_verification_ref text,                   -- verifikasi PISN/SIVIL = pengesahan (BR-R8)
   snapshot jsonb NOT NULL,                      -- transkrip definitif: mk, sks, huruf, titik
   snapshot_hash bytea NOT NULL,                 -- digest → bukti dokumen tidak berubah
   program_accreditation_at_conferment text NOT NULL,  -- ⚑ bukti BR-R7 terpenuhi saat lulus
+  pddikti_reported_at timestamptz,                          -- ← dari blok lama (jejak kirim PDM/lulus)
+  is_locked boolean NOT NULL DEFAULT true,                  -- ← BR-R12: arsip permanen & immutable
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, student_id));
+  UNIQUE (tenant_id, student_id),                    -- satu kelulusan per mahasiswa per jenjang
+  UNIQUE (tenant_id, decree_number, student_id));    -- ← dari blok lama (SK ≠ boleh ganda)
+CREATE INDEX idx_grad_period ON graduation_records(tenant_id, period_id, conferred_on);
 -- TIDAK ada UPDATE/DELETE untuk sica_app pada tabel ini; koreksi = catatan baru berversi + alasan.
+-- ⚑ Field tugas akhir (`thesis_title`, pembimbing 1–3, penguji) TIDAK dipindah ke sini walaupun
+--   BLUEPRINT §4.8 memetakannya: sumbernya `thesis_records`/`thesis_supervisors`/`thesis_examiners`
+--   (§14.7 → `0019`) karena Feeder menuntut bulan awal/akhir bimbingan per pembimbing (BENCH-102).
 
 CREATE TABLE document_signatures (              -- BR-R15: TTE tersertifikasi (PSrE/BSSN)
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL, document_kind text NOT NULL,
   document_ref uuid NOT NULL, provider text NOT NULL, provider_signature_id text,
   signer_user_id uuid NOT NULL, signed_at timestamptz NOT NULL,
   digest_hash bytea NOT NULL, certificate_serial text, validation_evidence jsonb);
+```
 
+### 5.1 Tata kelola data pribadi: dasar pemrosesan, retensi & permintaan subjek (M-05)
+
+```sql
 CREATE TABLE data_processing_bases (            -- UU PDP Ps 20(2): dasar pemrosesan, per kategori
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL, category text NOT NULL,
+  --   kategori yang WAJIB ada barisnya sejak awal: 'student_identity', 'academic_record', 'financial',
+  --   'geo_attendance', 'alumni_contact', dan **`'feeder_reporting'`** (BENCH-136, diralat 2026-10-19):
+  --   pengiriman **NIK + nama ibu kandung** ke pangkalan nasional berdasar
+  --   `basis='LEGAL_OBLIGATION'` (bukan `CONSENT` — menarik persetujuan tidak boleh menolak kewajiban
+  --   laporan), `purpose` = pelaporan BR-R9/R10, `jra_ref` wajib terisi. Lihat INTEGRATIONS §1.4(o).
   basis text NOT NULL CHECK (basis IN ('LEGAL_OBLIGATION','CONTRACT','CONSENT','VITAL_INTEREST')),
   purpose text NOT NULL, jra_ref text,           -- acuan Jadwal Retensi Arsip kampus
   consent_withdrawable boolean NOT NULL DEFAULT (basis = 'CONSENT'),
@@ -908,9 +1270,13 @@ CREATE TABLE retention_rules (                  -- JRA-driven, BUKAN angka hardc
 
 CREATE TABLE data_subject_requests (            -- hak subjek: akses, salinan, koreksi, keberatan (Ps 6–12)
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL, requester_membership_id uuid,
-  kind text NOT NULL, status text NOT NULL DEFAULT 'RECEIVED',
+  kind dsr_kind NOT NULL,                          -- RD-29: dahulu `text` bebas → 5 ejaan untuk 6 hak
+  status dsr_status NOT NULL DEFAULT 'RECEIVED',
   received_at timestamptz NOT NULL DEFAULT now(), responded_by_due timestamptz,
-  completed_at timestamptz, outcome text, handler_id uuid, notes text);
+  completed_at timestamptz, outcome dsr_outcome, handler_id uuid, notes text);
+```
+
+**Batas realisasi M-05.** Ketiga tabel tata kelola ini masih DDL rancangan, bukan tabel yang terbukti terpasang. `pii_privacy_requests` adalah alias kebutuhan untuk `data_subject_requests`, bukan tabel kedua. Implementasi memerlukan FK tenant-bound ke keanggotaan/petugas, RLS ENABLE+FORCE, indeks tenant-leading, riwayat keputusan insert-only, bukti verifikasi subjek dan legal hold. `notes` tidak menampung salinan PII atau rahasia. Status/outcome hanya transisi server; penghapusan data yang masih wajib diarsipkan ditolak/parsial dengan dasar hukum terverifikasi, bukan DELETE seluruh mahasiswa. Nomor migrasi dan DTO rinci harus diselesaikan sebelum rute DSAR dibuat; audit ini tidak menyatakan DDL tersebut siap dieksekusi.
 
 ---
 
@@ -918,43 +1284,110 @@ CREATE TABLE data_subject_requests (            -- hak subjek: akses, salinan, k
 
 ### 6.1 Helper (fail-closed)
 ```sql
+-- Nama GUC yang dibaca policy = `app.current_tenant` (bukan `app.tenant_id`, bukan
+-- `app.current_tenant_id` — keduanya tidak pernah ada di kode mana pun).
+-- Bukti: packages/database/migrations/0001_init_rls_policies.sql:14 dan
+--        packages/database/src/client.ts:46 (`set_config('app.current_tenant', $1, true)`).
+-- Nama **fungsi** helper-nya memang `app.tenant_id()` — itulah yang membuat ejaan lama tampak
+-- meyakinkan. Yang salah dulu adalah string GUC di dalam fungsi (diralat 2026-10-19 — RD-01/K-1).
 CREATE OR REPLACE FUNCTION app.tenant_id() RETURNS uuid LANGUAGE sql STABLE
-AS $$ SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid $$;
+AS $$ SELECT NULLIF(current_setting('app.current_tenant', true), '')::uuid $$;
 
 CREATE OR REPLACE FUNCTION app.user_id() RETURNS uuid LANGUAGE sql STABLE
 AS $$ SELECT NULLIF(current_setting('app.user_id', true), '')::uuid $$;
+-- ⚑ Status nyata: `app.current_tenant` SUDAH ditegakkan (0001 + client.ts). `app.user_id`
+--   BELUM pernah diset oleh kode mana pun — policy apa pun yang membacanya akan selalu NULL,
+--   yaitu **deny**. Jangan menulis policy berbasis user sampai middleware menyetelnya.
 
 -- NULL bila tidak diset → perbandingan `tenant_id = NULL` → NULL → policy TIDAK terpenuhi
 -- → akses DITOLAK. Tidak pernah ada default "melihat semua".
 ```
 
 ### 6.2 Penerapan (generator: jalankan untuk SEMUA tabel domain, tanpa kecuali)
+Generator ini adalah **satu-satunya** cara policy dipasang. Versi sebelumnya punya tiga cacat
+yang membuatnya tidak pernah benar-benar memasang RLS (diralat 2026-10-19 — `RD-02`):
+(a) predikat `WHERE c.table_name = 'tenant_id'` — kolom informasi-schema itu berisi **nama tabel**,
+bukan nama kolom, jadi resultset-nya **selalu kosong**; yang benar `c.column_name`;
+(b) `CREATE POLICY` tanpa `DROP POLICY IF EXISTS` — replay langsung error `policy ... already exists`;
+(c) ia menyasar **semua** base table, termasuk partisi anak dan tabel katalog global.
+
 ```sql
 DO $$
-DECLARE t record;
+DECLARE
+  t record;
+  -- Tabel yang DIKECUALKAN dari generator, dengan alasannya (bukan selera):
+  --   tenants, plans, users, password_history  → identitas/platform global; `tenants`
+  --     & `plans` tidak punya `tenant_id`; `users`/`password_history` sengaja global satu-akun-
+  --     satu-orang (lihat §3).
+  --   mfa_factors DIKeluarkan dari daftar ini (ralat 2026-10-23, `0084`): tabel kini ber-`tenant_id`
+  --     + RLS `ENABLE`/`FORCE` seperti kanonik §3 — menutup `SEC-14`; `mfa_challenges` ikut digenerator.
+  --   modules, module_dependencies, plan_modules, permissions → katalog global (SELECT-only, §12.1)
+  --   reference_kinds → metadata kamus global (§14.2)
+  --   reference_dictionary_entries → kamus nasional ber-versi (§14.7 `0028`); TIDAK ber-`tenant_id`
+  --     by design, jadi generator juga tidak akan menyentuhnya — didaftarkan di sini supaya
+  --     pengecualiannya terbaca, dan RLS-nya sengaja OFF + GRANT SELECT (INTEGRATIONS §1.4(n))
+  --   audit_logs → tabel INDUK partisi; policy dipasang sekali secara eksplisit (blok kedua di bawah)
+  excluded text[] := ARRAY[
+    'tenants','plans','users','password_history',
+    'modules','module_dependencies','plan_modules','permissions',
+    'reference_kinds','reference_kind_usage','reference_dictionary_entries','audit_logs'
+  ];
 BEGIN
   FOR t IN
-    SELECT c.table_schema, c.table_name
-    FROM information_schema.columns c
-    JOIN information_schema.tables  x ON x.table_name = c.table_name
-                                     AND x.table_schema = c.table_schema
-    WHERE c.table_name = 'tenant_id' AND x.table_type = 'BASE TABLE'
-      AND c.table_schema IN ('public')
+    SELECT n.nspname AS table_schema, c.relname AS table_name
+    FROM pg_class c
+    JOIN pg_namespace n   ON n.oid = c.relnamespace
+    JOIN pg_attribute a   ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND a.attnum > 0
+    WHERE n.nspname = 'public'
+      AND c.relkind = 'r'                 -- hanya tabel biasa; induk partisi ('p') ditangani eksplisit
+      AND NOT c.relispartition            -- partisi ANAK tidak diberi policy sendiri (diwarisi induk)
+      AND c.relname <> ALL (excluded)
   LOOP
-    EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', t.table_schema, t.table_name);
-    EXECUTE format('ALTER TABLE %I.%I FORCE  ROW LEVEL SECURITY', t.table_schema, t.table_name);
+    EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY;', t.table_schema, t.table_name);
+    EXECUTE format('ALTER TABLE %I.%I FORCE  ROW LEVEL SECURITY;', t.table_schema, t.table_name);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I.%I;', t.table_schema, t.table_name);
     EXECUTE format($f$CREATE POLICY tenant_isolation ON %I.%I
-        AS PERMISSIVE FOR ALL TO sica_app
+        AS PERMISSIVE FOR ALL TO public
         USING      (tenant_id = app.tenant_id())
         WITH CHECK (tenant_id = app.tenant_id())$f$, t.table_schema, t.table_name);
   END LOOP;
 END $$;
+
+-- Induk partisi: policy dipasang pada tabel PARTITIONED-nya (PostgreSQL 13+ mendukung ini) sehingga
+-- berlaku untuk seluruh partisi anak tanpa statement per-anak. Sampai 2026-10-19 `audit_logs` adalah
+-- satu-satunya tabel terpartisi di skema ini (§7). Sejak 2026-10-20 ada EMPAT, dan generator di atas
+-- TIDAK menyentuh keempatnya (semuanya ber-`relkind 'p'`, sedangkan generator hanya `relkind = 'r'`):
+-- `audit_logs` (§4), `grade_change_logs` (§16.3.1), `system_audit_trails` (§16.3.2), dan
+-- `encryption_key_events` (§16.3.4). Ketiganya yang terakhir **tidak boleh** memakai policy `FOR ALL`
+-- bentuk generator, karena jejak mereka insert-only: policy-nya dipecah menjadi SELECT dan INSERT
+-- terpisah, lihat §16.3.3.
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs FORCE  ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON audit_logs;
+CREATE POLICY tenant_isolation ON audit_logs
+  AS PERMISSIVE FOR ALL TO public
+  USING (tenant_id = app.tenant_id()) WITH CHECK (tenant_id = app.tenant_id());
 ```
 Catatan penting:
 - **`FORCE ROW LEVEL SECURITY`** diperlukan karena pemilik tabel kebal terhadap RLS secara default — tanpa FORCE, akun migrasi yang lupa di-`SET ROLE` bisa membaca seluruh tenant.
 - `WITH CHECK` mencegah **penulisan** lintas tenant, bukan hanya pembacaan (kasus: admin memindahkan `student_id` ke tenant lain lewat payload).
+- **`TO public`, bukan `TO sica_app`** (bentuk yang benar-benar dijalankan `0001:218-224`). Alasan: di DB terkelola (Supabase) role `sica_app` dapat gagal dibuat dan `GRANT`-nya tertelan `EXCEPTION WHEN others` (temuan `SEC-13`) — policy yang menyasar role tidak-ada berarti **tidak ada penegakan sama sekali**. Membatasi peran tetap dilakukan lewat `GRANT` (§6.3), bukan lewat klausa `TO`. Bentuk policy ini adalah keputusan `K-2`: tetap `PERMISSIVE`, nama tetap `tenant_isolation` — **bukan** `RESTRICTIVE` dengan nama `tenant_isolation_policy` seperti yang diusulkan `MIGRATION_SOP.md` §2 (dokumen itu yang menyusul dokumen ini).
+- Tabel katalog **tidak** boleh dibiarkan `RLS ON` tanpa policy baca yang diperlukan. Global bukan sinonim RLS OFF: ikuti konfigurasi masing-masing tabel, termasuk empat katalog berpolicy SELECT dari `0087` di bawah. Pengecualian harus dicatat di sini dan dalam migrasi.
+- **Katalog global yang TETAP ber-RLS (`0087_global_catalog_read_policy.sql`, dinormakan 2026-10-23).** Empat tabel di atas bukan `RLS OFF`: `permissions`, `modules`, `reference_kinds`, `reference_kind_usage` lahir dengan `ENABLE`+`FORCE` sebagai bagian default platform (§6.2), sehingga `sica_app` yang `NOBYPASSRLS` **tidak akan bisa membaca katalognya sendiri** tanpa policy baca eksplisit — dan membaca katalog adalah jalur setiap gerbang entitlement. Bentuk yang ditegakkan:
+
+```sql
+-- Dipasang dalam satu DO-block per tabel; replay aman karena DROP lebih dulu.
+DROP POLICY IF EXISTS global_read ON public.permissions;      -- demikian pula modules,
+CREATE POLICY global_read ON public.permissions               -- reference_kinds,
+  AS PERMISSIVE FOR SELECT TO public USING (true);            -- reference_kind_usage
+-- Penulisan TIDAK pernah lewat policy: tidak ada policy INSERT/UPDATE/DELETE sama sekali,
+-- dan `REVOKE INSERT, UPDATE, TRUNCATE … FROM sica_app` menutup jalur aplikasinya.
+```
+
+  Ini keputusan **baca-saja**, bukan pelonggaran: `USING (true)` hanya untuk `FOR SELECT`, dan `WITH CHECK` tidak ada karena tidak ada tulis yang boleh datang dari peran aplikasi. Yang membuktikan policy ini hidup (bukan klaim) adalah `db:test:rls`: `count(*) FROM reference_kinds` sebagai `sica_app` wajib ≥ 1, sedangkan `INSERT INTO reference_kinds …` wajib `42501`. Dulu bagian ini tertulis "RLS OFF + GRANT SELECT" — kalimat itu **salah untuk keempat tabel tersebut** dan tetap beredar setelah `0087` diterapkan; itu sebabnya gerbang `ddl-gap` menuduh nama `global_read` tidak punya DDL: objeknya nyata di migrasi, pemiliknya belum nyata di dokumen ini (`RD-145`).
 - Bacaan lintas-tenant platform (agregat pemakaian) **tidak** lewat policy ini — dibuat sebagai view khusus + `GRANT SELECT` ke `sica_platform` dengan policy sendiri, tanpa akses baris domain.
-- Tabel kamus global (`plans`, `permissions`) tidak punya `tenant_id` → di-`RLS OFF` + `GRANT SELECT` saja.
+- **Tulisan platform lintas tenant (`M-01`) — jalur satu-satunya, dinormakan 2026-10-21.** Rute `/api/v1/platform/**` (`API_SPEC §4.20`) berjalan sebagai `sica_app`, **bukan** `sica_platform` (yang hanya `SELECT` view agregat) dan **bukan** `sica_owner` (`BYPASSRLS`, hanya pipeline). Urutan wajib: (1) `PLATFORM_OPERATOR` terbukti dari token + MFA pada sesi (`RBAC §4.5.3` baris 302–318); (2) `tenants.id` target **diselesaikan dari barisnya di dalam transaksi yang sama** — `SELECT id FROM tenants WHERE id = $1 AND status <> 'ARCHIVED'` — bukan diterima sebagai `x-tenant-id` kiriman klien (`SEC-07`); (3) `SET LOCAL app.current_tenant = <id hasil penyelesaian>` lalu tulis; (4) satu baris `audit_logs` beralasan. Tabel tanpa `tenant_id` (`tenants`, `plans`) berada di luar generator policy (§6.2 `excluded`), sehingga penjaganya adalah **izin +GRANT**, dan karena itu `GRANT INSERT, UPDATE ON tenants, plans, plan_modules, subscriptions, tenant_quotas` kepada `sica_app` adalah bagian dari spesifikasi — bukan kebetulan implementasi. Uji penolakan yang diwajibkan CI (`ROADMAP §2.27`, ditegakkan **AC-PLT-2**): rute platform yang memanggil `SET LOCAL` dengan id dari body **harus** gagal di tes, dan rute tenant-level yang mencoba id tenant lain tetap `403` walau policy tidak menahannya.
+- **CI menolak** tabel domain tanpa policy: query §8 nomor 5 adalah gerbangnya; bila ada tabel baru ber-`tenant_id` dan tidak ada di daftar di atas, satu-satunya yang benar adalah menambahkannya ke generator.
 
 ### 6.3 Peran database
 ```sql
@@ -966,6 +1399,16 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO sica_app;
 GRANT INSERT, SELECT ON audit_logs TO sica_app;      -- tanpa UPDATE/DELETE
 REVOKE ALL ON audit_logs           FROM sica_readonly, sica_platform;
 REVOKE UPDATE, DELETE, TRUNCATE ON ledger FROM sica_app;   -- ledger hanya INSERT
+-- 2026-10-20 (§16.3.3): tiga jejak baru juga hanya INSERT, dan revoke dijalankan SEBELUM policy.
+REVOKE UPDATE, DELETE, TRUNCATE ON grade_change_logs, system_audit_trails FROM sica_app;
+GRANT  INSERT, SELECT ON grade_change_logs, system_audit_trails TO sica_app;
+REVOKE ALL ON grade_change_logs, system_audit_trails FROM sica_readonly, sica_platform;
+-- §16.4: buffer kirim Feeder + snapshot ikut append-only; §16.3.4: jejak lifecycle kunci juga.
+REVOKE UPDATE, DELETE ON pddikti_staging_mahasiswa, pddikti_staging_kurikulum, pddikti_staging_kelas,
+  pddikti_staging_krs_akm, pddikti_staging_nilai, pddikti_staging_aktivitas, pddikti_staging_keluar,
+  pddikti_payload_snapshots, encryption_key_events FROM sica_app;
+-- PERINGATAN: grant pada tabel INDUK berlaku untuk semua partisi anak. Jangan pernah GRANT per-partisi —
+-- partisi baru dibuat job bulanan dan hak-nya akan tertinggal (jejak jadi dapat diedit di partisi baru).
 ```
 Aplikasi **tidak pernah** memakai satu kredensial serbaguna. API & worker = `sica_app`; migrasi = `sica_owner` (hanya di pipeline, kredensial terpisah, tidak ada di runtime).
 
@@ -986,7 +1429,7 @@ CREATE INDEX idx_invoices_overdue  ON invoices(tenant_id, due_at)
 ```
 | Kebijakan | Nilai | Catatan |
 |---|---|---|
-| Partisi | `audit_logs` per bulan; `enrollments`, `attendances`, `grades`, `invoices`, `payments` per `period_id` (RANGE) | retensi & vacuum ringan; query periode berjalan tidak menyentuh sejarah |
+| Partisi | **empat tabel, semuanya jejak:** `audit_logs` (§4), `grade_change_logs` dan `system_audit_trails` (§16.3), `encryption_key_events` (§16.3.4) — RANGE per bulan pada `occurred_at`, PK `(id, occurred_at)` | klaim lama bahwa `enrollments`, `attendances`, `grades`, `invoices`, `payments` dipartisi RANGE per `period_id` **DICABUT** (diralat 2026-10-19 — `RD-21`); empat tabel di kiri lolos syarat karena tidak ada FK luar yang menunjuknya — lihat penjelasan di bawah tabel ini dan tambahan 2026-10-20 |
 | Retensi rekaman kelulusan | ijazah, transkrip, SKPI, `graduation_records`: **permanen** (BR-R12) | arsip ini satu-satunya dasar hukum surat pengganti & pengesahan fotokopi; `retention_rules.is_locked = true` |
 | Retensi catatan status | cuti / DO / pindah / stop: **floor 5 tahun** (rujukan Perka ANRI 13/2014) lalu musnah **hanya bila JRA kampus mengizinkan** | angka ANRI adalah *floor sectoral*; JRA yang disetujui ANRI-lah yang mengikat — jangan pakai angka ini sebagai izin memusnahkan transkrip |
 | Retensi nilai & tagihan | mengikuti JRA institusi; default aman: permanen untuk nilai, ≥10 th untuk dokumen tagihan | sengketa keuangan bisa muncul bertahun-tahun kemudian |
@@ -995,25 +1438,60 @@ CREATE INDEX idx_invoices_overdue  ON invoices(tenant_id, due_at)
 | Retensi session/token | baris `sessions` & `refresh_tokens` di-purge setelah `expires_at` + 7 hari | untuk forensik singkat |
 | PITR/backup | WAL arsip + snapshot harian; retensi snapshot ≥35 hari; **rekaman akademik di backup terpisah ber-retain lama** | benchmark pasar: backup 3×/hari, retensi 90 hari — cukup untuk operasional, tidak cukup untuk rekaman akademik |
 
+**Putusan partisi (RD-21) — ditegaskan, bukan dibiarkan dua pilihan.**
+PostgreSQL menuntut **partition key ada di dalam setiap primary key dan setiap unique constraint**
+tabel induk. Kelima tabel domain itu tidak memenuhinya: `enrollments` ber-PK `(id)` dengan unik
+`(tenant_id, student_id, class_id)`, `grades` ber-PK `(id)` dengan unik `(tenant_id, enrollment_id)`,
+`invoices`/`payments`/`attendances` sama. Agar bisa dipartisi RANGE per `period_id`, PK harus menjadi
+`(id, period_id)` — dan itu **mematikan seluruh FK tunggal** (`grades.enrollment_id`,
+`ledger.invoice_id`, `invoice_items.invoice_id`, `payment_allocations.payment_id`), karena FK hanya
+boleh menunjuk key penuh tabel terpartisi. Konsekuensinya bukan kosmetik: ia mengubah bentuk
+relasi di separuh skema.
+**Keputusan:** partisi RANGE **tidak** diterapkan pada `enrollments`, `attendances`, `grades`,
+`invoices`, `payments`. Yang dipakai untuk menahan volume adalah (a) indeks komposit ber-`tenant_id`
+di depan (§13.3), (b) retensi berbasis JRA, (c) tabel historis terpisah untuk baris `VOID`/`CANCELLED`
+bila salah satu tumbuh melewati ~50 juta baris per tenant — dan saat itu terjadi, partisi wajib
+didesain ulang dengan PK komposit + FK komposit, **bukan** ditempel kemudian.
+Satu-satunya objek yang memang terpartisi hari ini dan benar adalah `audit_logs` (§4): dipartisi per
+bulan, PK `(id, occurred_at)`, dan **tidak ada FK** yang menunjuknya — syarat partisi terpenuhi.
+Kontras dengan §11/§14, `ledger` juga **tidak** ikut dipartisi (append-only tapi ukurannya dikendalikan
+oleh tutup buku `accounting_periods`, bukan oleh DROP partisi — menghapus partisi = menghapus bukti).
+
+**Tambahan 2026-10-20 (§16): daftar tabel terpartisi menjadi EMPAT, tidak lebih.**
+`grade_change_logs` (§16.3.1), `system_audit_trails` (§16.3.2), dan `encryption_key_events` (§16.3.4)
+ikut pola `audit_logs` — RANGE per bulan pada `occurred_at`, PK `(id, occurred_at)`, tanpa `updated_at`,
+dan **tidak ada satu pun FK yang menunjuk dari luar** ke ketiganya. Yang terakhir ini bukan kebetulan:
+syarat PostgreSQL (partition key harus ada di setiap unique) akan membunuh FK tunggal dari tabel domain
+mana pun yang menunjuk jejak, jadi bila nanti ada yang ingin membuat `enrollments.last_change_log_id`,
+yang benar adalah menaruh id **di sisi jejak** (`grade_change_logs.enrollment_id`) — arah FK, bukan
+penomoran, yang menjaga partisi tetap sah. Tabel §16 lainnya (`krs_baskets`, `krs_offering_seats`,
+`queue_operations`, tujuh `pddikti_staging_*`, `pddikti_payload_snapshots`, seluruh gugus OBE/MBKM)
+**tidak** dipartisi, dengan alasan yang sama seperti putusan `RD-21` di atas: PK tunggal + FK masuk +
+unik lintas kolom yang tidak memuat partition key. Partisi `grade_change_logs` dan
+`system_audit_trails` **wajib** dibuat sebelum bulan berjalan + 1; kehabisan partisi membuat `INSERT`
+gagal, sehingga ia adalah insiden ketersediaan, bukan senyap — dan retensinya hanya boleh lewat
+`DETACH PARTITION` lalu ekspor, tidak pernah `DROP` langsung (§7 melarang memusnahkan rekaman tanpa JRA).
+Daftar kelas retensi yang lahir bersama gugus ini ada di **§16.5**.
+
 ---
 
 ## 8. Query Verifikasi (dipakai sebagai tes CI, bukan dokumentasi)
 
 ```sql
 -- 1) RLS benar-benar menolak tanpa tenant context → harus 0 baris, bukan error, bukan semua baris
-BEGIN;  -- tanpa SET LOCAL app.tenant_id
+BEGIN;  -- tanpa SET LOCAL app.current_tenant
   SELECT count(*) FROM students;             -- ⚑ hasil harus 0
 ROLLBACK;
 
 -- 2) Kebijakan menolak tulis lintas tenant → harus gagal
-BEGIN; SET LOCAL app.tenant_id = '<tenant_A>';
+BEGIN; SET LOCAL app.current_tenant = '<tenant_A>';
   INSERT INTO invoices (id, tenant_id, student_id, period_id, number, due_at)
   VALUES (gen_random_uuid(), '<tenant_B>', '<student_of_A>', '<p>', 'X', now()+interval '1 day');
   -- ⚑ expected: violates WITH CHECK → ERROR
 ROLLBACK;
 
 -- 3) Enrollment tidak bisa menembus kuota, walau aplikasi lupa cek
-BEGIN; SET LOCAL app.tenant_id = '<tenant_A>';
+BEGIN; SET LOCAL app.current_tenant = '<tenant_A>';
   INSERT INTO enrollments (id, tenant_id, student_id, class_id, period_id)
   VALUES (gen_random_uuid(), '<tenant_A>', '<s>', '<full_class>', '<p>');
   -- ⚑ expected: CHECK enrolled_count<=capacity / trigger lock menunda
@@ -1031,8 +1509,65 @@ WHERE n.nspname='public' AND c.relkind='r'
   AND EXISTS (SELECT 1 FROM pg_attribute a
               WHERE a.attrelid=c.oid AND a.attname='tenant_id')
   AND c.relrowsecurity = false;
+
+-- 6) Jejak benar-benar insert-only. Dua dinding diuji TERPISAH, karena order PostgreSQL adalah
+--    hak dulu, RLS belakangan: kalau hanya policy yang dipasang, tes ini tetap lolos padahal UPDATE
+--    masih diizinkan peran ber-hak (peringatan §16.3.3).
+SET ROLE sica_app;
+UPDATE grade_change_logs SET reason = 'x' WHERE false;     -- ⚑ expected: permission denied for table
+DELETE FROM system_audit_trails WHERE false;               -- ⚑ expected: permission denied for table
+SET ROLE sica_owner;                                       -- peran BYPASSRLS, pemilik tabel
+DELETE FROM audit_logs WHERE false;                        -- ⚑ expected: ERROR dari pemicu (statement
+                                                           --   trigger tetap jalan walau WHERE false)
+TRUNCATE grade_change_logs;                                -- ⚑ expected: ERROR dari pemicu juga
+-- (TRUNCATE sengaja diuji: `BEFORE UPDATE OR DELETE` saja TIDAK menahan TRUNCATE — §16.3.3 memasangnya
+--  eksplisit, dan §4 hanya memasangnya untuk dua aksi. Baris ini adalah bukti bahwa dokumen dan tes tidak
+--  boleh saling mengasumsikan.)
+
+-- 7) Invariance I-14: id pangkalan nasional tidak boleh lahir tanpa jejak bridge (harus 0 baris)
+SELECT count(*) AS ghost_ids FROM students s
+WHERE s.pddikti_id_pd IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM pddikti_payload_snapshots p
+                  WHERE p.tenant_id = s.tenant_id
+                    AND p.feeder_id_returned = s.pddikti_id_pd
+                    AND p.response_code = 0);
+-- ⚑ sama untuk `courses.pddikti_id_mk` dan `classes.pddikti_class_id`;
+--   `lecturers.pddikti_id_dosen` diKECUALIKAN karena sumbernya SISTER/pddikti-admin, bukan WS kita
+--   (§14.5 aturan 4) — pengecualian ini tercatat supaya query tidak tampak gagal sendiri.
+
+-- 8) PII tidak pernah menumpang di payload bebas bentuk (harus 0 baris)
+SELECT count(*) FROM pddikti_staging_mahasiswa s
+WHERE s.canonical_payload ?& ARRAY['nik','nama_ibu','no_hp','no_rekening'];
+SELECT count(*) FROM queue_operations q
+WHERE q.kind IN ('GRADE_PUBLISH','EXPORT_MASSAL') AND q.result IS NOT NULL;  -- wajib lewat result_encrypted
+
+-- 9) Progres rekey dapat dibuktikan, bukan diklaim (harus 0 baris HANYA setelah PII_REENCRYPT selesai)
+SELECT count(*) FROM students s
+WHERE app.enc_key_version(s.personal_nik_encrypted) IS NOT NULL
+  AND app.enc_key_version(s.personal_nik_encrypted) <
+      (SELECT k.key_version FROM tenant_encryption_keys k
+        WHERE k.tenant_id = s.tenant_id AND k.purpose = 'FIELD_ENCRYPTION' AND k.state = 'ACTIVE');
+
+-- 10) Partisi bulan berjalan SUDAH ada untuk keempat tabel jejak (harus 0 baris; bila ada, INSERT
+--     berikutnya gagal — ini insiden ketersediaan, bukan senyap)
+SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'p'
+  AND NOT EXISTS (SELECT 1 FROM pg_inherits i
+                    JOIN pg_class ch ON ch.oid = i.inhrelid
+                   WHERE i.inhparent = c.oid
+                     AND pg_get_expr(ch.relpartbound, ch.oid) ~ to_char(now(), 'YYYY-MM'));
+
+-- 11) Bobot OBE tertutup rapi per CPL untuk kurikulum aktif (harus 0 baris)
+SELECT m.tenant_id, m.curriculum_id, m.program_outcome_id, SUM(m.contribution_pct) AS total_pct
+FROM outcome_matrix m
+JOIN curricula c ON c.id = m.curriculum_id AND c.is_active
+WHERE m.is_active
+GROUP BY 1,2,3
+HAVING SUM(m.contribution_pct) <> 100.00;
 ```
 Tiga query yang **harus mengembalikan 0 baris** di setiap PR yang menyentuh migrasi: tabel tanpa RLS, tabel `tenant_id` tanpa index `(tenant_id, …)` pada kolom yang di-query, dan policy tanpa `WITH CHECK` untuk tabel dengan INSERT.
+
+**Penambahan 2026-10-20 (§16):** query 6–11 adalah gerbang yang membuat klaim gugus ini tidak menjadi kalimat hiasan — insert-only diuji **dua dinding terpisah** (hak lalu pemicu), id pusat diuji terhadap snapshot yang membuktikannya, progres rekey diuji dari amplop (bukan dari log aplikasi), dan partisi diuji sebelum bulan berganti. Semua query 6–11 **butuh basis data nyata**: hari ini tidak dapat dijalankan karena `pg` dan `testcontainers` belum menjadi dependensi (TECH_CONVENTIONS §6, `RD-11`) — statusnya **spesifikasi tes yang belum dapat ditegakkan**, bukan tes yang sudah hijau.
 
 ---
 
@@ -1040,7 +1575,9 @@ Tiga query yang **harus mengembalikan 0 baris** di setiap PR yang menyentuh migr
 
 ```sql
 BEGIN;
-SET LOCAL app.tenant_id = '<baru>';
+SET LOCAL app.current_tenant = '<baru>';
+-- Sumber kebenaran peran & grant: docs/RBAC_MATRIX.md §2 (22 peran) & §6 (matriks menu).
+-- 15 role sistem selalu di-seed; 7 peran 🟡 lainnya dibuat on-demand saat tenant memisahkannya.
 INSERT INTO roles (id, tenant_id, code, display_name, scope_kind, is_system) VALUES
   ('…','<baru>','STUDENT','Mahasiswa','SELF',true),
   ('…','<baru>','LECTURER','Dosen Pengampu','CLASS',true),
@@ -1048,14 +1585,30 @@ INSERT INTO roles (id, tenant_id, code, display_name, scope_kind, is_system) VAL
   ('…','<baru>','HEAD_OF_PROGRAM','Kaprodi','PROGRAM',true),
   ('…','<baru>','ADMIN_ACADEMIC','Admin Akademik','ORG',true),
   ('…','<baru>','ADMIN_FINANCE','Admin Keuangan','TENANT',true),
-  ('…','<baru>','FINANCE approver','Bendahara','TENANT',true),
+  ('…','<baru>','TREASURER','Bendahara (penyetuju void/keringanan)','TENANT',true),
   ('…','<baru>','LEADER','Pimpinan','ORG',true),
   ('…','<baru>','FEEDER_OPERATOR','Operator Feeder','TENANT',true),
-  ('…','<baru>','ALUMNI','Alumni','SELF',true);
--- role_permissions mengikuti katalog PERM di packages/domain (sumber kebenaran yang sama)
+  ('…','<baru>','ALUMNI','Alumni','SELF',true),
+  ('…','<baru>','TENANT_ADMIN','Administrator Kampus','TENANT',true),
+  ('…','<baru>','STAFF','Tenaga Kependidikan','ORG',true),
+  ('…','<baru>','APPLICANT','Pendaftar PMB','SELF',true),
+  ('…','<baru>','GUARDIAN','Orang Tua/Wali','SELF',true),
+  ('…','<baru>','QUALITY_OFFICER','Penjaminan Mutu (SPMI)','ORG',true);
+-- On-demand (is_system=false, dibuat lewat /admin/pengguna/hak-akses, BUKAN lewat seed):
+--   COMPLIANCE_OFFICER, COORDINATOR/EXAMINER/LAB_ASSIST (atribut class_assignments.role_in_class),
+--   PMB_OPERATOR, HR_BKD_OFFICER, UNIT_CLEARANCE_OFFICER — lihat RBAC_MATRIX §9.5 (bundle lebih dulu).
+-- PLATFORM_OPERATOR TIDAK di-seed per-tenant: ia hidup di lapisan platform, bukan di roles(tenant_id).
+-- Ralat 2026-10-19: kode lama 'FINANCE approver' mengandung spasi dan tidak cocok dengan
+-- pola `roles.code`; dinormalkan menjadi TREASURER dengan display_name tetap "Bendahara".
+-- Arah BR-K2 diralat: ADMIN_FINANCE = PEMOHON void/keringanan, TREASURER = PENYETUJU (VALIDATE).
+-- role_permissions mengikuti katalog PERM dari RBAC_MATRIX §4 (222 izin atomik terukur, 607 pasangan grant,
+-- 6 aksi per FR-IDT-04; sumber: packages/contracts/src/authz.ts -> gen-rbac-seed.mjs);
+-- permissions di-seed sekali global (lihat §3.1: tanpa tenant_id, di luar generator RLS).
 -- academic_rules diisi default dari template + WAJIB direview admin PT sebelum OW pertama.
 COMMIT;
 ```
+
+**Kolom `permissions` yang dibutuhkan matriks izin** ([RBAC_MATRIX §3.1](file:///c:/SICA/docs/RBAC_MATRIX.md), FR-IDT-04, §14.4 di atas): `resource text NOT NULL` + `verb permission_verb NOT NULL`. **Ralat hasil implementasi (2026-10-19):** usulan `UNIQUE (resource, verb)` tidak dapat dipenuhi — katalog 222 kode hanya menghasilkan **169** pasangan `resource|verb`, dan 37 pasangan memuat lebih dari satu kode (`admin.pengguna|UPDATE` = `identity.user.update` + `identity.user.deactivate` + `identity.membership.update`). Kuncinya tetap `code UNIQUE`; `(resource, verb)` menjadi indeks tempat matriks `/admin/pengguna/hak-akses` merender baris menu × 6 aksi. Tanpa kedua kolom itu celah **G-09** tetap terbuka; sekarang keduanya ada di [0011_rbac_scoped.sql](file:///c:/SICA/packages/database/migrations/0011_rbac_scoped.sql) dan terisi dari `PERMISSION_SPECS`.
 
 ---
 
@@ -1094,7 +1647,10 @@ Bagian ini menutup **celah field data** yang ditemukan saat membandingkan `stude
 ### 11.2 DDL Penambahan — Biodata Mahasiswa & Ortu (PII)
 ```sql
 CREATE TYPE sex_type AS ENUM ('M','F');
-CREATE TYPE income_band AS ENUM ('LEB_300','L300_500','L500_1JT','L1_2JT','GT_2JT','TIDAK_BERWORK');
+-- Catatan L/P: PDDikti memakai 'L'/'P'. Enum internal TIDAK diubah; peta nilainya hidup
+-- sebagai baris `pddikti_mappings (kind='VALUE', entity='sex_type')` — lihat §5 & INTEGRATIONS §1.4(d).
+CREATE TYPE income_band AS ENUM ('LEB_300','L300_500','L500_1JT','L1_2JT','GT_2JT','TIDAK_BEKERJA');
+--   (diralat 2026-10-19 — RD-13: ejaan lama `TIDAK_BEWORK` tidak ada di kode `enums.ts:100`)
 
 -- Penambahan kolom pada students (pecah dari blok agar mudah di-migrate)
 ALTER TABLE students
@@ -1195,27 +1751,50 @@ CREATE TABLE staff (
 
 ### 11.4 DDL Penambahan — Course (SKS per jenis), Attendance (status), Feeder codes
 ```sql
+-- ⚑ SATU set kolom SKS kanonik untuk `courses` (diralat 2026-10-19 — RD-13/K-13).
+--   Nama mengikuti ejaan yang benar-benar ada di kode (`schema/academic-master.ts:190-192`:
+--   `sks`, `sks_teori`, `sks_praktik`) dan mengikuti **empat** rincian wajib Neo Feeder
+--   (`sks_tatap_muka` + `sks_praktek` + `sks_praktek_lapangan` + `sks_simulasi`, lihat §14.5).
 ALTER TABLE courses
-  ADD COLUMN sks_theory int NOT NULL DEFAULT 0 CHECK (sks_theory >= 0),
-  ADD COLUMN sks_practice int NOT NULL DEFAULT 0 CHECK (sks_practice >= 0),
-  ADD COLUMN sks_field_work int NOT NULL DEFAULT 0 CHECK (sks_field_work >= 0),  -- praktik kerja/lapangan
-  ADD COLUMN sks_lab int NOT NULL DEFAULT 0 CHECK (sks_lab >= 0),
+  ADD COLUMN sks_teori             numeric(4,1) CHECK (sks_teori >= 0),             -- ada di kode
+  ADD COLUMN sks_praktik           numeric(4,1) CHECK (sks_praktik >= 0),           -- ada di kode
+  ADD COLUMN sks_praktik_lapangan  numeric(4,1) CHECK (sks_praktik_lapangan >= 0),
+  ADD COLUMN sks_simulasi          numeric(4,1) CHECK (sks_simulasi >= 0),
   ADD COLUMN course_type text NOT NULL DEFAULT 'WAJIB'
     CHECK (course_type IN ('WAJIB','PILIHAN','MUATAN_LOKAL','MPK')),
   ADD COLUMN medium_language text NOT NULL DEFAULT 'ID',   -- 'ID' | 'EN' | 'AR'
   ADD COLUMN science_cluster text,
   ADD COLUMN pddikti_id_mk uuid;
--- Konsistensi: sks = sks_theory+sks_practice+sks_field_work+sks_lab → ditegakkan service + trigger.
+-- `sks` tetap **otoritatif** = jumlah keempatnya; CHECK di DB tidak bisa membaca baris lain, maka
+-- konsistensi ditegakkan service + trigger, dan Feeder menolak 0 serta > 9 (AC-FDR-2).
+--
+-- Alias yang **dihapus** (jangan dipakai lagi; Expand-and-Contract, satu rilis sebagai view alias):
+--   `sks_theory`, `sks_practice`, `sks_field_work`, `sks_lab`  ← ejaan Inggris blok ini sebelumnya
+--   `sks_praktik_kerja`, `sks_lab` (G-06 di §11.1)            ← ejaan ketiga
+--   `sks_total`, `courses.sks_total`                           ← ejaan `INTEGRATIONS.md` §1.2(B)
+--   `sks_praktik_lapangan`/`sks_simulasi` yang pernah diletakkan di §14.5(3) — dipindah ke mari
+--   (satu tabel satu blok DDL, §1)
 
+-- Kosakata presensi kanonik = enum PG ini (keputusan K-12: penyimpanan menang; wire/API memakai
+-- camelCase + peta alias, bukan enum baru). BENCH-72 (`T`/PENDING) masih **usulan** dan belum
+-- menjadi anggota enum — menambahnya = migrasi `ALTER TYPE`, bukan mengubah dokumen saja.
 CREATE TYPE attendance_status AS ENUM ('PRESENT','EXCUSED','SICK','ABSENT_LATE','ABSENT');
+-- Sumber pencatatan (identik `enums.ts:137` + `0005_field_data_attendance_courses.sql`):
+CREATE TYPE attendance_source AS ENUM ('QR','GEOFENCE','MANUAL','APP_BULK','FEEDER_SYNC');
 ALTER TABLE attendances
   ADD COLUMN status attendance_status NOT NULL DEFAULT 'PRESENT',
-  ADD COLUMN method text NOT NULL DEFAULT 'QR' CHECK (method IN ('QR','GPS','MANUAL','ONLINE_WATCH')),
+  ADD COLUMN source attendance_source NOT NULL DEFAULT 'QR'   -- ⚑ nama kanonik = `source` (kode
+  --   `enrollments.ts:81` + enum `attendance_source`: QR|GEOFENCE|MANUAL|APP_BULK|FEEDER_SYNC).
+  --   Ejaan lama `method` dan nilainya ('QR','GPS','MANUAL','ONLINE_WATCH') DICABUT (RD-13).
+  ADD COLUMN marked_by uuid,                                   -- siapa mencatat (dosen/admin); NULL=self-scan
+  ADD COLUMN notes text,                                       -- alasan izin/sakit (wajib utk EXCUSED/SICK)
   ADD COLUMN latitude double precision, longitude double precision,
-  ADD COLUMN accuracy_m numeric(6,1),
+  ADD COLUMN distance_meters int,                              -- ⚑ hasil Haversine; `accuracy_m` dicabut
   ADD COLUMN is_mock_location boolean NOT NULL DEFAULT false,
   ADD COLUMN device_id text;
 -- 'present' boolean lama didepresikan (turunan dari status) — migrasi map boolean->enum.
+-- ⚑ Koordinat = PII bergerak: retensi & masking diatur §14.9 + `retention_rules` (BENCH-81, BR-R14);
+--   rekap kehadiran final memusnahkan koordinat, hanya `distance_meters` yang bertahan untuk audit.
 
 -- Kode feeder entitas institusi (sumber nilai utk pddikti_mappings)
 ALTER TABLE tenants
@@ -1226,13 +1805,34 @@ ALTER TABLE tenants
   ADD COLUMN province_code text, regency_code text, address text,
   ADD COLUMN accreditation_institution text
     CHECK (accreditation_institution IN ('UNGGUL','BAIK_SANGAT','BAIK','CUKUP','BELUM','TIDAK_AKREDITASI','KEDALUWARSA'));
+-- Kolom tampilan/merek tenant (RD-29): `tenants` hanya punya `legal_name`, sehingga UI tidak punya
+-- tempat membaca nama pendek & logo; `logo_url` adalah sumber favicon/login/ijazah.
+ALTER TABLE tenants
+  ADD COLUMN name        text,               -- nama populer (berbeda dari legal_name)
+  ADD COLUMN short_name  text,               -- untuk daftar, breadcrumb, judul PDF
+  ADD COLUMN name_en     text,               -- i18n nama institusi (guardrail §3.5: bukan string UI)
+  ADD COLUMN email       citext,
+  ADD COLUMN phone       text,
+  ADD COLUMN website     text,
+  ADD COLUMN logo_url    text;               -- menunjuk `attachments.id`/URL storage (lihat §14.7)
 ALTER TABLE organizations   ADD COLUMN pddikti_id_fakultas uuid;
 ALTER TABLE study_programs  ADD COLUMN establishment_decree text, ADD COLUMN degree_code text;
 -- study_programs.pddikti_code (sudah ada) kini menjadi target pemetaan; degree_code = kode gelar kementerian.
 ```
 
-### 11.5 Catatan Defek DSK Dokumen (AUD-09)
-§5 mendefinisikan `CREATE TABLE graduation_records` **dua kali** (blok pertama sederhana + blok kedua dengan `snapshot_hash`, `pin_batch_id`, `pisn_verification_ref`). Dua `CREATE TABLE` dengan nama yang sama membuat replay migrasi **gagal**. Keputusan arsitek: blok kedua menjadi definitif; blok pertama dihapus/di-`ALTER` (kolom `decree_number`,`predicate`,`national_diploma_number` digabung ke `graduation_records` definitif). Perlu direfaktori pada §5 sebelum skema Drizzle `schema/graduation.ts` dibuat.
+### 11.5 Catatan Defek DSK Dokumen (AUD-09) — **DITUTUP 2026-10-19**
+Defek ini ada tiga dan ketiganya kini punya **satu** definisi di dokumen ini (`RD-06`):
+
+| Objek | Blok lama (dihapus → pointer) | Blok kanonik | Yang digabung dari blok lama |
+|---|---|---|---|
+| `graduation_records` | §5 blok pertama (dulu baris 842–858; rujukan lama "811 & 872" salah — `RD-31`) | §5 blok **kedua** (BR-R12/snapshot), kini diberi header `BLOK KANONIK` | `period_id`, `decree_number`, `graduation_date`→`conferred_on`, `total_sks CHECK (>=36)`, `final_gpa`→`ipk_final` (+CHECK 0–4), `predicate` (kanonik; `honors` jadi alias), `national_diploma_number`→`diploma_number`, `pddikti_reported_at`, `is_locked`, `UNIQUE (tenant_id, decree_number, student_id)`, `idx_grad_period` |
+| `student_status_history` | §5 (dulu baris 611–615) | §14.3 | `effective_on`→`effective_from`, `reason` (kini `CHECK (length(reason) >= 5)`), `from_status`/`to_status`, `approved_by`, `created_at` |
+| `permission_verb` | §14.4 (duplikat `CREATE TYPE`) | §3 (blok enum RBAC, sesuai `0011_rbac_scoped.sql` & `enums.ts:171`) | tidak ada kolom berbeda — duplikat murni, dihapus |
+
+Aturan pemicunya sekarang tertulis di §1: **satu tabel satu blok DDL**, penamaan ulang memakai
+Expand-and-Contract. Konsekuensi bagi `graduation_records`: blok kanonik **belum** boleh dimigrasikan
+sebelum kolom gabungan di atas ada di skema Drizzle `schema/graduation.ts` (Rujukan: keputusan produk
+P-7/BENCH-99 — tidak boleh ada migrasi `0019` sebelum refactor selesai; refactor §5 telah selesai).
 
 ### 11.6 Konsekuensi ke Lapis Kontrak & UI
 - `packages/contracts` perlu `StudentBiodataSchema`, `LecturerSchema`, `AttendanceStatusSchema` agar form registrasi/biodata punya **field lengkap** (Guardrail §3.3, §3.5).
@@ -1252,13 +1852,13 @@ ALTER TABLE study_programs  ADD COLUMN establishment_decree text, ADD COLUMN deg
 
 **Prinsip:** semua tabel modul **tetap ada** di skema walau modul OFF (baris kosong tidak mengganggu). Yang berubah hanyalah: (a) status aktif per tenant, (b) visibilitas menu, (c) izin endpoint. Ini **modular-monolith**, bukan microservice terpisah.
 
-### 12.1 Skema (di-implementasi di `packages/database/src/schema/modules.ts` — terverifikasi `tsc`)
+### 12.1 Skema katalog & entitlement modul — M-01 (di-implementasi di `packages/database/src/schema/modules.ts` — terverifikasi `tsc`)
 ```sql
 CREATE TYPE module_category        AS ENUM ('CORE','ADDON');
 CREATE TYPE module_license_metric  AS ENUM ('INCLUDED','PER_SEAT','FLAT');
 CREATE TYPE tenant_module_status   AS ENUM ('ACTIVE','TRIAL','DISABLED','EXPIRED','PENDING_PAYMENT');
 
--- Katalog modul GLOBAL (tanpa tenant_id → RLS OFF, GRANT SELECT ke sica_app)
+-- Katalog global: policy SELECT ber-RLS mengikuti migrasi 0087 (§6.2).
 CREATE TABLE modules (
   id uuid PRIMARY KEY, code text NOT NULL UNIQUE, name text NOT NULL,
   category module_category NOT NULL, is_core boolean NOT NULL DEFAULT false,
@@ -1291,7 +1891,7 @@ CREATE TABLE tenant_modules (
   activated_by uuid, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, module_id));
 ```
-RLS: `tenant_modules` ikut generator §6.2 (punya `tenant_id` → ENABLE+FORCE+policy `tenant_isolation`). `modules`/`module_dependencies`/`plan_modules` = katalog global → `RLS OFF` + `GRANT SELECT` saja (mirip `plans`/`permissions`).
+RLS: `tenant_modules` memiliki ENABLE+FORCE+policy `tenant_isolation`. `modules` dan `permissions` adalah katalog global tetapi **tetap ENABLE+FORCE**, dengan policy SELECT eksplisit `0087` (§6.2); jangan menggeneralisasi semua katalog sebagai RLS OFF. Hak tulis katalog hanya melalui jalur platform/seed berotoritas. `module_dependencies`/`plan_modules` mengikuti grant katalog masing-masing, bukan policy tenant fiktif.
 
 ### 12.2 Katalog Modul (seed) & Keputusan Core vs Addon
 | code | category | is_core | license | keterangan |
@@ -1322,15 +1922,147 @@ RLS: `tenant_modules` ikut generator §6.2 (punya `tenant_id` → ENABLE+FORCE+p
 | `graduation` | assessment, feeder_pddikti | FLAT |
 | `tracer_iku` | graduation, feeder_pddikti | FLAT |
 
-### 12.3 Aturan validasi enablement (ditegakkan di service, bukan DB)
-1. Modul `is_core=true` **selalu** dibuat `tenant_modules(ACTIVE)` saat provision tenant.
-2. Menambah addon: **wajib** semua `depends_on_module_id` sudah `ACTIVE`/`TRIAL` untuk tenant itu; jika tidak → `422 MODULE_DEPENDENCY_UNMET`.
-3. Menonaktifkan modul: **wajib** tidak ada modul lain yang aktif bergantung padanya → `409 MODULE_IN_USE` (cascade eksplisit bila dipaksa + audit).
-4. `status ∈ {DISABLED,EXPIRED,PENDING_PAYMENT}` → dianggap **tidak aktif** oleh resolver.
-5. Perubahan `tenant_modules` = write finansial/akademik sensitif → **audit_log** + (opsional) `access_change_requests` four-eyes untuk self-service > limit paket.
+### 12.3 Aturan validasi enablement (target penegakan layanan)
+1. Provisioning memasang modul inti sesuai kontrak paket. Kode modul yang terdaftar bukan bukti fitur sudah dapat dijual; pemenuhan dependensi dan kesiapan handler diuji sebelum aktivasi.
+2. **Lisensi diberikan oleh platform**, dengan MFA, alasan dan audit. `tenant_modules` memegang pemberian lisensi; admin tenant hanya mengubah preferensi lokal, tidak boleh memperpanjang trial, menaikkan seats atau mengubah status lisensi. Izin transisi platform harus diputuskan di RBAC sebelum implementasi; izin ubah tanggal/seats tidak otomatis memberi hak aktivasi.
+3. Prasyarat wajib efektif pada tenant yang sama; kekurangan → `422 MODULE_DEPENDENCY_UNMET`. Menonaktifkan prasyarat yang masih digunakan → `409 MODULE_IN_USE`; tidak ada cascade tersembunyi atau penghapusan data domain.
+4. `DISABLED`, `EXPIRED`, `PENDING_PAYMENT` tidak tersedia. `SUSPENDED` milik `tenant_status`, bukan `tenant_module_status`; tenant tersuspensi tetap dibatasi walau lisensinya `ACTIVE`.
+5. `plan_modules` adalah pemetaan penawaran; `tenant_modules` adalah pemberian per tenant. `plans.entitlements` merupakan representasi lama yang **tidak dibaca resolver saat ini**; tidak boleh menjadi otoritas ketiga. Perubahan harga/paket dibuat sebagai versi penawaran baru, tidak mengubah kontrak historis diam-diam. Bentuk snapshot komersial langganan masih perlu DDL berversi sebelum penjualan otomatis.
+6. Namespace target `tenant_settings.feature_flags.release` ditulis platform; `tenant_settings.feature_flags.modules` hanya preferensi boolean per kode modul oleh tenant. API masing-masing tidak menerima seluruh JSONB. Pemisahan namespace dan migrasi data lama belum berjalan; sampai itu tersedia, endpoint aktivasi mandiri tidak boleh dianggap aman sebagai kontrol lisensi komersial.
 
-### 12.4 Resolver (sumber kebenaran runtime)
-`isModuleActive(tenantId, moduleCode) := EXISTS tenant_modules WHERE tenant_id, module.code, status IN ('ACTIVE','TRIAL') AND (valid_to IS NULL OR valid_to > now())`. Di-cache per tenant (Redis/TTL 60s), di-invalidate saat `tenant_modules` berubah. Lihat ARCHITECTURE ADR-06 & TECH_CONVENTIONS.
+### 12.4 Resolver: perilaku aktual dan kontrak target
+**Aktual:** `createTenantModuleCheck` membaca `tenant_modules` dengan status `ACTIVE`/`TRIAL` dan `valid_to > now()` atau NULL dari PostgreSQL. Cache Redis belum dipasang. Ini tidak membuktikan gerbang semua rute, pemeriksaan `valid_from`, plafon langganan, atau preferensi lokal sudah lengkap.
+
+**Target:** tersedia = tenant diizinkan beroperasi × modul global aktif × lisensi `ACTIVE`/`TRIAL` × `valid_from <= now()` × masa berlaku belum berakhir × dependensi efektif × release aktif × preferensi lokal aktif. Hasil tersebut masih harus diiriskan dengan permission, scope dan state domain; ia tidak memberikan hak bisnis kepada admin IT. Penolakan rute domain `404 MODULE_NOT_AVAILABLE`; penolakan saklar katalog yang terlihat `403 MODULE_NOT_ENTITLED`. Pemeriksaan mutasi dan read-your-writes ke Primary; cache hanya akselerator dengan versi/invalidation dan batas kedaluwarsa tidak melampaui masa lisensi. Clock server adalah otoritas. Ketidaktersediaan cache tidak boleh memperpanjang lisensi lama. Rujukan ADR-13, bukan ADR-6 (UUID).
+
+### 12.5 Penagihan berlangganan SaaS tingkat tenant — M-01 (`0091`–`0092`, design-only sampai migrasi tertanam)
+
+**Kenapa bagian ini ada dan kenapa ia bukan perluasan §12.1.** §12.1–§12.4 sudah memiliki seluruh **keputusan lisensi** (modul mana aktif untuk tenant mana, seats, masa berlaku, prasyarat). Yang tidak pernah punya rumah adalah sisi uangnya: tagihan langganan yang SICA terbitkan **kepada kampus**. `FR-PLT-04`/`AC-PLT-6` menormakan objeknya; dua tabel di bawah adalah satu-satunya tempat objek itu hidup.
+
+```sql
+CREATE TYPE platform_invoice_status  AS ENUM ('DRAFT','ISSUED','PARTIAL','PAID','VOID','OVERDUE');
+CREATE TYPE platform_payment_status  AS ENUM ('PENDING','SUCCEEDED','FAILED','REFUNDED');
+
+ALTER TABLE subscriptions ADD CONSTRAINT uq_subscription_tenant_id UNIQUE (tenant_id, id);
+
+CREATE TABLE platform_invoices (
+  id uuid PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  subscription_id uuid NOT NULL,
+  invoice_number text NOT NULL,
+  period_start date NOT NULL,
+  period_end date NOT NULL,
+  description text NOT NULL CHECK (char_length(description) BETWEEN 1 AND 500),
+  subtotal_rupiah bigint NOT NULL CHECK (subtotal_rupiah > 0),
+  tax_rupiah bigint NOT NULL DEFAULT 0 CHECK (tax_rupiah >= 0),
+  discount_bp int NOT NULL DEFAULT 0 CHECK (discount_bp BETWEEN 0 AND 10000),
+  amount_rupiah bigint GENERATED ALWAYS AS
+    ((subtotal_rupiah::numeric - round(subtotal_rupiah::numeric * discount_bp / 10000) + tax_rupiah)::bigint) STORED,
+  status platform_invoice_status NOT NULL DEFAULT 'DRAFT',
+  version int NOT NULL DEFAULT 1 CHECK (version > 0),
+  due_at timestamptz NOT NULL,
+  issued_at timestamptz,
+  issued_by uuid REFERENCES users(id) ON DELETE RESTRICT,
+  voided_at timestamptz,
+  voided_by uuid REFERENCES users(id) ON DELETE RESTRICT,
+  void_reason text CHECK (char_length(void_reason) BETWEEN 10 AND 500),
+  idempotency_key text NOT NULL,
+  request_hash text NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, subscription_id) REFERENCES subscriptions(tenant_id, id) ON DELETE RESTRICT,
+  CONSTRAINT ck_pi_period_ordered CHECK (period_end >= period_start),
+  CONSTRAINT ck_pi_positive_amount CHECK (amount_rupiah > 0),
+  CONSTRAINT ck_pi_state_times CHECK (
+    (status = 'DRAFT' AND issued_at IS NULL AND issued_by IS NULL) OR
+    (status <> 'DRAFT' AND issued_at IS NOT NULL AND issued_by IS NOT NULL)
+  ),
+  CONSTRAINT ck_pi_void_actor CHECK (
+    (status = 'VOID' AND voided_at IS NOT NULL AND voided_by IS NOT NULL
+      AND void_reason IS NOT NULL AND voided_by <> issued_by) OR
+    (status <> 'VOID' AND voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL)
+  ),
+  UNIQUE (tenant_id, id),
+  UNIQUE (tenant_id, id, issued_by),
+  UNIQUE (tenant_id, invoice_number),
+  UNIQUE (tenant_id, idempotency_key)
+);
+
+CREATE TABLE platform_payments (
+  id uuid PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  invoice_id uuid NOT NULL,
+  amount_rupiah bigint NOT NULL CHECK (amount_rupiah > 0),
+  status platform_payment_status NOT NULL DEFAULT 'PENDING',
+  channel text NOT NULL CHECK (char_length(channel) BETWEEN 1 AND 80),
+  provider_ref text NOT NULL CHECK (char_length(provider_ref) BETWEEN 1 AND 200),
+  idempotency_key text NOT NULL,
+  request_hash text NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+  invoice_issued_by uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  approved_by uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  settled_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, invoice_id) REFERENCES platform_invoices(tenant_id, id) ON DELETE RESTRICT,
+  FOREIGN KEY (tenant_id, invoice_id, invoice_issued_by)
+    REFERENCES platform_invoices(tenant_id, id, issued_by) ON DELETE RESTRICT,
+  CONSTRAINT ck_pp_four_eyes CHECK (invoice_issued_by <> approved_by),
+  CONSTRAINT ck_pp_settled CHECK (
+    (status IN ('SUCCEEDED','REFUNDED') AND settled_at IS NOT NULL) OR
+    (status IN ('PENDING','FAILED') AND settled_at IS NULL)
+  ),
+  UNIQUE (tenant_id, idempotency_key),
+  UNIQUE (tenant_id, channel, provider_ref)
+);
+
+ALTER TABLE platform_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform_invoices FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON platform_invoices
+  USING (tenant_id = current_setting('app.current_tenant')::uuid)
+  WITH CHECK (tenant_id = current_setting('app.current_tenant')::uuid);
+ALTER TABLE platform_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform_payments FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON platform_payments
+  USING (tenant_id = current_setting('app.current_tenant')::uuid)
+  WITH CHECK (tenant_id = current_setting('app.current_tenant')::uuid);
+CREATE INDEX idx_platform_invoice_listing ON platform_invoices (tenant_id, created_at DESC, id);
+CREATE INDEX idx_platform_payment_invoice ON platform_payments (tenant_id, invoice_id);
+```
+
+**Enam ikatan yang membuat bagian ini aman, bukan sekadar tabel baru.**
+1. **RLS.** Keduanya punya `tenant_id` → ikut generator §6.2 (`ENABLE`+`FORCE`+`tenant_isolation`). `platform_invoices` **tidak** boleh dibaca lintas tenant; tulisan lintas-tenant hanya lewat jalur M-01 di §6.2 ("Tulisan platform lintas tenant") — `SET LOCAL` setelah id target **diselesaikan dari barisnya**, bukan dari `x-tenant-id` kiriman klien (`SEC-07`, diuji `AC-PLT-2`).
+2. **Pagar domain.** Tidak ada satu pun foreign key dari/ke `invoices`, `ledger`, `payments`, `payment_allocations` milik M-10. `AC-PLT-6` mengujinya dua arah. Pelanggaran terhadap vonis §5.13 (tanggung jawab tunggal) dihitung sebagai bug, bukan gaya.
+3. **Uang tetap integer.** `amount_rupiah`/`tax_rupiah` `bigint`, potongan dalam **basis-poin** (10.000 = 100%) — `float`/`double` dilarang lintas platform (`AGENTS §3.4`, ADR-5).
+4. **Keadaan terminal tidak dihapus.** `VOID` dan `PAID` tetap terbaca; `ON DELETE RESTRICT` dari `tenants` memaksa decommission menjadi prosedur, bukan cascade diam-diam (`0043`).
+5. **Empat-mata.** `ck_pi_void_actor` menegakkan pembatal berbeda dari penerbit; `ck_pp_four_eyes` menegakkan penyetuju settlement berbeda dari penerbit yang terikat FK. Penerbitan sendiri belum menuntut penyetuju kedua. Semua aksi manusia menuntut MFA + `audit_logs`; izin settlement/void tetap usulan, dan persetujuan nilai parameter tidak dapat menggantikannya.
+6. **Tidak ada rahasia di baris.** `channel` adalah **kode** yang dipetakan ke `ENV_CONTRACT` (mis. nomor VA per bank); `provider_ref` hanya id transaksi. `master_system_parameters`/baris ini tidak pernah menampung kunci API — `§21.2` (`is_secret = false`, `source_of_truth <> 'ENV'`) tetap berlaku di gugus ini.
+
+**Kontrak transaksi yang belum menjadi kode.** Versi pertama menagih satu deskripsi agregat per invoice, bukan `components[]` tanpa tabel rincian. `amount_rupiah` dihitung DB dari subtotal dikurangi diskon half-up ditambah pajak yang disetujui; tarif pajak bukan konstanta hukum di kode. Total wajib positif; kredit/refund dan invoice nol menunggu spesifikasi tersendiri. Semua kolom finansial dibekukan setelah terbit; klien tidak dapat mengirim status, nomor, hash atau identitas penyetuju.
+
+- Penerbitan langsung menghasilkan `ISSUED`; alur simpan draf/edit/terbit terpisah belum dikontrak dan tidak ditawarkan UI. `DRAFT` pada enum bukan bukti ada endpointnya.
+- Pelunasan manual hanya oleh aktor berbeda dari penerbit (`ck_pp_four_eyes`); `invoice_issued_by` disalin server dan FK membuktikan cocok dengan invoice. Bukti `provider_ref` diverifikasi di server; menyatakan referensi dalam body saja tidak membuktikan transfer. Otomasi callback/refund memerlukan kontrak dan otoritas tersendiri, tidak memakai sesi manusia palsu.
+- Transaksi mengunci invoice target, memeriksa `expectedVersion`, menjumlah pembayaran `SUCCEEDED`, dan menolak overpayment. Jumlah kurang dari total → `PARTIAL`, sama → `PAID`; pembayaran pada `ISSUED`, `PARTIAL` atau `OVERDUE` diperbolehkan. Void hanya `ISSUED`/`OVERDUE` dengan total pembayaran nol. `PAID`/`VOID` terminal; `REFUNDED` belum memiliki jalur transisi yang boleh dipanggil.
+- Replay key dan payload kanonik identik mengembalikan hasil pertama **sebelum** penolakan keadaan terminal; key sama payload berbeda → konflik idempotensi. Referensi provider sama dengan key lain → `409 PLATFORM_PAYMENT_DOUBLE_SETTLE`. Dedup referensi di namespace merchant/platform harus direkonsiliasi sebelum onboarding kanal; UNIQUE per tenant saja tidak mencegah klaim transfer sama lintas tenant.
+- Invoice, payment, audit dan idempotency result ditulis dalam satu transaksi Primary. Kunci idempotensi transport juga diikat tenant + operasi + aktor; hash tidak memuat kredensial. Validasi jumlah lintas tabel dan imutabilitas finansial memerlukan trigger/privilege service teruji pada migrasi, bukan klaim bahwa CHECK di atas sudah cukup.
+- Indeks pada tabel baru dapat dibuat saat belum dilayani; penambahan ke tabel hidup (termasuk UNIQUE langganan) melalui indeks `CONCURRENTLY` lalu attachment dengan `lock_timeout`, mengikuti MIGRATION_SOP. DDL ini **bukan** skrip produksi sekali jalan tanpa lock.
+
+**Status realisasi.** `0091_platform_invoices.sql`/`0092_platform_payments.sql` baru reservasi di §14.7; migrasi, Drizzle, DTO runtime dan handler lisensi/tagihan belum ada. DDL parsial ini memperbaiki isolasi dan aritmetika, tetapi trigger, bukti pembayaran, snapshot paket dan cakupan kontrak masih penahan rilis. Modul M-01 tetap `SEBAGIAN`.
+
+### 12.6 Register pemetaan: nama permintaan pemilik → fisik kanonik (2026-10-23)
+
+Lima nama permintaan dipetakan ke pemilik fakta yang sudah ada, sesuai pilihan pemilik *"pakai fisik kanonik + tabel pemetaan"*. Pemetaan **bukan klaim** semua entitas sudah diimplementasikan; tidak ada tabel atau view alias baru yang dibuat pada audit dokumen ini.
+
+| Nama yang diminta | Fisik/definisi kanonik | Status dan batas |
+|---|---|---|
+| `tenant_subscriptions` | `subscriptions` (§3.1) | SQL/Drizzle ada; tanggal akhir langganan berbeda dari tanggal akhir lisensi tiap modul. Snapshot harga/ketentuan historis belum lengkap |
+| `tenant_module_entitlements` | `tenant_modules` (§12.1) | SQL/Drizzle ada; status lima nilai dan interval per modul. `plan_modules` penawaran, bukan pemberian; `plans.entitlements` tidak menjadi otoritas runtime kedua |
+| `addon_packages` | penawaran `plans` + `plan_modules`, katalog `modules` + `module_dependencies` | modul bukan bundel dagang. Sembilan label paket di PRD §5.12.5 merupakan pemetaan kebutuhan, belum katalog bundel berversi yang dapat ditagih otomatis; `license_metric`, bukan kolom rekaan `billing_model` |
+| `sha256_audit_logs` | `audit_logs` + `audit_chain_head` (§4), jangkar §18.8 | jejak SQL/Drizzle ada; Merkle/verifier terjadwal `0043` masih design-only. Hash mendeteksi perubahan relatif ke jangkar tepercaya, bukan menjamin tak bisa diubah administrator DB |
+| `pii_privacy_requests` | `data_subject_requests` (§5.1) | DDL dokumen ada; migrasi, Drizzle, API dan bukti workflow belum ada. Bukan `access_change_requests` untuk RBAC |
+| Max Active Students | `subscriptions.seats_student` + `tenant_usage` | saat ini metering; tidak boleh diklaim hard cap admission. Definisi mahasiswa aktif, periode penghitungan dan enforcement atomik masih perlu kontrak |
+| Max Storage | `tenant_quotas.max_storage_mb` | batas tersimpan; penegakan unggah, reservasi paralel dan rekonsiliasi storage harus diuji terpisah |
+| Global/local feature toggles | namespace terpisah dalam `tenant_settings.feature_flags` (§12.3) | global release platform berbeda dari opt-out tenant; keduanya tidak dapat memberikan lisensi |
+| SaaS Billing | `platform_invoices` + `platform_payments` (§12.5) | `0091`–`0092` reservasi design-only; uang SICA–kampus terpisah dari mahasiswa–kampus M-10 |
+| Nama rute `sica-admin` | keluarga `/api/v1/platform/**` per objek | alias tidak dibuat; keputusan namespace bukan alasan menolak bulk operation selamanya. Bulk perlu kontrak per-item dan otorisasi/atomicity tersendiri |
 
 ---
 
@@ -1344,7 +2076,7 @@ Selaras ARCHITECTURE §9. Tujuannya: memisahkan beban **baca jadwal/KRS/dashboar
 | **Primary (WRITE)** | `pg-primary:5432` | semua `INSERT/UPDATE/DELETE`, transaksi akademik/keuangan | satu-satunya target write; RLS `FORCE` aktif |
 | **Replica (READ-ONLY)** | `pg-replica{1..n}:5432` | query read: roster/jadwal, dashboard, transkrip, report, pencarian | hanya `SET TRANSACTION READ ONLY`; **tanpa** tulis |
 
-Replikasi **streaming asynchronous** + `hot_standby=on`. **RLS tetap berlaku di replica** — kebijakan & `app.tenant_id` ikut ter-replikasi, sehingga pemisahan read tidak melonggarkan isolasi tenant.
+Replikasi **streaming asynchronous** + `hot_standby=on`. **RLS tetap berlaku di replica** — kebijakan & GUC `app.current_tenant` ikut ter-replikasi/ter-set di sesi replica, sehingga pemisahan read tidak melonggarkan isolasi tenant (diralat 2026-10-19 — `RD-01`).
 
 ### 13.2 Routing (koneksi mana untuk query mana)
 - **Default → Primary.** Route ke replica **hanya** query **read-only, non-transaksional, dan toleran staleness**.
@@ -1375,7 +2107,7 @@ Prinsip urutan kolom indeks: **kolom equality → range → ORDER/cover**; `INCL
 
 **Catatan operasional:**
 - Semua `CREATE INDEX` **`CONCURRENTLY`** (non-blocking) — lihat DEPLOYMENT_DEVOPS §2.2.
-- Tabel besar dipartisi per `period_id`/bulan (§7) → indeks **lokal per partisi**; scan hanya partisi aktif saat OW.
+- Tabel besar **tidak** dipartisi per `period_id` (§7 mencabut klaim itu; hanya `audit_logs` yang terpartisi per bulan) → indeks di atas adalah **global**, dan itulah yang menahan biaya query OW. Bila suatu saat partisi benar-benar dibutuhkan, indeks menjadi **lokal per partisi** dan PK harus dirombak ke bentuk komposit (§7 putusan partisi).
 - Hindari **over-indexing** pada tabel write-heavy (`enrollments`, `grades`, `attendances`, `ledger`): tiap indeks menambah biaya `INSERT/UPDATE`. Audit utilisasi via `pg_stat_user_indexes.idx_scan` (buang yang tak pernah dipakai).
 - `EXPLAIN (ANALYZE, BUFFERS)` tiap jalur panas jadi gate CI (regresi plan → PR ditolak).
 
@@ -1397,20 +2129,20 @@ Rujukan kebutuhan: [PRD §5.8](file:///c:/SICA/docs/PRD.md) dan [BENCHMARK_SEVIM
 | `grade_components` | §5 (ada) | ✅ (`enrollments.ts`) | — | ADM-3 |
 | `blockades` | §5 (ada) | ❌ | `0009_rules_blockades_status.sql` | ADM-6 |
 | `academic_rules` | §5 (ada) | ❌ | `0009_…` | ADM-6 |
-| `student_status_history` | §5 (ada) | ❌ | `0009_…` | ADM-7 |
+| `student_status_history` | §14.3 (**kanonik**; blok ganda di §5 sudah diganti pointer 2026-10-19 — `RD-06`) | ❌ | `0009_…` | ADM-7 |
 | `enrollment_schemes` | **§14.3 baru** | ❌ | `0010_admin_misc.sql` | ADM-6 |
 | `reference_items` (+`reference_kinds`) | **§14.3 baru** | ❌ | `0007_…` | ADM-3/ADM-7 |
 | `tenant_settings` | **§14.3 baru** | ❌ | `0010_…` | ADM-2 |
 | `document_templates` / `document_number_sequences` | **§14.3 baru** (FR-DOC-02) | ❌ | backlog Phase 2 | — |
-| `permissions`, `roles`, `role_permissions`, `user_role_assignments`, `access_change_requests` | §3 (ada) | ❌ | `0011_rbac_scoped.sql` | ADM-8 |
+| `permissions`, `roles`, `role_permissions`, `user_role_assignments`, `access_change_requests` | §3 (ada) | ✅ `schema/rbac.ts` | `0011_rbac_scoped.sql` dan evolusi `0082` dipakai di DB dev; bukti `PROGRESS_REPORT §5.69`, bukan klaim penerapan produksi | ADM-8 |
 | `audit_logs` (+`audit_chain_head`), `outbox`, `idempotency_keys`, `login_events` | §4 / §3 (ada) | ❌ | `0012_audit_outbox.sql` | ADM-1 |
 | Gugus keuangan (`fee_*`, `invoices`, `payments`, `ledger`, `payment_waivers`, `clearances`) | §5 (ada) | ❌ | backlog Sprint 4 | — |
 | Gugus feeder (`pddikti_mappings`, `pddikti_sync_runs`, `period_reopen_requests`, `pddikti_correction_requests`) | §5 (ada) | ❌ | backlog Sprint 8 | — |
-| `graduation_records` | §5 (**duplikat baris 811 & 872 — defek AUD-09**) | ❌ | **WAJIB refactor sebelum migrasi** | — |
+| `graduation_records` | §5 (**satu** definisi kanonik sejak 2026-10-19 — `AUD-09`/`RD-06` ditutup; lihat §11.5 untuk daftar kolom yang digabung) | ❌ | refactor **selesai**; `0019` boleh ditulis | — |
 
 > **Aturan:** setiap objek baru **di commit yang sama** wajib membawa `tenant_id`, `ENABLE/FORCE ROW LEVEL SECURITY`, dan policy `tenant_isolation` dari generator §6.2 (PRD P1, AGENTS §3.2). Tidak ada tabel domain tanpa RLS.
 
-### 14.2 Keputusan model: kamus data referensi (meniru daya ungkit Sevima, memperbaiki kelemahannya)
+### 14.2 Keputusan model: kamus data referensi (M-02) (meniru daya ungkit Sevima, memperbaiki kelemahannya)
 Sevima memelihara **±30 layar master kecil** (`Agama`, `Pekerjaan`, `Suku`, `Penghasilan`, `Jenis Matakuliah`, `Status Hadir`, `Slot Waktu`, `Kebutuhan Khusus`, `Transportasi`, dst.). Mewariskan pola itu sebagai 30 tabel terpisah = 30 migrasi + 30 kontrak + 30 layar. SICA memakai **satu tabel kamus ber-`kind`** sehingga Admin memperoleh satu layar "Data Referensi" dengan tab, dan aplikasi tetap dapat memvalidasi kode secara ketat.
 
 ```sql
@@ -1459,6 +2191,8 @@ Penegakan:
 ### 14.3 Objek baru lainnya
 ```sql
 -- Pengaturan tenant yang tidak masuk academic_rules (bukan per prodi/periode).
+#### 14.3.1 Konfigurasi tenant — `tenant_settings` (M-02)
+
 CREATE TABLE tenant_settings (
   tenant_id          uuid PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
   locale             text NOT NULL DEFAULT 'id',
@@ -1467,7 +2201,9 @@ CREATE TABLE tenant_settings (
   nim_format         jsonb NOT NULL DEFAULT '{}'::jsonb,      -- {"pattern":"{kodeFak}{tahun}{seq4}","perProdi":false}
   document_numbering jsonb NOT NULL DEFAULT '{}'::jsonb,      -- pola nomor SK/surat
   signature_blocks   jsonb NOT NULL DEFAULT '{}'::jsonb,      -- Rektor/Warek1..4 (padanan Sevima)
-  transscript_policy jsonb NOT NULL DEFAULT '{}'::jsonb,      -- matakuliah/nilai yang ditampilkan di transkrip
+  transcript_policy    jsonb NOT NULL DEFAULT '{}'::jsonb,      -- matakuliah/nilai yang ditampilkan di transkrip
+  --   (diralat 2026-10-19 — BENCH-118: ejaan lama `transscript_policy` adalah typo yang menjalar ke
+  --    kontrak OpenAPI & kode Flutter; satu nama = `transcript_policy`, sama seperti BLUEPRINT §4.8)
   attendance_ip_allowlist inet[] NOT NULL DEFAULT '{}',        -- padanan "Daftar IP Address Untuk Presensi"
   feature_flags      jsonb NOT NULL DEFAULT '{}'::jsonb,
   updated_by         uuid, updated_at timestamptz NOT NULL DEFAULT now()
@@ -1475,12 +2211,14 @@ CREATE TABLE tenant_settings (
 -- 1-tenant-1-baris → TIDAK perlu policy per-baris selain pencocokan tenant_id (§6.2 tetap dipakai).
 
 -- Skema enrollment ("sistem kuliah" Sevima): mengikat aturan KRS & tarif.
+#### 14.3.2 Skema enrollment, ekivalensi, dan riwayat status (objek modul lain — bukan M-02)
+
 CREATE TABLE enrollment_schemes (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   program_id uuid NOT NULL REFERENCES study_programs(id),
   code text NOT NULL, name text NOT NULL,
   entry_year_from int, entry_year_to int,           -- biasanya per angkatan
-  delivery_mode text NOT NULL DEFAULT 'ONSITE' CHECK (delivery_mode IN ('ONSITE','ONLINE','HYBRID')),
+  delivery_mode text NOT NULL DEFAULT 'ONSITE' CHECK (delivery_mode IN ('ONSITE','ONLINE','BLENDED')),   -- 'HYBRID' alias kalah (§21.10.2, 0075); kelas A-prime: keadaan tetap, label kampus
   packed_first_semester boolean NOT NULL DEFAULT false,   -- FR-AKA-16 pemaketan KRS maba
   fee_tariff_group_id uuid,                          -- FK ditambahkan bersama gugus keuangan
   is_active boolean NOT NULL DEFAULT true,
@@ -1501,9 +2239,11 @@ CREATE TABLE course_equivalencies (
   CHECK (source_course_id <> target_course_id)
 );
 
--- Status mahasiswa bersejarah (menutup P-10). VERSI §14 INI MENGGANTIKAN bentuk ringkas di §5
--- (baris ±580, 6 kolom) — saat migrasi `0009` ditulis, blok §5 dicabut agar tidak ada
--- dua definisi satu tabel (pengulangan yang sama dengan defek AUD-09 pada graduation_records).
+-- Status mahasiswa bersejarah (menutup P-10). **BLOK KANONIK** satu-satunya untuk tabel ini.
+-- Blok ringkas di §5 (6 kolom) sudah diganti pointer satu baris pada 2026-10-19 — `RD-06`/`AUD-09`.
+-- Kolom yang diserap dari blok §5: `effective_on` → dibekukan sebagai `effective_from`, `reason`
+-- (kini ber-CHECK), `from_status`/`to_status`, `approved_by`, `created_at`. Yang ditambahkan blok ini:
+-- `period_id`, `feeder_status_code`, `evidence_url`, `requested_by` + `approved_at` + CHECK empat-mata.
 CREATE TABLE student_status_history (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   student_id uuid NOT NULL REFERENCES students(id),
@@ -1518,11 +2258,58 @@ CREATE TABLE student_status_history (
 );
 ```
 
+#### 14.3.3 Alur perubahan hak empat-mata — `access_change_requests` (M-03, migrasi `0082`)
+
+Blok kanonik tabel ini tetap §3 (dibuat bersama `0011_rbac_scoped.sql`). Yang ditambahkan di sini adalah **kosakata yang hilang**: tanpa `request_kind`, tabel hanya dapat menyatakan "beri peran" dan tidak dapat menyatakan "cabut peran" atau "ubah scope" — padahal ketiganya adalah perubahan hak yang sama-sama menuntut empat-mata (FR-ADM-06). Migrasi `0082_access_request_kind.sql` bersifat *expand-only*: kolom baru `NOT NULL DEFAULT 'GRANT'` dapat ditulis sebelum kode lama berhenti; penghapusan default dilakukan pada siklus kontrak setelah seluruh pemanggil menulis jenisnya.
+
+```sql
+-- 0082_access_request_kind.sql — kosakata jenis perubahan + penjaga empat-mata kedua (M-03)
+CREATE TYPE access_request_kind AS ENUM ('GRANT','REVOKE','SCOPE_CHANGE','ROLE_PERMISSION_CHANGE');
+
+ALTER TABLE access_change_requests
+  ADD COLUMN request_kind access_request_kind NOT NULL DEFAULT 'GRANT',
+  ADD COLUMN decision_reason text,
+  ALTER COLUMN target_user_id DROP NOT NULL;
+
+-- `ROLE_PERMISSION_CHANGE` mengubah komposisi satu role (bukan menugaskan role ke orang):
+-- target_user_id NULL, role_id = role yang disunting, scope = delta {grant:[], revoke:[]}.
+-- Empat jenis lain tetap wajib menunjuk target.
+ALTER TABLE access_change_requests
+  ADD CONSTRAINT chk_acr_target_by_kind
+    CHECK (
+      (request_kind <> 'ROLE_PERMISSION_CHANGE' AND target_user_id IS NOT NULL)
+      OR (request_kind = 'ROLE_PERMISSION_CHANGE' AND target_user_id IS NULL)
+    ) NOT VALID,
+  ADD CONSTRAINT chk_acr_decision_reason
+    CHECK (status <> 'REJECTED' OR (decision_reason IS NOT NULL AND length(decision_reason) >= 10)) NOT VALID,
+  ADD CONSTRAINT chk_acr_approver_not_target
+    CHECK (approver_id IS NULL OR approver_id <> target_user_id) NOT VALID;
+
+-- Satu permintaan PENDING per (tenant, target, role, jenis, scope). Dua admin yang mengajukan
+-- hal yang sama tidak boleh menghasilkan dua baris yang masing-masing dapat disetujui.
+-- COALESCE dipakai karena NULL (ROLE_PERMISSION_CHANGE) tidak pernah bertabrakan dengan NULL
+-- pada UNIQUE INDEX biasa — dua pengajuan identik akan lolos sebagai dua baris.
+CREATE UNIQUE INDEX uq_acr_pending_scope
+  ON access_change_requests (tenant_id, COALESCE(target_user_id, '00000000-0000-0000-0000-000000000000'::uuid), role_id, request_kind, md5(scope::text))
+  WHERE status = 'PENDING';
+
+-- Setelah backfill baris lama (decision_reason dari audit_logs bila ada):
+-- ALTER TABLE access_change_requests VALIDATE CONSTRAINT chk_acr_decision_reason;
+-- ALTER TABLE access_change_requests VALIDATE CONSTRAINT chk_acr_approver_not_target;
+```
+
+**Vonis model.** (a) `request_kind` adalah kelas A (kosakata tertutup) — bukan kamus yang dapat dirawat kampus, karena ia mengubah mesin state persetujuan; (b) `SCOPE_CHANGE` memakai kolom `scope jsonb` yang sudah ada, sehingga tidak ada tabel kedua untuk penugasan ber-scope; `ROLE_PERMISSION_CHANGE` memakai kolom yang sama untuk delta `{grant:[],revoke:[]}` dan **tidak** menulis `role_permissions` saat pengajuan — perubahan baru berlaku setelah `APPROVED`, dalam satu transaksi dengan baris keputusan; (c) pencabutan **tidak** menghapus baris `user_role_assignments`: ia menulis `valid_to`/status lewat service yang sama, dan baris permintaan tetap tersimpan sebagai bukti; (d) `data_subject_requests` (DSAR, §23) **bukan** tabel ini dan tidak pernah memakai izin `identity.accessrequest.*` — pemisahan itu ditegakkan di [RBAC_MATRIX.md](file:///c:/SICA/docs/RBAC_MATRIX.md) §4.5.6 dan celah `G-31`; (e) RLS `ENABLE` + `FORCE` + policy `tenant_id = current_setting('app.current_tenant')::uuid` wajib ikut di `0082`, dengan `sica_app` `NOBYPASSRLS`; (f) approval hanya sah bila `approver_id` berbeda dari `requester_id` **dan** `target_user_id` (untuk `ROLE_PERMISSION_CHANGE`, target NULL sehingga penjaganya adalah empat-mata pemohon–penyetuju + MFA), serta sesi penyetuju ber-MFA (FR-IDT-01).
+
+**State machine.** `PENDING → APPROVED | REJECTED`; terminal tidak dapat diputus ulang (`409 DECISION_ALREADY_MADE`, 55). Permintaan `PENDING` yang targetnya sudah tidak aktif, role-nya sudah dihapus, atau scope-nya tidak lagi subset scope penyetuju ditolak saat keputusan — bukan dibiarkan menggantung. Idempotensi keputusan memakai `Idempotency-Key` + status baris, bukan `UPDATE` buta.
+
 ### 14.4 Matriks izin (FR-IDT-04) — padanan konkret dari model Sevima
 Sevima menyimpan hak akses per **(aplikasi, role)** dengan 6 aksi: `Read, Insert, Update, Delete, Validate, Other` (§2A.6). SICA memakai verb yang sama agar setara daya ungkap, **ditambah scope** agar lebih presisi:
 
 ```sql
-CREATE TYPE permission_verb AS ENUM ('READ','INSERT','UPDATE','DELETE','VALIDATE','OTHER');
+-- `permission_verb` **didefinisikan di §3** (blok enum RBAC, sesuai `0011_rbac_scoped.sql` dan
+--   `schema/enums.ts:171`); `CREATE TYPE permission_verb` yang pernah ditulis ulang di sini
+--   dihapus 2026-10-19 karena duplikat — lihat AUDIT_READINESS RD-06 (`AUD-09`).
+--   Nilai: ('READ','INSERT','UPDATE','DELETE','VALIDATE','OTHER').
 
 -- permissions (katalog global) diberi kolom tambahan:
 --   resource text NOT NULL        -- 'admin.master.prodi', 'academic.krs.submit', …
@@ -1533,11 +2320,8710 @@ CREATE TYPE permission_verb AS ENUM ('READ','INSERT','UPDATE','DELETE','VALIDATE
 ```
 Pemetaan semantik `VALIDATE`: persetujuan KRS oleh Dosen PA, approval koreksi nilai oleh Kaprodi, approval perubahan status, approval keringanan/void (BR-K2). Pemetaan `OTHER`: aksi khusus non-CRUD yang terdaftar eksplisit (generate kelas, buka-tutup periode, ekspor feeder, impersonation) — **bukan** tempat "apa saja yang tersisa".
 
-### 14.5 Konsekuensi kontrak & UI
+### 14.5 Temuan kamus Neo Feeder yang mengubah skema (2026-10-19)
+Riset field-level PDDikti (lihat [INTEGRATIONS §1.4](file:///c:/SICA/docs/INTEGRATIONS.md)) menghasilkan lima koreksi skema. Ini **bukan** fitur tambahan: tanpa ini pelaporan nasional ditolak per record.
+
+```sql
+-- (1) Pembiayaan mahasiswa (wajib feeder untuk maba) — belum ada kolomnya sama sekali.
+ALTER TABLE students
+  ADD COLUMN funding_source_code text,        -- id_pembiayaan (kamus GetPembiayaan)
+  ADD COLUMN entry_cost_rupiah   bigint,      -- biaya_masuk
+  ADD COLUMN receives_kps        boolean,     -- penerima_kps (0/1)
+  ADD COLUMN kps_number          text,        -- nomor_kps
+  ADD COLUMN npwp                text,        -- opsional
+  ADD COLUMN registration_date   date;        -- tanggal_daftar
+
+-- (2) Jalur & riwayat kepindahan (aturan jenis daftar 1..5)
+ALTER TABLE students
+  ADD COLUMN feeder_entry_type_code text NOT NULL DEFAULT '1',  -- 1 baru,2 pindah,3 RPL,4 non-gelar,5 fastrack
+  ADD COLUMN recognized_sks  numeric(4,1),    -- sks_diakui: >0 utk pindah/RPL, HARUS kosong utk baru
+  ADD COLUMN transfer_grade  text,            -- nilai transfer
+  ADD COLUMN origin_pt_code  text,            -- id_pt_asal
+  ADD COLUMN origin_program_code text;        -- id_prodi_asal
+
+-- (3) SKS per jenis: **kolomnya didefinisikan di §11.4** (blok ini tidak lagi ALTER `courses` —
+--     satu tabel satu blok DDL, §1; `RD-06`/`K-13`). Yang harus diingat di sini hanyalah aturannya:
+--     `sks` tetap otoritatif = sks_teori + sks_praktik + sks_praktik_lapangan + sks_simulasi,
+--     dan Feeder menolak 0 serta > 9 (CHECK di service + trigger, bukan CHECK baris — AC-FDR-2).
+
+-- (4) Beban mengajar: realisasi pertemuan > 18 ditolak pusat → butuh kolom realisasi.
+ALTER TABLE class_assignments
+  ADD COLUMN planned_meetings int CHECK (planned_meetings IS NULL OR planned_meetings BETWEEN 1 AND 18),
+  ADD COLUMN realized_meetings int CHECK (realized_meetings IS NULL OR realized_meetings BETWEEN 0 AND 18),
+  ADD COLUMN teaching_sks_weight numeric(4,1);   -- bobot SKS ajar (team teaching membagi bobot)
+
+-- (5) Temuan validasi pra-kirim disimpan sebagai data (bukan hanya pesan UI)
+CREATE TABLE pddikti_validation_findings (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid REFERENCES pddikti_sync_runs(id),
+  check_code text NOT NULL,      -- kosakata LENGKAP (11 temuan §1.4(g) + 16 tambahan lapangan BENCH-132;
+                                 --   diralat 2026-10-19 — daftar lama hanya 11 dan berhenti di tengah):
+                                 -- 11 asal: FEEDER_ENTRY_TYPE_RULE | FEEDER_IPK_RANGE | FEEDER_PERIOD_UNSET |
+                                 --   FEEDER_NON_REGISTRANT | FEEDER_DUPLICATE_STUDENT | FEEDER_BIRTH_DATA |
+                                 --   FEEDER_SEMESTER_SKS | FEEDER_COURSE_SKS | FEEDER_TEACHING_WEEKS |
+                                 --   FEEDER_PERIOD_OVERLAP | FEEDER_DUKCAPIL_MISMATCH
+                                 -- tambahan: FEEDER_PT_CODE_UNREGISTERED | FEEDER_PROGRAM_CODE_UNREGISTERED |
+                                 --   FEEDER_MINISTRY_PERIOD_CLOSED | FEEDER_ACCREDITATION_EXPIRED |
+                                 --   FEEDER_ACTIVE_WITHOUT_KRS | FEEDER_PAST_AKM_MISSING |
+                                 --   FEEDER_CLASS_WITHOUT_LECTURER | FEEDER_LECTURER_NIDN_INVALID |
+                                 --   FEEDER_RPS_MISSING | FEEDER_EVALUATION_PLAN_MISSING |
+                                 --   FEEDER_COMPONENT_WEIGHT_SUM | FEEDER_LETTER_WITHOUT_INDEX |
+                                 --   FEEDER_TRANSCRIPT_MISMATCH_GRADUATION | FEEDER_NIK_LENGTH |
+                                 --   FEEDER_NISN_FORMAT | FEEDER_REGION_CODE_UNKNOWN
+                                 --   (= 27; tiap kode punya satu pesan id/en di `admin.errors.*`)
+  severity text NOT NULL DEFAULT 'BLOCK' CHECK (severity IN ('WARN','BLOCK')),
+  entity_type text NOT NULL,     -- 'student' | 'course' | 'class' | 'assignment' | 'program'
+  entity_id uuid,
+  message text NOT NULL, source_field text, suggested_fix text,
+  resolved_at timestamptz, resolved_by uuid,
+  detected_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, check_code, entity_type, entity_id)
+);
+CREATE INDEX idx_feeder_findings_open ON pddikti_validation_findings(tenant_id, entity_type) WHERE resolved_at IS NULL;
+```
+**Aturan pemetaan yang wajib diingat:**
+1. **Jenis kelamin:** PDDikti memakai **`L`/`P`**, SICA memakai enum `('M','F')`. Jangan ubah enum internal; simpan peta di `pddikti_mappings` (satu baris `entity='sex_type'`). Kesalahan ini menghasilkan penolakan senyap per record.
+2. **Kamus `Get*` adalah sumber nilai.** `reference_kinds.feeder_code` + `reference_items.code` **harus** bisa disinkron dari `GetAgama/GetPekerjaan/GetPenghasilan/GetWilayah/GetJalurMasuk/GetPembiayaan/GetKebutuhanKhusus/GetJenjangPendidikan/GetJenisTinggal/GetAlatTransportasi/GetNegara/GetJenisAktivitasMahasiswa` (lihat §14.2). Nilai yang dikarang lokal = temuan `FEEDER_*` saat kirim.
+3. **NIK + nama ibu kandung** adalah kunci pencocokan DUKCAPIL. NIK tersimpan terenkripsi (`students.personal_nik_encrypted`), **nama ibu** ada di `student_guardians (relation='IBU')` — validasi `FEEDER_DUKCAPIL_MISMATCH` membaca gabungan keduanya, bukan kolom baru.
+4. **Data dosen tidak pernah ditulis ke feeder** (dikelola pusat/SISTER). Modul feeder hanya mencocokkan `lecturers.nidn`/`pddiktiIdDosen`. Tidak ada `kirimDosen` di mana pun.
+5. **Tidak ada objek presensi, tagihan, dan ruang di feeder.** Yang naik adalah **status AKM per periode**, pembiayaan, dan hasil belajar. Presensi QR/geofence `attendances` kita tetap internal (BR-A15 untuk kartu ujian).
+6. **Tenggat menjadi baris kalender**: `PDDIKTI_STUDY_PLAN_DUE` (Checkpoint 1) & `PDDIKTI_STUDY_RESULT_DUE` (Checkpoint 2) **auto-terisi** saat periode dibuat — praktik lapangan Ganjil s.d. 30 April, Genap s.d. 30 Oktober (BR-R9).
+
+### 14.6 Konsekuensi kontrak & UI
 1. **Kontrak Zod** baru di `packages/contracts/src/master-data.ts`: `ReferenceKindSchema`, `ReferenceItemUpsertSchema`, `AcademicYearUpsertSchema`, `AcademicPeriodUpsertSchema` (+ `status` transisi), `CalendarEventUpsertSchema`, `OrganizationUpsertSchema`, `StudyProgramUpsertSchema` (dengan validasi plafon BR-R2/R3/R4), `CurriculumUpsertSchema`, `CourseUpsertSchema` (pecah SKS), `RoomUpsertSchema`, `TenantSettingsSchema`, `EnrollmentSchemeSchema`, `CourseEquivalencySchema` — dipakai **dua arah** (Web & Flutter, AGENTS §3.4).
 2. Aturan wajib di kontrak, bukan hanya di UI: prodi **tidak boleh** melonggarkan plafon nasional (hanya mengencangkan, NFR-R2); `sks_teori + sks_praktik ≤ sks_total`; `ends_on > starts_on`; `weight_pct` komposisi = 100 (AC-NIL-4).
 3. Layar Admin memakai `VelzonDataGrid` + **satu pola daftar→drawer form** (lihat UI_UX_DESIGN §9) supaya 12 objek master tidak jadi 12 gaya halaman.
 4. Setiap tulis Admin memancarkan event `audit_logs` + (bila relevan) `outbox` untuk notifikasi.
 
+### 14.7 Register objek gelombang enterprise (dari [BLUEPRINT §4](file:///c:/SICA/docs/BLUEPRINT_ENTERPRISE.md)) — 2026-10-19
+§14.1 mencatat objek yang **sudah dideskripsikan di §5**; tabel ini mendaftarkan objek yang **lahir dari dekonstruksi Sevima Enterprise** dan belum punya DDL di dokumen mana pun. Daftar ini adalah **antrean kerja**, bukan spesifikasi: tiap baris wajib dituangkan menjadi sub-bagian §14 sebelum kodenya ditulis (aturan "dokumen dulu, kode kemudian").
 
+| Gugus | Objek baru | Rujukan blueprint | Kunci/ikat yang tidak boleh hilang | Migrasi target | Slice |
+|---|---|---|---|---|---|
+| A kelembagaan | `time_slots`, `buildings`, `concentrations`, `laboratories` | §4.2 | `buildings`→`rooms.building_id` (foreign key, bukan text lagi); `concentrations.program_id` | `0013_institution_gaps.sql` | ADM-10 |
+| A kurikulum/OBE | `program_outcomes`, `course_outcomes`, `outcome_sub_components`, `outcome_matrix`, `outcome_attainments`, `learning_products`, `course_evaluation_plans` | §4.3 | semua ber-`tenant_id` + `program_id`; `outcome_matrix` = relasi matakuliah×CPL dengan bobot yang **harus jumlah 1 per CPL** (validasi service) | `0014_obe_curriculum.sql` | ADM-11 |
+| B keuangan | `fee_tariff_groups`, `tuition_discounts`, `payment_channels`, `payment_plans`, `reconciliation_runs`, `billing_gate_rules` | §4.4 | uang `bigint` rupiah (ADR-5); `payment_plans.parent_invoice_id` + CHECK jumlah termin = nilai induk; `reconciliation_runs` append-only | `0015_finance_enterprise.sql` | ADM-11 |
+| C KRS/MBKM | `advisement_assignments`, `krs_amendments`, `exam_cards`, `mbkm_programs`, `mbkm_contracts`, `mbkm_logs`, `mbkm_conversions`, `student_transfers`, `study_warnings` | §4.5 | `krs_amendments` tidak pernah mengubah `enrollments` in-place (riwayat + `reason`); `mbkm_contracts` butuh **dua** kolom penyetuju (SoD); `exam_cards` terikat BR-A15 presensi minimum | `0016_krs_mbkm.sql` | ADM-12 |
+| D perkuliahan | `session_journals`, `attendance_appeals`, `room_reservations` | §4.6 | `session_journals.class_session_id` 1:1; `attendance_appeals` berstatus (`PENDING/APPROVED/REJECTED`) + penyetuju = dosen pengampu kelas itu saja (scope `CLASS`) | `0017_teaching_attendance.sql` | ADM-12 |
+| E penilaian | `grade_component_scores`, `grade_publish_states`, `grade_blanket_resets`, `semester_results`, `surveys` | §4.7 | `grade_publish_states` memisahkan **umumkan** vs **kunci** (FR-AKA-18, SM-4); `semester_results` = agregat turunan, **tidak** boleh diedit manual | `0018_assessment_publish.sql` | ADM-12 |
+| F kelulusan | `graduation_applications`, `documents`, `legalisation_requests`, `commencement_batches` | §4.8 | `documents` menyimpan `digest_sha256` untuk verifikasi QR (AC-DOC-1); `graduation_records` **sudah satu definisi** sejak 2026-10-19 (`AUD-09`/`RD-06` ditutup — lihat §11.5), sehingga `0019` boleh langsung ditulis | `0019_graduation_documents.sql` | ADM-12 |
+| G portal/silang | `notification_preferences`, `impersonation_grants`, `student_guardians.consent_*` | §4.9 | `impersonation_grants.reason NOT NULL` + `expires_at` + MFA (FR-ADM-13); consent ortu = kolom terpisah per dimensi data anak (UU PDP) | `0029_notifications_impersonation.sql` (dipindah dari `0012`; **bukan** `0020` yang khusus lampiran — lihat catatan penomoran) — **kecuali `impersonation_grants`**: ditarik lebih dulu ke `0083_impersonation_grants.sql` (ralat 2026-10-23, Fase 1A `R-1`; penomoran ulang sah karena belum ada yang dieksekusi — `RD-20`) | ADM-1 |
+| B keuangan (lanjutan) | `accounts`, `accounting_periods` | §5 (DDL-nya **sudah ditulis** 2026-10-19, `RD-07`) | bagan akun + tutup buku: `ledger.account_code` FK komposit ke `accounts(tenant_id, code)`; `accounting_periods` menolak posting ber-irisan (`EXCLUDE daterange`) dan menutup `ledger.invoice_id NOT NULL` yang membuat jurnal non-piutang mustahil (BENCH-31) | `0015_finance_enterprise.sql` | ADM-11 |
+| B keuangan (kanal) | `virtual_accounts`, `payment_windows`, `payment_allocations`, `receipts` | BENCH-19/20/21/24/33/34 §6.2 | `virtual_accounts(tenant_id, channel_id, bank_code, va_number, invoice_id, issued_at, expires_at, status ISSUED-USED-CANCELLED-EXPIRED, cancelled_by)` — **ikat keras**: `UNIQUE (bank_code, va_number)` berlaku **global antar-tenant** (BENCH-34: prefix VA dapat bertabrakan, jadi keunikan per tenant salah rumah); `payment_windows` = satu-satunya sumber preseden `due_at` (BENCH-21); `payment_allocations(payment_id, invoice_id, amount)` wajib `SUM(alokasi) = payments.amount` — satu transfer untuk banyak invoice & overpay (BENCH-24); `receipts(tenant_id, number)` bernomor urut per tenant + digest verifikasi (BENCH-33) | `0022_finance_channels_receipts.sql` | ADM-11 |
+| C KRS (visibilitas) | `class_distributions`, `krs_packages`, `krs_baskets` | BENCH-35/41/47 §6.3 | `class_distributions(class_id, program_id, scheme_id, group_code, concentration_id, entry_year_from, entry_year_to)` — **ikat keras**: kelas tidak boleh muncul di KRS tanpa sebaran (invariance I-12); `krs_baskets(student_id, period_id, lease_expires_at)` memegang kursi sebagai **lease TTL**, bukan decrement `FOR UPDATE` per request (BENCH-41 + AGENTS §3.7); `krs_packages` + item = pemaketan maba (FR-AKA-16) | `0023_krs_visibility.sql` | ADM-12 |
+| D perkuliahan (ujian) | `exam_schedules`, `exam_participants` | BENCH-60/84 §6.4 | `exam_schedules(tenant_id, period_id, program_id, course_id, kind UTS/UAS/SUSULAN, group_code, exam_date, start_time, end_time, room_id, supervisor_membership_id)` — **ikat keras**: `EXCLUDE USING gist (tenant_id WITH =, room_id WITH =, tstzrange(...) WITH &&)` untuk ruang **dan** untuk kelompok mahasiswa, sehingga bentrok ujian vs kuliah (`class_schedules`) tertangkap DB, bukan aplikasi (BENCH-52/53); `exam_participants` menyimpan **tiga** tanggal terpisah: `print_window_start`, `print_window_end`, `exam_date` (BENCH-84) | `0024_exam_scheduling.sql` | ADM-12 |
+| D perkuliahan (dosen) | `lecturer_attendances` | BENCH-66/74 §6.5 | `lecturer_attendances(session_id, lecturer_membership_id, status, marked_by, marked_at)` + `UNIQUE (session_id, lecturer_membership_id)` — sumber BKD & akreditasi; tanpa ini "Rekap Absen Dosen" tidak punya tabel (sesi jurnal dosen = `session_journals` di `0017`) | `0025_teaching_records.sql` | ADM-12 |
+| E penilaian (lengkap) | `grade_component_scores`, `grade_publish_states`, `grade_blanket_resets`, `semester_results`, `surveys` | §4.6 + BENCH-87/88/98 §6.6; **nama diputuskan `semester_results`** (keputusan produk P-8 — `academic_results`/`transcripts` di §10 adalah ejaan lama yang dilepas) | `grade_component_scores(grade_id, component_id, score)` `UNIQUE (grade, component)` (BENCH-88); `grade_publish_states(class_id)` memisahkan **umumkan** vs **kunci** (SM-4); `grade_blanket_resets` wajib beralasan + `VALIDATE` + reversibel dan memakai band `is_default_when_blank`, bukan angka 100 mentah (BENCH-87); `semester_results(student_id, period_id, ip_semester, sks_semester, cumulative_sks)` = turunan **immutable**, dihitung ulang lewat workflow (BENCH-98); `surveys(survey_id, questions jsonb, anon_key)` — gerbang `require_survey_before_khs` butuh baris untuk diperiksa | `0018_assessment_publish.sql` | ADM-12 |
+| F kelulusan (lanjutan) | `yudisium_batches`, `thesis_records`, `thesis_supervisors`, `thesis_examiners`, `transcript_versions`, `transcript_lines` | BENCH-100/101/102/111/117 §6.7–6.8 | `yudisium_batches(tenant_id, period_id, sk_number, sk_date, approved_by, seq)` ≠ `commencement_batches` (seremoni) — **ikat keras**: input SK yudisium adalah transisi SM-6 yang mengubah status mahasiswa menjadi LULUS secara eksplisit, bukan efek samping diam-diam (BENCH-101); `thesis_supervisors(seq 1..3, month_from, month_to)` — Feeder menuntut **bulan awal/akhir per pembimbing** (BENCH-102); `transcript_lines(transcript_version_id, course_code, course_name_at_issue, sks_teori.., letter, point, curriculum_id, period_id, seq)` — **ikat keras**: nama matakuliah **pada saat itu** dipersist, tanpa ini transkrip 20 tahun lagi tidak dapat direkonstruksi (BENCH-117, kewajiban arsip BR-R12) | `0027_graduation_extended.sql` | ADM-12 |
+| G kemahasiswaan/SKPI | `student_activities`, `activity_kinds`, `achievement_levels`, `certification_records`, `publication_records` | BENCH-112/113/114 §6.8 | `activity_kinds(code, name, default_points, feeder_id_jenis_aktivitas)` — kode **wajib** hasil `GetJenisAktivitasMahasiswa`, bukan dikarang (BENCH-131); `student_activities(student_id, kind_id, group_name, is_individual, role, organizer, location, occurred_on, achievement_level_id, points, evidence_attachment_id, evidence_digest, validated_by, validated_at, show_in_skpi)` — **ikat keras**: poin naik ke SKPI hanya bila `validated_at IS NOT NULL AND show_in_skpi` (BENCH-112) dan prestasi tim memakai **satu sertifikat → banyak keanggotaan terverifikasi** agar 20 anggota tidak mengklaim 20 sertifikat (BENCH-113); `certification_records`/`publication_records` menutup isi SKPI (BENCH-114) | `0026_kemahasiswaan_skpi.sql` | ADM-12 |
+| G platform/feeder | `feeder_bridges`, `feeder_jobs`, `feeder_identities`, `feeder_credentials`, `otp_events`, `feeder_environments`, `reference_dictionary_entries`, `reference_dictionary_versions` | §4.9 + BENCH-127/128/130/131/135 §6.9 | `feeder_bridges(tenant_id, name, credential_ref, version, last_seen_at)` — kredensial **tidak pernah** jadi kolom, hanya referensi vault; `feeder_jobs(bridge_id, run_id, action, direction, record_key, idempotency_key, status, attempt, last_error_code, resume_offset, resume_limit)` — **ikat keras**: `UNIQUE (tenant_id, idempotency_key)` per **record** supaya resume parsial tidak menggandakan baris (BENCH-129); `feeder_identities(entity_type, local_id, feeder_id, source)` — `feeder_id` hanya boleh terisi dari respons bridge (invariance I-14), tidak pernah dikarang SICA; `feeder_environments` menjaga kredensial sandbox ditolak endpoint produksi (BENCH-135); `reference_dictionary_versions(domain, version, effective_from, source)` + diff → temuan `FEEDER_DICTIONARY_STALE` (BENCH-131) | `0028_feeder_bridge.sql` | ADM-12 / R-6 |
+| G platform/lampiran | `attachments`, `import_runs`, `documents`, `document_number_sequences` | RD-27 (dokumen §4.7) + BENCH-108 | `attachments(tenant_id, owner_entity, owner_id, category, storage_key, mime_type, size_bytes, sha256, uploaded_by, scanned_at)` — **ikat keras**: `storage_key` **tidak pernah** dibangun dari nama file mentah (sanitasi path + allowlist ekstensi, RD-27) dan `UNIQUE (tenant_id, sha256, owner_entity, owner_id)` menolak unggah ganda; `category` memakai daftar nyata (bukti bayar, skripsi, legalisir, KTM, berkas impor, PDM/SPTJM, logo) — bukan 3 nilai pseudocode `INTEGRATIONS §4.2`; `import_runs(tenant_id, kind, attachment_id, actor, stage PREVIEW-COMMIT, rows_total, rows_ok, rows_reject, mapping jsonb, error_report_url)` append-only | `0020_platform_attachments.sql` | ADM-1 |
+
+| PMB/pendaftaran (gugus baru — belum ada modelnya sama sekali) | `pmb_waves`, `pmb_paths`, `pmb_program_quotas`, `pmb_applications`, `pmb_documents`, `pmb_selection_results`, `pmb_reregistrations`, `nim_assignments` | BENCH-01…18 §6.1 + keputusan produk P-10 (modul `pmb` sudah di-seed `0004:83` tanpa satu pun tabel) | `pmb_waves(tenant_id, academic_year_id, code, opens_at, closes_at)` — **ikat keras**: `EXCLUDE USING gist (tenant_id WITH =, tstzrange(opens_at, closes_at) WITH &&)` per jalur, dua gelombang tidak boleh beririsan; `pmb_paths(tenant_id, code, form_fee_rupiah, refundable)`; `pmb_program_quotas(wave_id, program_id, seats)` dengan `seats > 0` dan `UNIQUE (wave_id, program_id)` — ini objek **CP1 Feeder** (daya tampung per prodi per gelombang), tanpanya kirim checkpoint 1 mustahil; `pmb_applications(application_id, wave_id, path_id, program_id, priority)` dengan `UNIQUE (tenant_id, applicant_membership_id, program_id)` + prioritas unik per pendaftar (BENCH-06, satu pendaftar boleh lolos dua tempat → pelepasan otomatis prodi kedua); `pmb_documents(application_id, kind, is_required, attachment_id, status, rejection_reason)` — penolakan **per berkas beralasan** (BENCH-05); `pmb_selection_results(application_id, status SELECTED-RESERVE-REJECTED, rank, tie_break_rule)` — tie-break deterministik + promosi `RESERVE` saat ada yang tidak daftar ulang (BENCH-07); `pmb_reregistrations(application_id, funding_source_code, entry_cost_rupiah, receives_kps, kps_number, proof_attachment_id)` — titik pengambilan field Feeder maba (§14.5(1)), bukan form mahasiswa pasca-NIM (BENCH-12); `nim_assignments(tenant_id, application_id, nim, program_id, status — RESERVED / ISSUED / CANCELLED / RECYCLED — issued_at, cancelled_by)` — **ikat keras**: NIM boleh dipakai ulang HANYA bila belum pernah terdaftar Feeder (BR-R10/BENCH-03), dan alokasi lewat sequence per prefix (BENCH-04), **bukan** `MAX()+1` | `0021_pmb_intake.sql` | belum terjadwal (usulan slice ADM-13) |
+| PMB (pendataan asal & sanggahan) | `pmb_school_origins` (bagian dari `0021`), `pmb_appeals` | BENCH-08/11/16/17 §6.1 | asal sekolah wajib untuk seleksi **dan** Feeder: `npsn, jenjang, jurusan, tahun_lulus, rata_rata_nilai`; sanggahan punya jendela + keputusan `VALIDATE` (actor ≠ pemohon, pola `payment_waivers`); retensi pendaftar tidak lolos = kelas `pmb_applicant` di `retention_rules` (§5) — kini hanya ada kelas akademik | `0021_pmb_intake.sql` | belum terjadwal |
+| §16.1 KRS lease dan war (DDL **ditulis** 2026-10-20) | `krs_offering_seats`, `queue_operations` | §16.1, BLUEPRINT I-2, AC-KRS-3, BENCH-41, keputusan P-1 dan P-6 | **ikat keras**: lease TTL di `krs_baskets` adalah pemilik kursi saat `DRAFT`, `enrollments` saat `SUBMITTED` (restatement I-2 di §16.1.1); `classes` memegang guard keras `enrolled + held <= capacity`, `krs_offering_seats` memegang `enrolled + held + waitlisted <= capacity + promised` (antrean **tidak boleh** menembus satu kelas); `queue_operations` = satu-satunya sumber `opId` untuk `202`, `UNIQUE (tenant_id, kind, idempotency_key)`, baris terminal tidak pernah di-UPDATE, pemrosesan ulang = operasi baru berversi kunci; `krs_baskets` **dipindah dari `0023` ke `0030`** karena `op_id` menunjuk `queue_operations` | `0030_krs_lease_war.sql` | usulan ADM-12 (jalur panas, prasyarat OW) |
+| §16.4 staging PDDikti (DDL **ditulis** 2026-10-20) | tujuh `pddikti_staging_*`, `pddikti_payload_snapshots`, `pddikti_reconciliation_diffs`, view `pddikti_validation_runs` dan `pddikti_staging_status` | §16.4, INTEGRATIONS §1.4, BENCH-127..135 | **ikat keras**: staging **append-only** (`REVOKE UPDATE DELETE`), **tidak ada kolom `feeder_id`** di staging (I-14 ditegakkan bentuk skema), satu tabel per domain kirim `pddikti_domain`, `UNIQUE (tenant_id, run_id, record_key)`, snapshot per percobaan dengan `request_digest` dan `feeder_id_returned` sebagai satu-satunya jalan masuk id pusat, diff rekonsiliasi butuh dua orang (`validated_by <> decided_by`) dan `NEEDS_PDM` wajib `evidence_ref`; `pddikti_validation_runs` **kalah sebagai tabel** — view atas `pddikti_sync_runs` dengan `security_invoker = true`; indeks unik findings diganti menjadi parsial `WHERE resolved_at IS NULL` | `0031_pddikti_staging.sql` | bagian A usulan ADM-12; bagian B menunggu `0028` |
+| §16.2 OBE (DDL **ditulis** 2026-10-20) | `graduation_profiles`, `assessment_indicators` | §16.2, BLUEPRINT §4.3, FR-P2-13 | **ikat keras**: rantai Profil Lulusan → CPL → CPMK → Sub-CPMK → Indikator → Item, FK berantai dan tiap level `code` unik dalam induknya; Item Penilaian = `grade_components` (tabel kedua untuk fakta sama **ditolak**); `outcome_matrix` berbobot persen dan "jumlah 100 per CPL per kurikulum" ditegakkan service + pemicu deferrable; `outcome_attainments` turunan immutable-per-keadaan (`is_current` + `inputs_digest`), `outcome_id` polymorphic dibuktikan pemicu | `0032_obe_outcomes.sql` | usulan ADM-11 |
+| §16.2 MBKM (DDL **ditulis** 2026-10-20) | `mbkm_conversion_lines`, `mbkm_grade_mappings` | §16.2, BLUEPRINT §4.5, BENCH-86, BR-A2 BR-G6 BR-R2 | **ikat keras**: `mbkm_conversions` tiga orang berbeda (`requested_by`, `first_approved_by`, `second_approved_by`) — SoD; hasil konversi wajib huruf yang **ada di `grade_scales`** lewat FK ke `grade_scale_bands(tenant_id, scale_id, letter_code)`; pembulatan per aturan tenant (`rounding_mode`) dan peta tidak boleh ber-irisan (`EXCLUDE numrange`); anti IPK dobel-hitung = indeks unik parsial per `(tenant_id, student_id, internal_course_id)`; `sks_recognized` dibatasi plafon nasional di DB dan hubungannya ke BR-A2 ditulis sebagai aturan (§16.2.2 butir 3), bukan pertanyaan | `0033_mbkm_conversion.sql` | usulan ADM-12; bergantung `0016` dan `0030` |
+| §16.3 audit insert-only (DDL **ditulis** 2026-10-20) | `grade_change_logs`, `system_audit_trails`, fungsi `app.reject_mutation()` | §16.3, SECURITY §3.7, AUDIT_READINESS `SEC-*`, `RD-21` | **ikat keras**: keduanya `PARTITION BY RANGE (occurred_at)`, `PRIMARY KEY (id, occurred_at)`, **tanpa `updated_at`**, insert-only ditegakkan **REVOKE lebih dulu** lalu policy SELECT-only lalu pemicu (peringatan jujur: RLS saja tidak cukup — `sica_owner` dan superuser hanya berhenti di pemicu); `grade_change_logs` menyimpan before/after letter+point+status, `approved_by <> actor_user_id`, rantai hash per stream lewat `audit_chain_head` yang kuncinya jadi `(tenant_id, partition_start, stream)`; `system_audit_trails` **bukan** pengganti `audit_logs` (pembagian tanggung jawab di tabel §16.3.2) | `0034_audit_immutability.sql` | usulan ADM-1 (prasyarat soD dan audit readiness) |
+| §16.3 enkripsi PII (DDL **ditulis** 2026-10-20) | `tenant_encryption_keys`, `encryption_key_events`, `student_bank_accounts`, `bulk_export_requests`, fungsi `app.enc_key_version()` | §16.3, ENV_CONTRACT §6.3, SECURITY §3.7, GLOSSARY blind index | **ikat keras**: amplop `v(1) key_version(2) iv(12) ciphertext tag(16)` = `31 + n` byte; DEK **dan** kunci HMAC **dua kunci berbeda** per tenant, `wrapped_key` dari KMS/HSM, satu ACTIVE per `(tenant, purpose)`; blind index `*_bidx char(64)` dihitung di aplikasi, unik hanya tempat plaintext-nya memang unik; ekspor massal **tidak pernah** plaintext (`pii_level` tanpa nilai PLAIN) dan butuh penyetuju kedua; `TENANT_ENCRYPTION_MASTER_KEY` **belum ada** di `env.ts` → gugus ini tidak boleh diklaim siap | `0035_pii_encryption.sql` | usulan ADM-13 (blokir ENV_CONTRACT dan dependensi KMS) |
+| **kepemilikan dokumen lain** (bukan objek DB — dicatat di sini agar tidak dibuat diam-diam di dokumen ini) | — | §16.6 | variabel `TENANT_ENCRYPTION_MASTER_KEY` dan dependensi KMS (ENV_CONTRACT §2/§6 dan TECH_CONVENTIONS §6), kode izin atomik sembilan nama (RBAC_MATRIX §4, status usulan sampai masuk katalog — `G-15`), kontrak `202` + `GET /operations/{opId}` dan layar antrean (API_SPEC dan UI_UX_DESIGN §9), katalog resmi `error_code` Feeder (INTEGRATIONS §1.4), restatement I-2 dan P-1 (BLUEPRINT §7 dan PRD §5.5), cabut alias `async_operations` (GLOSSARY), runbook partisi tiga tabel + WORM dan nama berkas `0030`–`0035` (DEPLOYMENT_DEVOPS §4 dan MIGRATION_SOP §5), DPIA dan JRA kelas §16.5 (SECURITY §3.7 dan PRD BR-R14), jadwal slice (ROADMAP §2.5), seed peta nilai dan modul (SEED_DATA), tes insert-only DB nyata (TESTING_STRATEGY §3.2) | bukan migrasi | keputusan lead arsitek |
+| §18.2 ALG-8 timetabling (DDL **ditulis** 2026-10-20) | `timetabling_constraint_defs`, `lecturer_availability`, `timetabling_requests`, `timetabling_assignments` | ARCHITECTURE §12.3, BLUEPRINT §4.6, BENCH-52/53 | **ikat keras**: `EXCLUDE USING gist` per `(run, room, day, slot)` dan `(run, lecturer, day, slot)` membuat draf yang bentrok **mustahil tersimpan** (bukan divalidasi belakangan); kapasitas `participants <= rooms.capacity` lintas tabel → service (L5) + tes CI §18.9(2); `time_slots`/`rooms`/`lab_resource_capabilities` (§17.3)/`room_distance_penalties` (§17.7)/`class_distributions` **dipakai ulang** | `0037_timetabling_csp.sql` | usulan ADM-10 (jalur R-3a) |
+| §18.3 ALG-9 penasihat akademik (DDL **ditulis** 2026-10-20) | `advisor_recommendations`, `advisor_notes` | ARCHITECTURE §12.4, ROLE_BY_ROLE §4 (dosen wali) | **ikat keras**: `reasons` dibatasi CHECK (lencana UI = kosakata, bukan karangan); `advisor_notes.visibility = ADVISOR_ONLY` **tidak pernah** diproyeksikan ke peran `STUDENT` (hak tingkat field, §14.9); rekomendasi tidak punya jalur tulis ke `enrollments`; `course_prerequisites` (`0008`) dan `advisement_assignments` (`0016`) prasyarat | `0038_advisor_recommendations.sql` | usulan R-4/R-5 |
+| §18.4 ALG-10 EWS/risiko putus studi (DDL **ditulis** 2026-10-20) | `ews_feature_snapshots`, `ml_model_versions`, `risk_scores` + ALTER `study_warnings` (`0016`) | ARCHITECTURE §12.5, PRD FR-AKA-* | **ikat keras**: `status ACTIVE` menolak diri bila `approved_by = trained_by` **atau** `auc < 0.70`/`brier > 0.18` (CHECK di DB, bukan niat baik); artefak model disimpan terbaca-manusia (JSONB) supaya dapat di-*diff* & direproduksi; denylist atribut terlarang diuji CI §18.9(6); skor **tidak pernah** menulis `students.status_akademik` | `0039_ews_risk_models.sql` | usulan R-4 |
+| §18.5 ALG-11 pra-validasi & auto-fix Feeder (DDL **ditulis** 2026-10-20) | `feeder_autofix_rules`, `feeder_autofix_suggestions`, `feeder_identity_matches`, `feeder_sync_watermarks` | ARCHITECTURE §12.6 & §12.10, INTEGRATIONS §1.11–§1.12, AC-FDR-2 | **ikat keras**: `SEMANTIC`/`BLOCKING`/`IDENTITY` **dilarang** punya `fix_expr` (CHECK) — mesin tidak bisa membubuhkan makna, hanya format; `feeder_identity_matches` **tidak punya kolom `feeder_id`** (I-14 ditegakkan bentuk skema); usulan idempoten per `(run, staging, kolom, rule)`; airmen hanya maju atas baris `SUCCEEDED`; temuan tetap di `pddikti_validation_findings` (§5), bukan tabel baru | `0040_feeder_autofix.sql` | usulan R-6 (butuh `0028`+`0031`) |
+| §18.6 ALG-12 presensi anti-pemalsuan (DDL **ditulis** 2026-10-20) | ALTER `rooms` (geofence) + ALTER `class_sessions` + `attendance_token_uses`, `attendance_network_allowlists`, `attendance_device_bindings`, `attendance_fraud_findings` | ARCHITECTURE §12.7, AUDIT_READINESS `SEC-03`, ROADMAP CE-6.1–6.3 | **ikat keras**: titik acuan & radius **milik server** (`rooms`), bukan badan permintaan; `UNIQUE (tenant, session, counter)` = sekali-pakai di DB (bukan hanya Redis) supaya gagal tertutup; **rahasia sesi tidak disimpan** dan 9 digit upaya gagal tidak disimpan; BSSID disimpan sebagai HMAC; banding menunjuk `attendance_appeals` (`0017`); `attendances.status` memakai enum §15.1 | `0041_attendance_antifraud.sql` | usulan R-5 (menutup SEC-03) |
+| §18.7 ALG-13 loop capaian OBE (DDL **ditulis** 2026-10-20) | `assessment_rubric_bands`, `cpl_targets`, `obe_closing_actions` + ALTER `outcome_attainments` (`0032`) | ARCHITECTURE §12.8, FR-P2-13, BAN-P.T. bukti loop | **ikat keras**: band `EXCLUDE numrange` (tumpang tindih mustahil); `coverage` + `n_missing_evidence` kolom terpisah sehingga "belum ada rubrik" tidak dapat dibaca sebagai capaian nol; `rollup_method` eksplisit (SKS vs mahasiswa vs kelas); `obe_closing_actions.next_cycle_attainment_id` = bukti loop tertutup; rantai outcome TIDAK dibuat ulang (milik `0032`) | `0042_obe_attainment_loop.sql` | usulan ADM-11 |
+| §18.8 ALG-14 jangkar & verifier rantai audit (DDL **ditulis** 2026-10-20) | `audit_chain_anchors`, `audit_verification_runs` | ARCHITECTURE §12.9, SECURITY §3.6–§3.7, `0034` | **ikat keras**: akar Merkle per 1.000 daun + `prev_anchor_root` (rantai antar-akar); **tidak ada kolom repair** — membenarkan rantai = pemalsuan; jangkar luar = object storage WORM milik sendiri, TSA RFC 3161 **ditolak** (zero-API-key); `grade_change_logs` sudah punya `seq`/`prev_hash`/`hash` (§16.3), tidak di-ALTER ulang | `0043_audit_chain_anchors.sql` | usulan ADM-1 |
+| §19.1 multi-kampus (DDL **ditulis** 2026-10-20) | `campus_sites` + ALTER `rooms`/`class_sessions`/`enrollments`/`study_programs` | permintaan pemilik (struktur multi-kampus), PRD §5.8 | **ikat keras**: `feeder_kode_pt` adalah kode PT **per prodi**, bukan per gedung — pemetaan multi-site ke PDDikti **belum punya bentuk resmi** dan dicatat sebagai batas (temuan BENCH baru), bukan fitur yang dijanjikan; scope RBAC `SITE` butuh keputusan RBAC_MATRIX sebelum rute ditulis | `0044_institution_sites.sql` | usulan ADM-10 / R-2 |
+| §19.2 jenis program (DDL **ditulis** 2026-10-20) | ALTER `study_programs`/`classes`/`enrollments` (`program_type`, `delivery_mode`) | permintaan pemilik (Reguler/Karyawan/PJJ/Internasional) | **ikat keras**: TIDAK ada tabel `program_types` — kamus nasional satu rumah di `reference_items(kind='jenis_program')` (§14.2, pemenang tercatat di §14.8); nilai **disalin** ke `enrollments` saat daftar dan tidak dihitung ulang di laporan; PJJ ⇒ `delivery_mode=ONLINE` dan geofence **tidak berlaku** (§18.9(2)); tarif per jenis program (lihat `0046`) | `0044_institution_sites.sql` | usulan R-2/R-3a |
+| §19.3 Tugas Akhir non-skripsi 53/2023 (DDL **ditulis** 2026-10-20) | `final_project_kinds`, `final_project_outputs` + ALTER `thesis_records` (`0027`) | Permendikbudristek 53/2023, BENCH-102, FR-P2-03 | **ikat keras**: jenis TA adalah **data** (tenant + `feeder_jenis_ta`), bukan cabang kode — `feeder_jenis_ta IS NULL` berarti **tidak dikirim** (I-14), bukan "pakai kode terdekat"; `PASSED` ditolak bila `requires_publication` tanpa output bervalidasi; `validated_by` wajib orang kedua dari pembimbing (SoD nilai); output wajib `attachment_id` (`0020`) | `0045_final_project_kinds.sql` | usulan ADM-12 / R-4 |
+| §19.4 matriks tarif UKT (DDL **ditulis** 2026-10-20) | `fee_tariff_groups`, `tuition_tariff_matrix` (DDL untuk objek yang sudah terdaftar `0015` tanpa bentuk) | permintaan pemilik (tarif per jalur masuk & gelombang), BENCH-19..24, FR-KEU-* | **ikat keras**: `UNIQUE` memakai `COALESCE(...)` karena NULL tidak pernah bertabrakan dengan NULL (dua aturan "semua jalur" = generator nondeterministik); uang `bigint` rupiah (ADR-5); `ACTIVE` butuh `approved_by <> requested_by`; kunci `pmb_paths`/`pmb_waves` menunjuk `0021` yang **belum dieksekusi** → gugus ini tertahan di situ, bukan di `0046` | `0046_tuition_tariff_matrix.sql` | usulan ADM-11 / R-3b |
+| **RALAT penomoran harness engine** | `engine_runs` + tujuh tabel hasil ALG-1…ALG-7 (§17.2–§17.9) | §17.11 lama menyebut `0013_engine_algorithms.sql` | **tabrakan nomor**: §14.7 sudah mendaftarkan `0013_institution_gaps.sql`. Satu nomor = satu nama berkas. Harness pindah ke `0036_engine_algorithms.sql` (sah, `0013` belum pernah dieksekusi); §17.11 menunjuk nomor baru dan `0036` dijalankan **setelah** `0013` karena `time_slots` dibutuhkan §18.2 | `0036_engine_algorithms.sql` | ALG-0 (W-13.0) |
+| §20 mesin data master dinamis (DDL **ditulis** 2026-10-20) | ALTER `reference_kinds` + ALTER `reference_items` + `reference_kind_usage` + view `master_lookup_groups`/`master_lookup_items` | ARCHITECTURE §11.1 (nol-API-key), PRD FR-ADM-07, BENCHMARK §2.5/§5 (±30 layar master Sevima), permintaan pemilik "zero-hardcoding" | **ikat keras**: satu fisik = `reference_kinds`/`reference_items`; nama `master_lookup_groups`/`master_lookup_items` **hanya view** dengan `security_invoker = true` (view `security_definer` menembus RLS); `reference_kind_usage` **global** → wajib masuk daftar pengecualian RLS §6.2; pilihan `SELECT`/`RADIO`/`CHECKBOX` **dilarang** disimpan sebagai array literal di mana pun (norma §20.1, gerbang CI m/n/o); urutan baca `sort_order, code` bukan `id`; `is_active=false` tetap terbaca lewat `?at=` (kewajiban arsip BR-R12) | `0047_master_lookup_engine.sql` | usulan ADM-1 / **R-2 (Fase 1B)** |
+| §20.5 atribut kustom kampus (DDL **ditulis** 2026-10-20) | `tenant_custom_attributes`, `custom_attribute_history` + ALTER `attributes jsonb` pada `students`/`lecturers`/`staff`/`rooms`/`courses`/`invoices` | permintaan pemilik (EAV/JSONB), PRD FR-ADM-09 | **ikat keras**: EAV murni **ditolak** sebagai penyimpan nilai (JSONB + tabel definisi + riwayat hanya bila `is_tracked`); atribut **tidak boleh** menciptakan keadaan mesin (kelas A); `options_kind` wajib untuk input berpilihan; `feeder_mapping IS NULL` = tidak pernah ikut kirim; `pii_level=SPECIFIC` menolak `student_self_editable`; plafon 40 atribut `is_searchable` per entity (anti GIN menggerus jalur tulis); mengaktifkan butuh empat-mata; `custom_attribute_history` insert-only (`REVOKE` + pemicu §16.3) | `0048_custom_attributes.sql` | usulan ADM-1 / **R-2 (Fase 1B)** |
+
+| §21 mesin parameter dinamis (DDL **ditulis** 2026-10-20) | `master_system_parameters`, `master_system_parameter_history`, `attendance_evidence` + `ALTER TYPE attendance_source` | ARCHITECTURE §12.18 & AGENTS §3.10, PRD FR-ADM-09/FR-ADM-25, UI_UX_DESIGN §14 | **ikat keras**: `CHECK (is_secret = false)` dan `CHECK (source_of_truth <> (ENV))` membuat parameter UI tidak pernah memegang kredensial; nilai wajib di dalam `min/max_value` (gerbang CI §21.8(2)) supaya satu klik tidak dapat melemahkan rotasi TOTP/radius geofence; kelas REGULATORY/SECURITY butuh penyetuju kedua; riwayat insert-only beralasan + ber-IP; **enam permintaan ditolak menjadi key-value** (band SKS per IPK, skala nilai, predikat, diskon, kanal VA, pola NIM) karena sudah punya tabel | `0049_system_parameters.sql` | usulan ADM-1 / R-2 |
+| §21.7 otorisasi tingkat mikro (DDL **ditulis** 2026-10-20) | `menu_items`, `menu_permissions`, `parameter_permissions` | RBAC_MATRIX §4.5 (`settings.param.*`, `platform.menu.*`), BLUEPRINT §3 (tree menu), PRD FR-ADM-26 | **ikat keras**: `permission_code` menunjuk katalog `permissions` yang ada — tabel ini **tidak boleh** menciptakan kosakata izin baru; evaluasi DENY-overrides-ALLOW lalu pola terspesifik; `menu_permissions` bersifat allowlist dan **penyaringan menu bukan kontrol akses** (gerbang L1-L6 tetap wajib); pola tanpa `note` ditolak saat review; hierarki menu maksimum kedalaman 4 diuji siklus | `0050_menu_parameter_permissions.sql` | usulan ADM-1 / R-2 |
+| §21.4 modus pembelajaran (arbitrase kosakata) | `classes.learning_modality`, `class_sessions.session_kind`, `attendance_source` + `LMS_ACTIVITY`/`WEBHOOK_EVENT` | API_SPEC §4.4 (tiga ejaan terukur), ARCHITECTURE §8 (dual mode), ADR-11 | **ikat keras**: `offline`->`ONSITE`, `hybrid`->`BLENDED`, `delivery_mode`->`learning_modality` (alias dilepas satu rilis setelah migrasi); kode PDDikti `F/O/M` **tidak dikarang** - `[VERIFIKASI-KAMUS]`, NULL berarti tidak ikut kirim (I-14); `attendances` tetap satu baris per (sesi, mahasiswa) apa pun kebijakan rekonsiliasinya | `0049_system_parameters.sql` | usulan R-3a/R-4/R-5 |
+
+**Satu indeks, dua tempat.** Nomor `0051`–`0072` (gugus 47 modul) didaftarkan **rinci** di §22.9 dan **indeks master-nya tetap bagian ini**: §22.9 adalah rincian dari §14.7, bukan register kedua. Aturan pakainya: nomor baru lahir di §14.7 (baris ringkas + rujukan ke subbagian yang memiliki DDL-nya), dan hanya subbagian pemilik objek yang boleh menuliskan `CREATE TABLE`. Ini menutup pola `RD-32` (dua tempat menyatakan hal sama) sebelum gugus 47 modul sempat mengulanginya. Terukur 2026-10-20: `0051`–`0072` = 22 nomor, **nol** di antaranya yang sudah menjadi berkas di `packages/database/migrations/` (7 berkas nyata).
+
+**Catatan penomoran (diralat 2026-10-19 — `RD-20`):** `0012_audit_outbox.sql` adalah prasyarat seluruh gugus (FR-ADM-11/13 dan setiap state machine di §5 blueprint menulis satu baris audit per perpindahan), jadi **tidak boleh** di-gabung ke migrasi domain — dan baris G tidak lagi menunjuk ke sana. Urutan eksekusi: `0012` → `0013` → `0014` → `0015` → `0016` → `0017` → `0018` → `0019` → `0020` → `0021` → `0022` → `0023` → `0024` → `0025` → `0026` → `0027` → `0028` → `0029` → `0030` → `0031` → `0032` → `0033` → `0034` → `0035`, semuanya **expand-only** sesuai MIGRATION_SOP. **Satu nomor = satu nama berkas** (registrinya di [MIGRATION_SOP §5](file:///c:/SICA/docs/MIGRATION_SOP.md)); penomoran ulang hanya boleh terjadi sebelum nomornya dieksekusi, tidak pernah setelahnya. `attachments` sengaja berada di `0020` (paling awal di antara gelombang baru) karena `virtual_accounts`, `pmb_documents`, `receipts`, `student_activities`, `pddikti_correction_requests` dan `import_runs` semuanya menunjuknya; gugus notifikasi + `impersonation_grants` **tidak** ikut `0020` karena tidak ditunjuk siapa pun. `AUD-09` sudah selesai (lihat §11.5) sehingga `0019`/`0027` boleh ditulis. Nomor `0007`–`0010` dirujuk §14.1 **tetapi berkasnya belum ada** di `packages/database/migrations/` — itu pekerjaan ADM-2/ADM-3/ADM-6/ADM-7, bukan nomor yang sudah lewat.
+
+**Tambahan penomoran siklus 2026-10-20 (bagian ini adalah pemilik satu-satunya register objek dan nomor migrasi di repo ini):** `0030_krs_lease_war.sql`, `0031_pddikti_staging.sql`, `0032_obe_outcomes.sql`, `0033_mbkm_conversion.sql`, `0034_audit_immutability.sql`, `0035_pii_encryption.sql` — enam nama itu kini **terpakai** dan tidak boleh dipakai objek lain. Tiga hal yang dicatat agar tidak ada yang menafsirkan bebas: (1) `krs_baskets` **pindah** dari `0023` ke `0030` (dependensi `op_id`; `0023` belum dieksekusi sehingga pemindahan sah), dan `0023` tetap memegang `class_distributions` + `krs_packages`; (2) `0030` **harus** dijalankan sebelum `0031` bagian A selesai, `0033`, dan `0034` karena ketiganya menunjuk `queue_operations`; (3) `0031` dibagi dua — bagian A (tabel) boleh lebih dulu, bagian B (view keadaan) menunggu `0028` menulis DDL `feeder_jobs` dan `feeder_identities`. Nomor `0036` dan seterusnya **belum** terdaftar; siapa pun yang menambah objek wajib menuliskannya di §14.7 lebih dulu, bukan langsung membuat berkas migrasi.
+
+**Tambahan penomoran siklus 2026-10-20 (gelombang engine 2 + entitas institusi):** `0036_engine_algorithms.sql` (harness ALG-1…7 — **ralat** dari `0013_engine_algorithms.sql` yang bertabrakan dengan `0013_institution_gaps.sql`), `0037_timetabling_csp.sql`, `0038_advisor_recommendations.sql`, `0039_ews_risk_models.sql`, `0040_feeder_autofix.sql`, `0041_attendance_antifraud.sql`, `0042_obe_attainment_loop.sql`, `0043_audit_chain_anchors.sql`, `0044_institution_sites.sql`, `0045_final_project_kinds.sql`, `0046_tuition_tariff_matrix.sql`. Sebelas nama itu kini **terpakai**. Urutan: `0036` sesudah `0013` (butuh `time_slots`); `0037` sesudah `0023` (butuh `class_distributions`); `0038` sesudah `0008`+`0016`; `0040` sesudah `0028`+`0031`; `0042` sesudah `0032`; `0043` sesudah `0034`; `0046` sesudah `0021`. Nomor `0047_master_lookup_engine.sql` dan `0048_custom_attributes.sql` **terpakai** mulai siklus ini (`0047` mendahului `0048` karena `tenant_custom_attributes.options_kind` menunjuk `reference_kinds` hasil `0047`); Nomor `0049_system_parameters.sql` dan `0050_menu_parameter_permissions.sql` **terpakai** sejak siklus berikutnya (`0049` lebih dulu karena `menu_permissions.permission_code` dan `parameter_permissions` sama-sama menunjuk katalog izin yang sudah ada, sementara `master_system_parameters.enum_kind` menunjuk `reference_kinds` hasil `0047`); nomor `0051`–`0075` dialokasikan oleh §22.8, dan `0076` ke atas masih bebas.
+
+**Reservasi tambahan M-01, 2026-10-23 — belum menjadi migrasi eksekutabel.**
+
+| Gugus | Objek/ALTER | Pemilik DDL | Migrasi target | Penahan |
+|---|---|---|---|---|
+| SaaS invoice | `platform_invoices`, UNIQUE tenant/id pada `subscriptions` | §12.5 | `0091_platform_invoices.sql` | hak INSERT normatif, snapshot kontrak, imutabilitas dan uji RLS |
+| SaaS settlement | `platform_payments` | §12.5 | `0092_platform_payments.sql` | bergantung `0091`, SoD, rekonsiliasi bukti provider dan serialisasi pembayaran |
+
+Nomor historis yang disebut "masih bebas" di paragraf bertanggal sebelumnya **bukan izin penggunaan nomor**. Periksa seluruh register ini, rincian §22.9–§26 dan berkas migrasi nyata sebelum reservasi berikutnya. Nomor urut tidak membuktikan dependensi sudah dieksekusi.
+
+### 14.8 ⚠ Nama objek yang dirujuk di dokumen lain tetapi tidak punya DDL
+Tabel ini ada supaya pembaca tidak membuat tabel kedua untuk fakta yang sama (`RD-32`). Satu nama **menang**; nama lain adalah alias yang harus dihapus dari dokumen pemiliknya pada siklus berikutnya. Kolom terakhir menyebut di mana objek pemenang didaftarkan.
+
+| Nama yang dirujuk | Dirujuk di | Keputusan (nama yang menang) | Alamat |
+|---|---|---|---|
+| `import_runs` | `INDEX.md` §5 baris FR-ADM-14..16 | **`import_runs` menang sebagai nama objek** — tetapi benar-benar belum ada DDL-nya; ia bukan sinonim `pddikti_sync_runs`. Impor massal 3 langkah (preview→commit) bukan pengiriman Feeder | §14.7 baris G platform/lampiran → `0020` |
+| `pddikti_sync_logs` | `INTEGRATIONS.md` §1.3 | **KALAH** — yang ada `pddikti_sync_runs` (percobaan kirim) + `pddikti_validation_findings` (temuan per record) + `feeder_jobs` (per record, resumable). Jangan buat tabel log keempat | §5 & §14.5(5) & `0028` |
+| `platform_support_grants` | `RBAC_MATRIX.md` §2.2/§4/§6; `BLUEPRINT_ROLE_BY_ROLE.md` §0 R-1 | **KALAH sebagai nama tabel** — menang `impersonation_grants` dengan pembeda `grant_kind ∈ ('PLATFORM_SUPPORT','TENANT_IMPERSONATION')`: grant platform tetap ter-audit dua identitas & ber-TTL ≤30 menit, tetapi tidak ada dua tabel untuk satu mekanisme | §14.7 baris G portal/silang → `0083` (dipindah dari `0029` 2026-10-23 untuk Fase 1A `R-1`) |
+| `provinces`, `religions` | `RBAC_MATRIX.md` §2.1 catatan (melempar register ke dokumen ini) | **KALAH sebagai tabel terpisah** — kode wilayah nasional hidup di `reference_dictionary_entries` (global, `tenant_id` tidak ada → di luar generator RLS, SELECT-only) dan kamus yang dapat dirawat kampus (agama, pekerjaan, penghasilan) hidup di `reference_items` per tenant (§14.2). Dua tabel master kecil = dua sumber kebenaran | §14.2 & §14.7 baris G platform/feeder → `0028` |
+| `lms_sessions` | `ARCHITECTURE.md` §7; `PRD.md` FR-AKA-14 | **KALAH sebagai tabel** — roster 1..16 adalah **proyeksi** dari `class_sessions` × `enrollments` × `class_assignments`; tabel tersendiri akan menyimpang begitu KRS berubah. Sediakan `CREATE VIEW lms_sessions` satu rilis sebagai alias, lalu hapus rujukan namanya | §5 (`class_sessions`) → `0017` |
+| `feature_flags` | `AGENTS.md` §3.7; `DATA_MODEL.md` §2 ERD; `DEPLOYMENT_DEVOPS.md` §2 | **KALAH sebagai tabel** — penentu release adalah `tenant_settings.feature_flags jsonb` (§14.3) × status `tenant_modules` (gerbang modul, §12). Bila volume baris menuntut tabel, ia lahir di `0020` **dengan nomor ini tercatat di §14.7**, tidak diam-diam | §14.3 & §12 |
+| `academic_results`, `transcripts` | §10 baris 2; `BLUEPRINT §4.7` | **KALAH** — keputusan produk P-8 membekukan `semester_results` (agregat per periode) dan `transcript_versions` + `transcript_lines` (arsip per versi). §10 baris 2 tinggal menunggu ditulis ulang | §14.7 baris E & F → `0018`/`0027` |
+| `files`, `notifications`, `notification_templates`, `notification_deliveries` | §2 ERD; `INTEGRATIONS.md` §3 | **Belum ada DDL** — `files` diganti namanya menjadi `attachments` (`0020_platform_attachments.sql`); gugus notifikasi + `notification_preferences` + `impersonation_grants` berpindah ke `0029_notifications_impersonation.sql` (baris "G portal/silang" §14.7) dan **DDL-nya belum ditulis** — sampai tertulis di §14, jangan menulis layarnya | §14.7 baris G portal/silang + baris G platform/lampiran |
+| `cbt_*`, `tracer_*`, `retention` model add-on | `0004_entitlement_modules.sql:83` (modul `cbt`/`tracer_iku` sudah di-seed) | **Modul ter-seed, model data tidak ada** — keputusan produk P-10: cabut dari seed **atau** tulis DDL-nya sebelum modul dijual; melarang "modul hantu" | §14.7 (belum terdaftar) + ROADMAP §5.13.4 |
+| `async_operations` | `GLOSSARY.md` entri `opId` (menunjuk "DATA_MODEL `async_operations`") | **KALAH sebagai nama tabel** — menang `queue_operations`; alasan: objeknya menyimpan pekerjaan tertunda **dan** DLQ, bukan hanya operasi HTTP, dan `idempotency_keys` (§4) sudah memegang kontrak transport sehingga tidak bisa dipakai dua kali. GLOSSARY yang menyusul, bukan sebaliknya | §16.1.4 → `0030` |
+| `krs_lease_ledger` | penugasan siklus ini (bentuk harfiah yang diminta) | **KALAH — objeknya tidak ada sama sekali.** Riwayat lease hidup di kolom `state` + `released_at` + `release_reason` pada `krs_baskets` itu sendiri (satu baris = satu kursi), dan perpindahan yang berarti ditulis ke `audit_logs`/`outbox`. Ledger kedua = empat tulis per request di jalur terpanas tanpa bukti tambahan | §16.1.2 dan §16.1.7 → `0030` |
+| `krs_basket_items` | implikasi bentuk "basket + item" | **KALAH** — satu baris `krs_baskets` sudah mewakili satu kursi; baris agregat tidak punya state di luar anak-anaknya dan hanya menambah titik lost-update TTL | §16.1.2 → `0030` |
+| `pddikti_validation_runs` | penugasan siklus ini ("hasil validasi pra-kirim") | **KALAH sebagai tabel**, **MENANG sebagai view** atas `pddikti_sync_runs` (§5) yang sudah punya `status VALIDATING READY PARTIAL SENT FAILED`, `dry_run`, `environment`, dan dua penyetuju untuk `PRODUCTION`; `pddikti_validation_findings.run_id` tetap menunjuk satu tabel. Nama view dipertahankan agar API tidak memaksahafal `sync_runs` | §16.4.4 → `0031` |
+| `assessment_items`, `outcome_items` | kosakata OBE umum (dan penugasan siklus ini: "Item Penilaian") | **KALAH sebagai tabel** — Item Penilaian **adalah** `grade_components` (§5, sudah ada di kode `enrollments.ts`) dan sudah ditunjuk `grade_component_scores` (`0018`); membuat tabel kedua untuk fakta yang sama adalah `RD-06` dalam bentuk baru. Tautan indikator → item lewat `assessment_indicators.grade_component_id` | §16.2.1 dan §16.2.4 → `0032` |
+| `pii_field_registry` | kebutuhan "daftar kolom terenkripsi" (§16.3) | **KALAH sebagai tabel** — §14.9 butir 1 menormakan aturan field **di kode** (`FIELD_RULES`, `packages/contracts/src/authz.ts`); register sebagai baris DB akan memungkinkan seed migration membuka kolom PII. Gantinya: CI memeriksa amplop `octet_length >= 31` dan pasangan `*_encrypted` + `*_bidx` | §16.3.7 → bukan migrasi |
+| `all_audit_streams` (satu tabel jejak gabungan) | godaan implementasi §16.3 | **KALAH** — jejak domain (`audit_logs`), jejak perpindahan nilai (`grade_change_logs`), dan jejak mesin (`system_audit_trails`) punya retensi, pembaca, dan kebolehNULL-an `tenant_id` yang berbeda; menggabungkannya memberi auditor akademik akses ke event keamanan dan sebaliknya | §16.3.2 dan §16.3.7 → `0034` |
+| `mother_name` di `student_guardians` sebagai kunci DUKCAPIL | §14.5 aturan 3 (menyatakan nama ibu ada di `student_guardians relation='IBU'`) | **DITAMBAH, bukan diganti** — `full_name` wali tetap untuk laporan Feeder; **rahasia pencocokan** dipindah ke `students.mother_name_encrypted` + `mother_name_bidx` karena kunci DUKCAPIL melekat pada mahasiswa, dan menaruhnya di baris wali akan membocorkannya ke setiap pemegang akses data ortu | §16.3.4 → `0035` |
+| `grade_audit_logs` | permintaan siklus ini ("tabel INSERT-ONLY perubahan nilai") | **KALAH** — yang kanonik `grade_change_logs` (§16.3, `0034`) yang **sudah** punya `seq`, `prev_hash`, `hash`, before/after letter+point+status, `approved_by <> actor_user_id`; membuat tabel kedua untuk fakta sama adalah pola `RD-32` | §14.7 & §18.8 |
+| `program_types` | permintaan siklus ini (Reguler/Karyawan/PJJ/Internasional) | **KALAH sebagai tabel**, **MENANG sebagai kamus** `reference_items(kind='jenis_program')` + kolom `classes.program_type`/`enrollments.program_type`/`study_programs.default_program_type` — kamus nasional tidak boleh punya dua rumah (§14.2) | §14.7 & §19.2 |
+| `pddikti_staging_tables` | permintaan siklus ini | **sudah ada** sebagai tujuh `pddikti_staging_*` (§16.4, `0031`) — bukan nama baru; yang belum ada hanyalah delta sync (jadi `feeder_sync_watermarks`, `0040`) | §14.7 & §18.5 |
+| `master_lookup_groups` / `master_lookup_items` | permintaan siklus ini (mesin lookup generik) | **KALAH sebagai tabel**, **MENANG sebagai view** di atas `reference_kinds`/`reference_items` (§14.2, fisik tidak berubah) — `metadata` = alias `extra`, `sorting_order` = alias `sort_order`, `label` = alias `name`; view wajib `security_invoker = true` | §20.2 → `0047` |
+| `room_wifi_allowlist` | `API_SPEC §4.3.9` butir 2 & baris error 64 | **KALAH** — ejaan final milik DATA_MODEL: `attendance_network_allowlists` (§18.6, `0041`) karena BSSID disimpan sebagai HMAC dan tabel itu dipakai bersama `attendance_fraud_findings`; API_SPEC wajib menunjuk nama ini saat gugus presensi diimplementasi | §18.6 & §14.7 |
+| `attributes` / `attrs` / `metadata` (kolom JSONB bebas) | permintaan siklus ini | **`attributes` MENANG** sebagai kolom penyimpan nilai atribut kustom di tabel induk; `reference_items.extra` tetap untuk kamus; `metadata` **hanya** nama kolom di view | §20.5 & §20.2 |
+| `offline` / `hybrid` / `delivery_mode` (modus pembelajaran) | `API_SPEC §4.4` lower-case dan `DATA_MODEL §19.2` | **KALAH** — kosakata kanonik `learning_modality` = ONSITE / ONLINE / BLENDED (§21.4); `session_kind` adalah konsep berbeda (per pertemuan), bukan sinonim | §21.4 -> `0049` |
+| `tenant_settings.feature_flags->>'krsLeaseSeconds'` dan `tenant_settings.krs_lease_ttl_seconds` | `DATA_MODEL §16.1` lama dan `API_SPEC §4.2` lama | **KALAH** — kunci kanonik `krs.war_lease_ttl_s` di `master_system_parameters` (§21.2, `0049`); kolom lama dibaca satu rilis sebagai compat lalu dilepas | §14.7 & §21.3(25) |
+| `master_system_parameters` (parameter operasional) | permintaan pemilik | **MENANG sebagai rumah baru** untuk skalar kunci-tunggal; TIDAK memangsa `academic_rules`, `reference_items`, `tenant_custom_attributes`, `tenant_settings`, atau ENV (garis pemisah di §21.1) | §21.1-§21.3 -> `0049` |
+
+### 14.9 Aturan field-level access (`FIELD_RULES`)
+Sumber: [BLUEPRINT_ROLE_BY_ROLE §0.3](file:///c:/SICA/docs/BLUEPRINT_ROLE_BY_ROLE.md). **Vonis terukur 2026-10-24:** yang ada di kode hari ini hanyalah `SERVER_ONLY_FIELDS` + `isServerOnlyField()` (`packages/contracts/src/authz.ts:883`); **`FIELD_RULES` belum pernah ditulis** — `grep -rn FIELD_RULES apps packages` = 0 hasil, dan tidak ada proyeksi kolom yang membacanya. Proyeksi PII saat ini terjadi karena setiap rute memilih kolomnya sendiri (terbukti pada `GET /admin/pengguna`, yang tidak memuat NIK/tanggal lahir/HP), bukan karena satu tabel aturan field. `V-10` karenanya menagih **dua** hal: menulis `FIELD_RULES` sebagai kontrak, lalu membuktikan setiap proyeksi server memakainya. Skema DB memiliki kolom, bukan pengganti proyeksi respons.
+
+**Empat hal yang menegaskan bentuknya:**
+1. **Aturan didefinisikan di kode, bukan sebagai baris database** — `FIELD_RULES` di `packages/contracts/src/authz.ts` (satu paket dengan katalog izin; `packages/domain` tidak pernah ada — `RD-05`). Alasan: aturan field adalah bagian kontrak peran, dan perubahan peran lewat seed DB tidak boleh mampu membuka kolom PII.
+2. **Ditegakkan pada proyeksi server-side.** Masking dilakukan service/repository **sebelum** respons keluar; menyembunyikan sel di React/Flutter **bukan** kontrol akses (AGENTS §3.8). Kolom yang tidak berhak dibaca tidak pernah ada di payload, bukan "dikosongkan di UI".
+3. **`SERVER_ONLY` = kolom yang hanya berubah lewat transisi state** dan **tidak pernah** diterima dari body. Ini penutup `SEC-02` (klien hari ini bisa mengirim `period_id`/`status`) dan dibaca oleh lapis L1/L5 di §0.4 blueprint.
+4. **Predikat lingkup `'X:own'` / `'X:assigned'` diselesaikan dari tabel relasi**, bukan dari label peran: `user_role_assignments.scope_*` + `advisement_assignments` + `class_assignments`. `holdsScoped` sudah dipakai pada layanan admin yang tercatat di `PROGRESS_REPORT §5.69`; setiap proyeksi lain tetap harus membuktikan pemanggil dan penolakan lintas-scope sendiri. Penutupan satu gugus tidak otomatis menutup `V-10` secara global.
+5. **Retensi mengikuti mask.** Kolom bergeo/PII tinggi (`attendances.latitude/longitude`, `personal_nik_encrypted`) punya `retention_days` di `retention_rules` + DPIA (BR-R14) — menjawab BENCH-81. Nominal keuangan tidak boleh terbaca oleh peran akademik yang tidak berhak (SoD BAAK↔BAUK): peran lain menerima boolean "tertahan/tidak" beserta sebab, bukan jumlahnya.
+
+**Daftar kolom `SERVER_ONLY`** (satu-satunya daftar; tidak ada rute yang menerimanya dari body):
+
+| Kolom | Mengapa SERVER_ONLY | Transisi yang boleh menulisnya |
+|---|---|---|
+| `grades.status` | menutup `SEC-02`; nilai terkunci tidak boleh ditimpa dari klien | submit/lock/unlock/correct (`0018`, `grade_publish_states`) |
+| `grades.letter` | turunan band `grade_scale_bands` (`numrange`) — tidak pernah manual | konversi otomatis + koreksi beralasan |
+| `invoices.status` | transisi `DRAFT→ISSUED→PARTIAL→PAID/OVERDUE/WAIVED/VOID` (SM-3) | mesin tagih, webhook, waiver `VALIDATE` |
+| `payments.status` | `SETTLED` = ada bukti gateway/rekonsiliasi, bukan ada klaim | webhook terverifikasi + `reconciliation_runs` |
+| `ledger.*` (semua kolom) | jurnal append-only; satu baris tidak "diedit", melainkan dibalik | posting service + `reverses_entry_id` (§5) |
+| `enrollments.status` | hak baca KRS & gerbang DPA tergantung state | submit/approve/withdraw/lease-finalis (`0016`/`0023`) |
+| `students.nim` | identitas arsip & kunci Feeder; `immutable_after = 'NIM_ISSUED'` | `nim_assignments` saat terbit/daur ulang (`0021`, BR-R10) |
+| `students.status_akademik` (nama blueprint; kolom nyatanya `students.status` + `students.feeder_status_code`) | status AKM adalah objek kerja ber-approval, bukan kolom sunting | `student_status_history` (`0009`) + `feeder_status_code` |
+| `mfa_factors.secret` (`credential_encrypted`) | rahasia; tidak pernah keluar dari proyeksi mana pun | enroll/verify/revoke (§3, `SEC-14`) |
+| `pddikti_*_id` (`students.pddikti_id_pd`, `lecturers.pddikti_id_dosen`, `courses.pddikti_id_mk`, `classes.pddikti_class_id`) | invariance I-14: id pangkalan nasional **hanya** terisi dari respons bridge | `feeder_identities` setelah `Get*`/`Insert*` sukses (`0028`) |
+
+**Status RBAC, ralat 2026-10-23.** `0011` dan evolusi `0082` sudah dipakai oleh layanan admin serta pengujian DB dev yang tercatat pada `PROGRESS_REPORT §5.69`; klaim bahwa jalur DB seluruhnya terputus dicabut. Ini tidak membuktikan penerapan produksi, seluruh migrasi usulan, atau setiap proyeksi field; status Drizzle tidak sama dengan DoD fitur.
+---
+
+## 15. Register enum (terukur 2026-10-19 — penutup `RD-13`/`K-13`)
+
+Satu baris per kosakata state. Aturan main: **`packages/database/src/schema/enums.ts` adalah sumber kebenaran untuk nilai yang sudah hidup**; dokumen lain (PRD, API_SPEC, BLUEPRINT, BENCHMARK, SEED) **tidak boleh** memakai ejaan yang tidak terdaftar di sini. Menambah/mengurangi nilai enum = migrasi (`ALTER TYPE … ADD VALUE` hanya expand, tidak pernah rename in place) + regenerasi kontrak Zod + regenerasi seed; tidak ada dokumen yang boleh mendahului migrasi.
+
+**Casing kabel = casing database.** Semua enum `UPPER_SNAKE` **kecuali** `member_role` yang `lower_snake` karena memang carrier login (lihat §3). Kontrak Flutter/OpenAPI di-generate dari Zod, bukan diketik ulang, jadi tidak ada ruang bagi ejaan ketiga.
+
+### 15.1 Enum yang sudah ada di kode (24, terukur dari `enums.ts`)
+
+| Enum (DB) | Nilai | Casing | Pemilik utama | Catatan |
+|---|---|---|---|---|
+| `tenant_status` | ONBOARDING · ACTIVE · SUSPENDED · ARCHIVED | UPPER | `tenants` | — |
+| `member_status` | PENDING · ACTIVE · SUSPENDED · LEFT | UPPER | `tenant_memberships` | berbeda dari `student_status`; jangan tertukar |
+| `member_role` | super_admin · tenant_admin · dosen · mahasiswa · staff | **lower** | `tenant_memberships.role` | hanya **carrier login**; peran nyata dibaca dari `user_role_assignments` (§14.4). `STAFF` ada di sini tetapi tidak punya baris peran sendiri di RBAC §2 (`RD-17`) |
+| `subscription_status` | TRIAL · ACTIVE · PAST_DUE · CANCELLED | UPPER | `subscriptions` | — |
+| `student_status` | CANDIDATE · ACTIVE · ON_LEAVE · GRADUATED · DROPPED · STOPPED · TRANSFERRED · EXPELLED | UPPER | `students` | SM-5; cabang `CANDIDATE → REJECTED` belum ada jalurnya (BENCH-17) |
+| `enrollment_status` | DRAFT · SUBMITTED · APPROVED · REJECTED · EFFECTIVE · WITHDRAWN · CANCELLED | UPPER | `enrollments` | SM-2; keadaan tambahan diusulkan di AUDIT_READINESS §6 (waitlist kedaluwarsa, `FROZEN_BY_NEW_BLOCKADE`) |
+| `grade_status` | EMPTY · DRAFT · SUBMITTED · LOCKED · CORRECTING · CORRECTED | UPPER | `grades` | SM-4; **umumkan ≠ kunci** (`0018`) |
+| `invoice_status` | DRAFT · ISSUED · PARTIAL · PAID · OVERDUE · WAIVED · VOID | UPPER | `invoices` | SM-3; pemetaan chip UI ada di UI_UX §9.8 |
+| `payment_status` | INITIATED · PENDING · SETTLED · FAILED · REFUNDED | UPPER | `payments` | `SETTLED` hanya dari webhook/rekonsiliasi (`SERVER_ONLY`, §14.9) |
+| `period_status` | DRAFT · OPEN · CLOSING · CLOSED | UPPER | `academic_periods` | SM-1. `OPEN_ENROLLMENT` yang dipakai `SEED_DATA §2` **bukan** nilai sah — sudah diralat |
+| `academic_year_term` | GANJIL · GENAP · ANTAR | UPPER | `academic_years` | semester antara punya plafon & tarif sendiri (BENCH-45) |
+| `sex_type` | M · F | UPPER | belum dipakai | didefinisikan di `enums.ts:98` tetapi **tidak ada kolomnya di kode mana pun**; rumah yang direncanakan `student_biodata` (§11). Feeder menuntut pemetaan kode pusat, bukan huruf mentah |
+| `income_band` | LEB_300 · L300_500 · L500_1JT · L1_2JT · GT_2JT · TIDAK_BEKERJA | UPPER | `student_guardians` (`people.ts:163`) | penghasilan **penjamin**, dasar verifikasi KIP — bukan kolom mahasiswa; ejaan lama `TIDAK_BEWORK` **dilepas** |
+| `lecturer_job_rank` | GURU_BESAR · LEKTOR_KEPALA · LEKTOR · ASISTEN_AHLI · TENAGA_PENGAJAR · NONE | UPPER | `lecturers` | jabatan fungsional; sumber BKD |
+| `employment_type` | PNS · PPPK_PENUH · PPPK_PARUH · DOSEN_TETAP_YAYASAN · DOSEN_LUAR_BIASA · DOSEN_TIDAK_TETAP · TENAGA_HONORER | UPPER | `lecturers` | — |
+| `attendance_status` | PRESENT · EXCUSED · SICK · ABSENT_LATE · ABSENT | UPPER | `attendances` | **satu-satunya** kosakata presensi; tiga ejaan tandingan dilepas di §15.4 |
+| `attendance_source` | QR · GEOFENCE · MANUAL · APP_BULK · FEEDER_SYNC | UPPER | `attendances` | kolom `method` free-text dicabut (§11) |
+| `course_type` | TEORI · PRAKTIKUM · LABORATORIUM · LAPANGAN · KULIAH_MANDIRI | UPPER | `courses` | paralel dengan rincian SKS, bukan penggantinya (§11) |
+| `module_category` | CORE · ADDON | UPPER | `modules` | — |
+| `module_license_metric` | INCLUDED · PER_SEAT · FLAT | UPPER | `modules` | — |
+| `tenant_module_status` | ACTIVE · TRIAL · DISABLED · EXPIRED · PENDING_PAYMENT | UPPER | `tenant_modules` | gerbang `withModule`: hanya ACTIVE/TRIAL lolos; sisanya `404 MODULE_NOT_AVAILABLE` |
+| `permission_verb` | READ · INSERT · UPDATE · DELETE · VALIDATE · OTHER | UPPER | `permissions.verb` | FR-IDT-04; satu definisi sejak `RD-06` ditutup |
+| `role_scope_kind` | TENANT · ORG · PROGRAM · CLASS · PERIOD · SELF | UPPER | `user_role_assignments` | lapis L4 dari enam lapis penegakan (RBAC §12) |
+| `access_request_status` | PENDING · APPROVED · REJECTED | UPPER | `access_change_requests` | pemohon ≠ penyetuju |
+
+### 15.2 Enum yang baru ada di dokumen (belum di `enums.ts` — wajib masuk migrasi sebelum kode)
+
+> Baris `conference_provider` **ditambahkan 2026-10-21** oleh `RD-66` (register §21.10.1); ia menutup tiga bentuk kosakata yang sebelumnya hidup bersamaan di kolom, kontrak, dan slug webhook.
+
+| Enum | Nilai | Rumah | Nomor migrasi |
+|---|---|---|---|
+| `platform_invoice_status` | DRAFT · ISSUED · PARTIAL · PAID · VOID · OVERDUE | `platform_invoices.status` | `0091` |
+| `platform_payment_status` | PENDING · SUCCEEDED · FAILED · REFUNDED | `platform_payments.status` | `0092` |
+| `clearance_dimension` | ACADEMIC · FINANCE · LIBRARY · LAB · STUDENT_AFFAIRS · ADMINISTRATIVE | `blockades.dimension`, `clearances.dimension` | `0009` |
+| `dsr_kind` | ACCESS · COPY · CORRECTION · OBJECTION · WITHDRAW_CONSENT · ERASURE | `dsr_requests` (UU PDP Ps 6–12) | belum bernomor |
+| `dsr_status` | RECEIVED · IN_PROGRESS · ANSWERED · REJECTED · CLOSED | `dsr_requests` | belum bernomor |
+| `dsr_outcome` | GRANTED · PARTIAL · DENIED | `dsr_requests` | belum bernomor |
+| `reference_domain` | BIODATA · AKADEMIK · PEKULIAHAN · KEPEGAWAIAN · WILAYAH · KEUANGAN · KEMAHASISWAAN | `reference_kinds.domain` (§14.2) | `0007` |
+| `krs_lease_status` | ACTIVE · CONVERTED · RELEASED · EXPIRED · STOLEN | `krs_baskets.state` (§16.1.2) | `0030` |
+| `queue_operation_state` | QUEUED · PROCESSING · SUCCEEDED · FAILED · EXPIRED | `queue_operations.state` (§16.1.4); kosakata ini **identik** dengan `opId` di GLOSSARY — tidak ada nilai `RETRYING`, retry memakai `attempt` | `0030` |
+| `queue_operation_kind` | KRS_SUBMIT · KRS_WITHDRAW · KRS_PACKAGE_APPLY · ATTENDANCE_BULK_FLUSH · GRADE_PUBLISH · FEEDER_PUSH · FEEDER_PULL_RECONCILE · PII_REENCRYPT · EXPORT_MASSAL · CERT_ISSUE | `queue_operations.kind` (§16.1.4); tambah nilai = `ALTER TYPE … ADD VALUE` dan **tidak boleh dipakai pada transaksi yang sama**, jadi nilai baru selalu lewat dua migrasi | `0030` |
+| `pddikti_domain` | MAHASISWA · KURIKULUM · KELAS · KRS_AKM · NILAI · AKTIVITAS · KELUAR | `pddikti_payload_snapshots.domain`, `pddikti_reconciliation_diffs.domain`, temuan findings (§16.4.1); kardinalitas tetap tujuh, satu per domain kirim | `0031` |
+| `pddikti_staging_state` | PREPARED · VALIDATED · BLOCKED · PACKED · PUSHED · ACKNOWLEDGED · REJECTED · SUPERSEDED | **keadaan hasil hitung ulang** pada view `pddikti_staging_status` (§16.4.4) — TIDAK pernah disimpan di baris staging, karena staging append-only | `0031` |
+| `pddikti_reconciliation_decision` | LOCAL_AS_BASE · CENTER_AS_BASE · NEEDS_PDM · DEFERRED | `pddikti_reconciliation_diffs.decision` (§16.4.6) | `0031` |
+| `outcome_category` | SIKAP · SKPP · KK | `program_outcomes.category` (§16.2.1) — triatom CPL | `0032` |
+| `outcome_level` | CPL · CPMK · SUB_CPMK · INDICATOR | `outcome_attainments.outcome_level` (§16.2.1); penentu tabel induk yang dibuktikan **pemicu**, bukan FK | `0032` |
+| `outcome_attainment_scope` | CLASS · COHORT · PROGRAM | `outcome_attainments.scope` (§16.2.1) | `0032` |
+| `mbkm_type` | PERTUKARAN · MAGANG · KAMPUS_MENGAJAR · RISET · WIRAUSAHA · HUMANIORA | `mbkm_conversions.mbkm_type` (§16.2.2); **delapan aktivitas KBMI tidak ditutup di sini** — tambah nilai butuh keputusan produk tercatat | `0033` |
+| `mbkm_conversion_status` | DRAFT · SUBMITTED · APPROVED · REJECTED · APPLIED · REVERSED | `mbkm_conversions.status` (§16.2.2); `APPLIED` menuntut `applied_op_id` (jalur `queue_operations`) | `0033` |
+| `score_value_kind` | NUMERIC · LETTER · DESCRIPTIVE | `mbkm_grade_mappings.source_kind`, `mbkm_conversion_lines.source_kind` (§16.2.2) | `0033` |
+| `grade_change_reason_kind` | DRAFT_TO_SUBMIT · SUBMIT · LOCK · UNLOCK · CORRECTION · RECOMPUTED · ADMIN_OVERRIDE · REPEATED_COURSE · MBKM_RECOGNITION · BLANK_RESET | `grade_change_logs.change_kind` (§16.3.1); empat nilai pertama **wajib** punya `approved_by` | `0034` |
+| `system_audit_event_kind` | LOGIN · LOGOUT · LOGIN_FAIL · MFA_ENROLL · MFA_FAIL · TOKEN_REUSE · IMPERSONATION_START · IMPERSONATION_STOP · PERMISSION_CHANGE · ROLE_ASSIGNMENT_CHANGE · MODULE_ENABLE · MODULE_DISABLE · WEBHOOK_RECEIVED · WEBHOOK_REJECTED · FEEDER_JOB · FEEDER_TOKEN_NEGOTIATED · SCHEDULED_JOB · SCHEMA_MIGRATION · KEY_LIFECYCLE · EXPORT_MASSAL · QUOTA_EXCEEDED · RATE_LIMIT_BLOCKED | `system_audit_trails.event_kind` (§16.3.2) | `0034` |
+| `system_audit_severity` | INFO · WARN · CRITICAL | `system_audit_trails.severity` (§16.3.2); **berbeda** dari `blockades.severity` (`WARN` `BLOCK`) — dua kosakata, dua maksud | `0034` |
+| `tenant_key_state` | ACTIVE · LEGIBLE · RETIRED · REVOKED · COMPROMISED | `tenant_encryption_keys.state` (§16.3.4); hanya satu ACTIVE per `(tenant, purpose)` | `0035` |
+| `bulk_export_state` | REQUESTED · APPROVED · REJECTED · RUNNING · DELIVERED · EXPIRED · FAILED | `bulk_export_requests.state` (§16.3.5) | `0035` |
+| `timetabling_constraint_kind` | HARD · SOFT | `timetabling_constraint_defs.kind` (§18.2); kendala keras **tidak** punya bobot — CHECK menolaknya | `0037` |
+| `feeder_autofix_kind` | FORMAT · ENRICH · IDENTITY · SEMANTIC · BLOCKING | `feeder_autofix_rules.kind` (§18.5); hanya FORMAT/ENRICH yang boleh membawa `fix_expr` | `0040` |
+| `pddikti_autofix_verdict` | AUTO · REVIEW · NO_MATCH · REJECT | `feeder_autofix_suggestions.verdict` (§18.5); ambang AUTO butuh `margin`, bukan skor mentah | `0040` |
+| `risk_band` | LOW · MEDIUM · HIGH · CRITICAL | `risk_scores.band` (§18.4); ambang pemetaan skor→band adalah `academic_rules` berversi, bukan konstanta kode | `0039` |
+
+Enam nilai `clearance_dimension` sekaligus **membatalkan** narasi "cekal 4 dimensi" yang masih tersebar di RBAC §3, BENCHMARK §2, dan ROADMAP (`RD-13`): dimensi adalah enum, bukan jumlah.
+
+### 15.3 Kosakata `text + CHECK` (sengaja bukan enum — tenant boleh menambah nilai)
+
+| Kolom | Nilai saat ini | Mengapa text |
+|---|---|---|
+| `mfa_factors.kind` | totp · webauthn · sms | jenis perangkat bertambah tanpa migrasi |
+| `organizations.kind` | FACULTY · DEPARTMENT · UNIT · LIBRARY · HQ | hierarki per-tenant |
+| `invoices.kind` | UKT · SKS · BETWEEN_TERM · GRADUATION · LEGALISATION · KKN · PMB_FEE · OTHER | bagian `UNIQUE (tenant, student, period, tariff_group, kind)` (BENCH-19) |
+| `deposits.kind` | TOPUP · APPLIED · REFUND · REVERSAL | siklus dana siswa (§5) |
+| `accounts.kind` | ASSET · LIABILITY · EQUITY · REVENUE · EXPENSE | chart of accounts (BENCH-31) |
+| `blockades.severity` | WARN · BLOCK | eskalasi bertahap (BENCH-29) |
+| `student_addresses.kind` | DOMICILE · ORIGIN · INVOICE | lebih dari satu alamat per mahasiswa (§11) |
+| `course_prerequisites.prerequisite_type` | PREREQUISITE_PASSED · PREREQUISITE_TAKEN · CO_REQUISITE | ejaan blueprint (`TAKEN`, `CO_REQ`) **dilepas** — §15.4 |
+| `krs_baskets.release_reason` | SUBMITTED · WITHDRAWN · EXPIRED · SWEPT · STOLEN_BY_APPROVAL | alasan lepas lease berkembang; `state` -nya yang enum (§15.2), sebabnya yang text (§16.1.2) |
+| `krs_offering_seats.state` | OPEN · SPLIT_PENDING · CLOSED | keadaan tawaran saat auto-split berjalan (§16.1.3) |
+| `pddikti_sync_runs.checkpoint` | CP1 · CP2 | dua checkpoint pusat yang sudah dinormakan INTEGRATIONS §1.4; bukan state, jadi text + CHECK (§16.4.4) |
+| `pddikti_payload_snapshots.environment` | LOCAL · SANDBOX · PRODUCTION | **satu kosakata dengan `pddikti_sync_runs.environment` (§5)** — dua tabel, satu daftar; menambah nilai di salah satunya tanpa yang lain = temuan |
+| `pddikti_payload_snapshots.feeder_action` | `InsertBiodataMahasiswa`, `UpdateNilaiPerkuliahanKelas`, dst. | kosakata milik [INTEGRATIONS §1.4](file:///c:/SICA/docs/INTEGRATIONS.md), bukan kami; tidak boleh dibuat enum karena aksi pusat bertambah tanpa migrasi kita |
+| `tenant_encryption_keys.purpose` | FIELD_ENCRYPTION · BLIND_INDEX · TRANSIT | **dua kunci berbeda untuk dua pekerjaan berbeda**; inilah yang membuat `uq_tenant_key_active` bisa menegakkan satu ACTIVE per tujuan (§16.3.4) |
+| `tenant_encryption_keys.algorithm` | AES-256-GCM · HMAC-SHA256 | Algoritma masa depan (mis. KMS envelope berbeda) boleh ditambah dengan CHECK baru, bukan enum `ALTER TYPE` |
+| `encryption_key_events.event_kind` | CREATED · ACTIVATED · ROTATED · RETIRED · REVOKED · COMPROMISED · REENCRYPT_BATCH · DECRYPT_DENIED · BLIND_INDEX_REBUILT | siklus hidup kunci + bukti batch re-encrypt yang dapat di-resume (§16.3.4, §16.3.6) |
+| `mbkm_grade_mappings.rounding_mode` | HALF_UP · HALF_EVEN · FLOOR · CEIL | **keputusan prodi**, bukan hukum nasional: dua kampus membulatkan berbeda untuk angka yang sama (§16.2.2) |
+| `assessment_indicators.measurement_kind` | DIRECT · INDIRECT | bukti capaian langsung vs tidak langsung (angket/rubrik) — akreditasi menambah jenis, jadi tidak dibekukan jadi enum |
+| `outcome_attainments.method` | DIRECT · INDIRECT · COMBINED | tiga keadaan perhitungan; `scope_key` di tabel yang sama **bukan** kosakata tetap melainkan discriminator (`class:` / `cohort:` / `program`) |
+| `bulk_export_requests.kind` | STUDENT_MASTER · TRANSCRIPT_BATCH · GRADE_BATCH · FEEDER_MANIFEST · ATTENDANCE_RECAP · PII_ACCESS | jenis ekspor bertambah tiap kali layar baru dibuka; yang **tidak** boleh bertambah adalah nilai `pii_level` — `PLAIN` sengaja tidak ada (§16.3.5) |
+| `bulk_export_requests.pii_level` | MASKED · PSEUDONYMISED · NONE | allowlist tiga nilai; tidak ada `PLAIN`, dan `PSEUDONYMISED` menuntut penyetuju kedua |
+| `student_bank_accounts.owner_kind` | STUDENT · GUARDIAN | rekening bisa atas nama ortu penjamin (§16.3.4) |
+| `student_bank_accounts.purpose` | REFUND · SCHOLARSHIP · STIPEND · TUITION_DIRECT | satu mahasiswa boleh punya rekening berbeda untuk tujuan berbeda; `is_default` per kombinasi ini dijaga indeks parsial |
+| `retention_rules.data_class` | sebelas kelas baru di §16.5 ( `krs_lease`, `queue_operation`, `feeder_staging`, `feeder_snapshot`, `reconciliation_diff`, `outcome_attainment`, `grade_change_log`, `system_audit_trail`, `encryption_key_audit`, `pii_encrypted_column`, `pmb_applicant`) | kelas retensi adalah keputusan JRA per institusi; nilainya **wajib** lebih dulu terdaftar di §16.5 sebelum muncul di kode atau seed |
+
+Daftar di atas adalah **allowlist**, bukan ruang bebas: nilai di luar `CHECK` ditolak service dengan `422`, dan menambah nilai = baris dokumen ini ditulis lebih dulu.
+| `attendance_token_uses.result` | ACCEPTED · REJECTED_REPLAY · OUT_OF_FENCE · GPS_LOW_ACCURACY · NO_LOCATION · REJECTED_FRAUD_SUSPECT · CHALLENGED_FAILED | vonis presensi boleh bertambah tanpa `ALTER TYPE` di tabel berpartition besar; yang **tidak** boleh berubah adalah `UNIQUE (session, counter)` (§18.6) |
+| `classes.program_type` | REGULER · KARYAWAN · PJJ · INTERNASIONAL | tenant boleh menambah nama lokal (mis. "Kerja Sama"); makna Feeder tetap lewat `reference_items`, kolom ini salinan historis (§19.2) |
+| `campus_sites.kind` | MAIN · BRANCH · SATELLITE · ONLINE_ONLY | jumlah site milik tenant tumbuh; tidak ada kamus nasional untuk "cabang" (§19.1) |
+| `fee_tariff_groups.component` | UKT · SPP_TEORI · SPP_PRAKTIKUM · TPP · SKS_MARQUE · UJIAN · WISUDA · KTM · ASRAMA · LAIN | komponen biaya berbeda antar PT; yang diikat adalah **satu** `payable_to` per komponen, bukan namanya (§19.4) |
+
+### 15.4 Peta alias (ejaan lama → kanonik). Kolom kiri dilarang muncul di kode baru.
+
+| Ejaan lama (dan tempatnya) | Kanonik | Dasar |
+|---|---|---|
+| `present` / `late` / `absent` (API_SPEC §4.3 scan QR) | `PRESENT` / `ABSENT_LATE` / `ABSENT` (+ `EXCUSED`, `SICK`) | `enums.ts:128` |
+| `LATE` (view model LMS di API_SPEC) | `ABSENT_LATE`; `NOT_RECORDED` bertahan sebagai **keadaan tayangan**, bukan nilai DB | §15.1 |
+| `PERMITTED_SICK` / `PERMITTED_ABSENT` (BLUEPRINT §4.6) | `SICK` / `EXCUSED` | `enums.ts:128` |
+| `OPEN_ENROLLMENT` (SEED_DATA §2) | `OPEN` | `period_status` |
+| `TIDAK_BEWORK` (dokumen lama) | `TIDAK_BEKERJA` | `enums.ts:100` |
+| `sks_theory` / `sks_practice` / `sks_field_work` / `sks_lab` dan `sks_meet` / `sks_practice` / `sks_field` / `sks_simulation` | `sks_teori` + `sks_praktik` + `sks_praktik_lapangan` + `sks_simulasi` (empat komponen Feeder) | `schema/academic-master.ts:190-192` + §11 |
+| `TAKEN` / `CO_REQ` | `PREREQUISITE_TAKEN` / `CO_REQUISITE` | §5 `course_prerequisites` |
+| `financialLedger` / `accountCode` / `invoiceNumber` / `paidAmount` | `ledger` / `account_code` / `invoices.number` / `paid_amount` | §5 tabel rename (`RD-08`) |
+| `vendor_transaction_id` / `provider_ref` | `external_ref` | §5 (`RD-08`) |
+| `admin.x.y` sebagai **satu string** permission | dua kolom: `resource` × `verb` | §14.4 (`G-09`) |
+
+### 15.5 Gerbang CI yang membuat register ini tidak basi
+1. Padanan `gen-rbac-seed.mjs --check` untuk enum: baca `enums.ts`, cocokkan dengan §15.1/§15.2, gagal bila dokumen atau kode menyebut nilai di luar daftar.
+2. Pelarang alias: nilai di kolom kiri §15.4 tidak boleh muncul di `apps/**` dan `packages/**`. Pengecualian hanya per-baris lewat daftar putih, bukan lewat pelonggaran aturan.
+3. Menambah enum baru wajib tiga tempat sekaligus: `enums.ts`, baris §15.1/§15.2, konstanta Zod di `packages/contracts/`. Salah satu hilang = `tsc` atau gate ini yang menolak, bukan reviewer.
+
+---
+
+## 16. Addendum Enterprise IV — lease KRS, staging PDDikti, OBE dan MBKM, audit insert-only, PII — 2026-10-20
+
+Empat gugus yang selama ini hanya berupa **baris antrean** di §14.7 dituangkan menjadi DDL di bagian ini. Penomoran: nomor `0030`–`0035` **dilahirkan di sini** dan registrinya ikut ditulis di §14.7; objek yang sudah terdaftar pada `0016`/`0023` tidak dipindah nomornya kecuali ada alasan urutan dependensi yang dinyatakan eksplisit (satu kasus: `krs_baskets`, §16.1.7). Tidak ada satu pun migrasi di bawah yang dieksekusi pada siklus ini — **dokumen dulu, kode kemudian** (§14.7). **Nomor migrasi mengikuti urutan penugasan gugus, bukan urutan sub-bagian** (`0031` = staging meskipun gugus itu ditulis sebagai §16.4); yang mengikat pada `0030`–`0035` hanya dependensi: `0030` (`queue_operations`) wajib lebih dulu karena `krs_baskets.op_id`, `mbkm_conversions.applied_op_id`, `grade_change_logs.op_id` dan `bulk_export_requests.op_id` menunjuknya, dan `0031` bagian B wajib sesudah `0028`.
+
+| Sub-bagian | Gugus | Nomor migrasi | Objek baru siklus ini | Objek yang **sudah** terdaftar (nomor lama, DDL-nya baru ditulis sekarang) |
+|---|---|---|---|---|
+| §16.1 | lease dan war KRS | `0030_krs_lease_war.sql` | `krs_offering_seats`, `queue_operations` | `krs_baskets` (semula `0023`, dipindah ke `0030` — lihat §16.1.7) |
+| §16.2 | kurikulum OBE dan MBKM | `0032_obe_outcomes.sql`, `0033_mbkm_conversion.sql` | `graduation_profiles`, `assessment_indicators`, `mbkm_conversion_lines`, `mbkm_grade_mappings` | `program_outcomes`, `course_outcomes`, `outcome_sub_components`, `outcome_matrix`, `outcome_attainments` (`0014`); `mbkm_conversions` (`0016`) |
+| §16.3 | audit insert-only dan PII | `0034_audit_immutability.sql`, `0035_pii_encryption.sql` | `grade_change_logs`, `system_audit_trails`, `tenant_encryption_keys`, `encryption_key_events`, `student_bank_accounts`, `bulk_export_requests` | `audit_chain_head` (ALTER + kunci majemuk), kolom terenkripsi dan blind index pada tabel yang **sudah ada** |
+| §16.4 | staging PDDikti | `0031_pddikti_staging.sql` | tujuh tabel `pddikti_staging_*`, `pddikti_payload_snapshots`, `pddikti_reconciliation_diffs`, view `pddikti_validation_runs` dan `pddikti_staging_status` | `pddikti_sync_runs` (kolom baru lewat ALTER), `pddikti_validation_findings` (kolom baru + penggantian indeks unik) |
+
+**Realita kode yang diukur ulang sebelum bagian ini ditulis** (jangan mengulang angka dari ingatan): `packages/database/src/schema/*.ts` memuat **45** `pgTable`, **36** di antaranya ber-`tenant_id`; `krs.service.ts:371` masih memakai `pg_advisory_xact_lock(hashtext(classId))` dan **langsung menulis `enrollments.status = 'SUBMITTED'`** (`krs.service.ts:381`) — jadi status `DRAFT` pada `enrollment_status` hari ini **tidak pernah ditulis oleh jalur KRS mana pun** (satu-satunya pemakaian literal `'DRAFT'` di modul akademik ada di `grading.service.ts`, untuk `grades.status`). PII masih polos di kode: `users.phone` (`auth.ts:18`), `students.mobile_phone` (`classes.ts:53`), `lecturers.mobile_phone` (`people.ts:66`), `staff.mobile_phone` (`people.ts:106`), `student_guardians.phone` (`people.ts:165`); `sessions.ip_hash` dan `user_agent_hash` bertipe **`text`** di kode (`auth.ts:85-86`) padahal §3 menuliskan `bytea`; `students.personal_nik_encrypted` **hanya ada di dokumen** (§5 baris 651) dan tidak ada kolom NIK apa pun di kode. `[TIDAK-TERVERIFIKASI]`: tidak ada satu pun berkas di repo ini yang memuat katalog lengkap `error_code` resmi Feeder selain `0` dan `100` (INTEGRATIONS §1.4) — lihat §16.4.6.
+
+### 16.1 Gugus lease KRS, perebutan kursi, dan status `202`
+
+#### 16.1.1 Keputusan pemilik baris kursi (menyelesaikan kontradiksi `AC-KRS-3` vs invariance I-2)
+
+Kontradiksi lama: [PRD AC-KRS-3](file:///c:/SICA/docs/PRD.md) menuntut "tepat 1 enrollment terbentuk" saat 150 request memperebutkan kursi ke-40, sementara invariance **I-2** ([BLUEPRINT §7](file:///c:/SICA/docs/BLUEPRINT_ENTERPRISE.md)) menyatakan `classes.enrolled_count` = jumlah enrollment aktif dengan catatan "**DRAFT dihitung saat kursi dipegang**". Kalimat terakhir itu yang salah rumah: `enrolled_count` adalah kolom `classes`, sedangkan yang dipegang saat DRAFT adalah **lease**, bukan enrollment. Kalau DRAFT ikut dihitung di `enrolled_count`, maka (a) roster kelas berisi baris yang belum pernah disetujui PA, (b) `CHECK (enrolled_count <= capacity)` menjadi tidak bisa diverifikasi ulang dari `enrollments`, dan (c) keputusan produk **P-1** (kursi dipegang sejak draft dengan TTL) jadi tidak terminate.
+
+**Putusan siklus ini, ditulis sebagai norma — bukan pertanyaan:**
+
+| Fase | Pemilik baris kursi | Wujud di basis data | Bila proses mati di fase ini |
+|---|---|---|---|
+| `DRAFT` (kuliah dipilih, belum submit) | **lease** di `krs_baskets` dengan `lease_expires_at` | `krs_offering_seats.held_count` naik; **tidak ada baris `enrollments`** | Sweeper menandai `EXPIRED`, `held_count` turun, kursi kembali tersedia |
+| `SUBMITTED` dan seterusnya | **`enrollments`** ber-status `SUBMITTED`/`APPROVED`/`EFFECTIVE` | `enrollments` ditulis, `held_count` berpindah ke `enrolled_count` dalam satu transaksi | Transaksi gagal total; lease tetap `ACTIVE` sampai TTL |
+| `WAITING` antrean | **`class_waitlists`** (§5, sudah ada di kode) | `krs_offering_seats.waitlisted_count` naik di aras **tawaran**, bukan di aras satu kelas | Promosi ke kelas hasil split memindahkan hitungan, tidak pernah menggandakannya |
+
+Restatement I-2 yang berlaku mulai sekarang: **I-2** = `classes.enrolled_count` == jumlah `enrollments` dengan status ∈ `SUBMITTED · APPROVED · EFFECTIVE` **DAN** `krs_baskets` `ACTIVE` dihitung di kolom terpisah `held_count`, **DAN** `class_waitlists` `WAITING` dihitung di `waitlisted_count` aras tawaran. Satu kalimat, tiga rumah, tanpa tumpang tindih.
+
+#### 16.1.2 `krs_baskets` — lease satu baris per kursi
+
+Bentuk paling hemat yang dipilih: **satu baris = satu kursi yang dilease**. Tidak ada baris agregat "basket" per (mahasiswa, periode): agregat itu tidak punya state apa pun di luar anak-anaknya, hanya menambah titik lost-update, dan membuat TTL harus disinkronkan dua arah. "Basket" tetap menjadi konsep tampilan = himpunan baris ber-`(student_id, period_id)`. Baris lease **tidak dihapus** saat lepas; ia menjadi riwayat pendek (`state`, `released_at`, `release_reason`), sehingga ledger tidak perlu tabel kedua.
+
+```sql
+CREATE TYPE krs_lease_status AS ENUM ('ACTIVE','CONVERTED','RELEASED','EXPIRED','STOLEN');
+
+CREATE TABLE krs_baskets (
+  id               uuid PRIMARY KEY,
+  tenant_id        uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id       uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  period_id        uuid NOT NULL REFERENCES academic_periods(id),
+  class_id         uuid NOT NULL REFERENCES classes(id),
+  sks_held         numeric(4,1) NOT NULL CHECK (sks_held > 0),
+  state            krs_lease_status NOT NULL DEFAULT 'ACTIVE',
+  lease_expires_at timestamptz NOT NULL,              -- TTL; default 90 s (VONIS 2026-10-20; lihat aturan TTL di bawah)
+  acquired_at      timestamptz NOT NULL DEFAULT now(),
+  touched_at       timestamptz NOT NULL DEFAULT now(),-- heartbeat UI; BUKAN `updated_at`
+  released_at      timestamptz,
+  release_reason   text CHECK (release_reason IS NULL OR release_reason IN
+                     ('SUBMITTED','WITHDRAWN','EXPIRED','SWEPT','STOLEN_BY_APPROVAL')),
+  enrollment_id    uuid REFERENCES enrollments(id),   -- terisi HANYA saat ACTIVE → CONVERTED
+  op_id            uuid REFERENCES queue_operations(id), -- operasi 202 yang melahirkan lease ini
+  version          int NOT NULL DEFAULT 0,             -- optimistic lock untuk perpanjangan TTL
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, student_id, period_id, class_id),
+  CHECK (lease_expires_at > acquired_at),
+  CHECK ((state = 'CONVERTED') = (enrollment_id IS NOT NULL)),   -- satu-satunya jembatan lease → kursi
+  CHECK ((state = 'ACTIVE') = (released_at IS NULL)),            -- lepas ⇔ punya tanggal lepas
+  CHECK (state = 'ACTIVE' OR release_reason IS NOT NULL)
+);
+CREATE INDEX idx_krs_baskets_class   ON krs_baskets(tenant_id, class_id, lease_expires_at) WHERE state = 'ACTIVE';
+CREATE INDEX idx_krs_baskets_student ON krs_baskets(tenant_id, period_id, student_id, state);
+CREATE INDEX idx_krs_baskets_sweep   ON krs_baskets(tenant_id, lease_expires_at) WHERE state = 'ACTIVE';
+```
+Aturan yang mengikat kolom ini:
+1. **TTL — VONIS 2026-10-20, satu angka untuk tiga dokumen.** Kunci kanonik **`krs.war_lease_ttl_s`** di `master_system_parameters` (§21.2, `0049`), bawaan **90 detik**, rentang aman **30–300**, kelas risiko `TECHNICAL`, dan tetap **dilayani di service**. Perpanjangan TTL **wajib** membawa `version` (`WHERE id = $1 AND version = $2`) agar dua tab browser tidak saling menimpa.
+2. Sweeper jalan **per tenant di dalam konteks tenant** (`set_config('app.current_tenant', …)`), bukan query lintas tenant — itulah sebabnya indeks `idx_krs_baskets_sweep` memakai `tenant_id` sebagai kolom pertama. Tanpa sweeper, `lease_expires_at` hanya hiasan (cacat yang sama dengan `blockades.expires_at`, §5).
+3. Plafon SKS (**BR-A2**, [PRD §5.5](file:///c:/SICA/docs/PRD.md)) dihitung atas `SUM(sks_held)` lease **ditambah** SKS enrollment aktif periode itu. Kursi yang baru dilease tidak boleh membuat total melampaui band; ini agregasi lintas baris sehingga tidak mungkin jadi `CHECK` — service menolaknya dengan `422 SKS_CEILING_EXCEEDED` **sebelum** baris lease ditulis, di **Primary** (read-your-writes, AGENTS §3.7).
+4. `STOLEN` hanya untuk kasus Kaprodi/Admin memindahkan mahasiswa dari kelas penuh lewat aksi `VALIDATE` beralasan; `op_id` + `audit_logs` wajib ada. Ini **bukan** mekanisme GC.
+5. Retensi: baris non-`ACTIVE` dibuang setelah **30 hari** (kelas retensi `krs_lease`, §16.5). Baris `ACTIVE` tidak pernah dibuang — hanya di-`EXPIRED`-kan.
+
+#### 16.1.3 Penjaga invariance `held + enrolled + waitlisted <= capacity`
+
+Dua aras, dua guard, keduanya bisa ditegakkan di baris sendiri-sendiri (itulah triknya):
+
+```sql
+-- ARAS KELAS (kursi yang benar-benar ada): guard keras, row-local.
+ALTER TABLE classes
+  ADD COLUMN held_count int NOT NULL DEFAULT 0 CHECK (held_count >= 0);
+ALTER TABLE classes
+  ADD CONSTRAINT classes_seat_invariance
+  CHECK (enrolled_count + held_count <= capacity);
+-- `CHECK (enrolled_count <= capacity)` yang lama (didefinisikan di §5) TIDAK dijatuhkan:
+-- Expand-and-Contract melarang DROP pada fase expand, dan guard lama kini tersirat oleh yang baru.
+
+-- ARAS TAWARAN (satu matakuliah × periode × prodi, termasuk kelas hasil auto-split):
+-- di sinilah `waitlisted` boleh membuat jumlah melebihi capacity satu kelas.
+CREATE TABLE krs_offering_seats (
+  id                uuid PRIMARY KEY,
+  tenant_id         uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  period_id         uuid NOT NULL REFERENCES academic_periods(id),
+  program_id        uuid NOT NULL REFERENCES study_programs(id),
+  course_id         uuid NOT NULL REFERENCES courses(id),
+  head_class_id     uuid REFERENCES classes(id),                 -- kelas induk split (A); NULL bila belum ada split
+  capacity          int NOT NULL DEFAULT 0 CHECK (capacity >= 0),   -- Σ classes.capacity yang SUDAH ada
+  promised_capacity int NOT NULL DEFAULT 0 CHECK (promised_capacity >= 0), -- dijanjikan split, belum terwujud
+  enrolled_count    int NOT NULL DEFAULT 0 CHECK (enrolled_count >= 0),
+  held_count        int NOT NULL DEFAULT 0 CHECK (held_count >= 0),
+  waitlisted_count  int NOT NULL DEFAULT 0 CHECK (waitlisted_count >= 0),
+  split_threshold   int CHECK (split_threshold IS NULL OR split_threshold > 0), -- ambang AC-KRS-3 (mis. 15)
+  state text NOT NULL DEFAULT 'OPEN' CHECK (state IN ('OPEN','SPLIT_PENDING','CLOSED')),
+  version int NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, period_id, program_id, course_id),
+  CHECK (enrolled_count + held_count + waitlisted_count <= capacity + promised_capacity)
+);
+CREATE INDEX idx_offering_seats_lookup ON krs_offering_seats(tenant_id, period_id, course_id, state);
+```
+Kenapa `waitlisted` **tidak boleh** masuk ke baris `classes`: pada AC-KRS-3 kelas A sudah penuh (40) lalu 14 mahasiswa antre — jumlah 40+14 menembus `capacity` A, sehingga `CHECK` row-local akan menolak antrean **sebelum** Kelas B sempat dibuat. Antrean adalah klaim atas kapasitas yang **akan dijanjikan**, jadi rumahnya adalah aras tawaran lewat `promised_capacity`. Urutan transaksi split yang benar dan sah di bawah CHECK ini: (1) naikkan `promised_capacity` keluarga A sebesar 40, (2) `INSERT classes` Kelas B dengan `capacity 40` dan `parent_class_id = A`, (3) pindahkan 15 baris `class_waitlists` ke `target_class_id` B dengan `status='PROMOTED'`, (4) `capacity += 40`, `promised_capacity -= 40`, `waitlisted_count -= 15`, (5) `held_count → enrolled_count` untuk 15 promosi itu. Semua dalam satu transaksi di Primary.
+
+Enforcement ganda: **`classes.capacity` tetap tidak boleh disentuh dari body** (`SERVER_ONLY` per §14.9 — menurunkan capacity untuk mengusir mahasiswa adalah celah nyata), dan job reconcile harian membandingkan `krs_offering_seats` dengan hasil `COUNT` atas `classes`/`krs_baskets`/`class_waitlists` lalu **melaporkan selisih sebagai temuan, tidak diam-diam mengoreksi** (proyeksi konsisten, §13.4).
+
+#### 16.1.4 `queue_operations` — satu-satunya sumber `opId` untuk respons `202`
+
+[GLOSSARY `opId`](file:///c:/SICA/docs/GLOSSARY.md) sudah menormakan states `QUEUED/PROCESSING/SUCCEEDED/FAILED/EXPIRED` + umur maksimum 15 menit dan menunjuk rumah ke "DATA_MODEL `async_operations`". Nama itu **kalah**: pemenangnya **`queue_operations`** (registrinya §14.8), karena tabel ini juga menyimpan pekerjaan tertunda dan DLQ, bukan hanya operasi asinkron HTTP.
+
+```sql
+CREATE TYPE queue_operation_state AS ENUM ('QUEUED','PROCESSING','SUCCEEDED','FAILED','EXPIRED');
+CREATE TYPE queue_operation_kind AS ENUM
+  ('KRS_SUBMIT','KRS_WITHDRAW','KRS_PACKAGE_APPLY','ATTENDANCE_BULK_FLUSH','GRADE_PUBLISH',
+   'FEEDER_PUSH','FEEDER_PULL_RECONCILE','PII_REENCRYPT','EXPORT_MASSAL','CERT_ISSUE');
+
+CREATE TABLE queue_operations (
+  id               uuid PRIMARY KEY,                    -- inilah `opId` pada body respons 202
+  tenant_id        uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  actor_user_id    uuid NOT NULL,                        -- dari token terverifikasi, bukan body (L2 §0.4)
+  kind             queue_operation_kind NOT NULL,
+  state            queue_operation_state NOT NULL DEFAULT 'QUEUED',
+  idempotency_key  text NOT NULL,                        -- header `Idempotency-Key` dari klien
+  request_hash     bytea NOT NULL,                       -- SHA-256 atas request; key sama + isi beda = 409
+  request          jsonb NOT NULL DEFAULT '{}'::jsonb,
+  result           jsonb,                                -- untuk kind non-PII
+  result_encrypted bytea,                               -- WAJIB untuk GRADE_PUBLISH dan EXPORT_MASSAL (§16.3.2)
+  position         int CHECK (position IS NULL OR position >= 0), -- estimasi, boleh NULL, TIDAK otoritatif
+  error_code       text,
+  attempt          int NOT NULL DEFAULT 0 CHECK (attempt BETWEEN 0 AND 12),
+  max_attempts     int NOT NULL DEFAULT 6 CHECK (max_attempts BETWEEN 1 AND 12),
+  priority         int NOT NULL DEFAULT 100,
+  enqueue_at       timestamptz NOT NULL DEFAULT now(),
+  started_at       timestamptz,
+  finished_at      timestamptz,
+  expires_at       timestamptz NOT NULL,                 -- default enqueue_at + 15 menit
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, kind, idempotency_key),
+  CHECK (expires_at > enqueue_at),
+  CHECK (state <> 'PROCESSING' OR started_at IS NOT NULL),
+  CHECK (state NOT IN ('SUCCEEDED','FAILED','EXPIRED') OR finished_at IS NOT NULL),
+  CHECK (state NOT IN ('FAILED','EXPIRED') OR error_code IS NOT NULL),
+  CHECK (state <> 'SUCCEEDED' OR result IS NOT NULL OR result_encrypted IS NOT NULL)
+);
+CREATE INDEX idx_queue_ops_claim ON queue_operations(tenant_id, priority, enqueue_at)
+  WHERE state IN ('QUEUED','PROCESSING');
+CREATE INDEX idx_queue_ops_actor ON queue_operations(tenant_id, actor_user_id, enqueue_at DESC);
+CREATE INDEX idx_queue_ops_expiry ON queue_operations(tenant_id, expires_at) WHERE state <> 'SUCCEEDED';
+```
+Sambungan bolak-balik lease ↔ operasi, dan jejak forensik enrollment:
+```sql
+ALTER TABLE enrollments ADD COLUMN op_id uuid REFERENCES queue_operations(id);
+CREATE INDEX idx_enrollments_op ON enrollments(tenant_id, op_id) WHERE op_id IS NOT NULL;
+```
+
+#### 16.1.5 Kontrak klaim, lepas, dan pemrosesan ulang yang aman
+
+1. **Terima.** Transport memvalidasi Zod → **satu transaksi**: `INSERT queue_operations (QUEUED)` + `INSERT krs_baskets` + `UPDATE krs_offering_seats`/`classes.held_count` + `INSERT outbox`. Respons `202 { opId }` **tidak boleh pernah** dikirim sebelum baris `queue_operations` commit; jika intent tercatat tanpa baris, klien tidak punya apa pun untuk ditanya.
+2. **Klaim.** Worker melakukan CAS satu baris: `UPDATE queue_operations SET state='PROCESSING', started_at=now(), attempt=attempt+1 WHERE id=$1 AND tenant_id=app.tenant_id() AND state='QUEUED' RETURNING *`. Untuk polling batch: `SELECT … FOR UPDATE SKIP LOCKED LIMIT n` di dalam transaksi — **tidak pernah** `LOCK TABLE` (AGENTS §3.7).
+3. **Eksekusi idempoten.** Kunci eksekusi = `(tenant_id, kind, idempotency_key)`. Sebelum bekerja, worker membaca efek yang mungkin sudah terjadi lewat `enrollments.op_id` / `krs_baskets.op_id`; bila efek sudah ada, ia **tidak menerapkan ulang**, langsung menulis `result` dari keadaan DB.
+4. **Pulih dari crash.** Jendela berbahaya adalah "efek sudah tertulis, `result` belum". Karena efek membawa `op_id`, pemulihan = membaca efek, bukan mengulang operasi. Ini alasan `op_id` ada di dua tabel, bukan sekadar pelengkap.
+5. **Visibilitas, bukan status ganda.** Baris `PROCESSING` dengan `started_at < now() - interval '90 seconds'` dianggap yatim dan boleh direbut kembali (`PROCESSING → PROCESSING`, `attempt` naik). Tidak ada status `RETRYING`: `attempt` + `state='QUEUED'` sudah cukup, dan setiap tambahan nilai enum = migrasi `ALTER TYPE` (§15 aturan utama).
+6. **Batas gagal.** `attempt >= max_attempts` **atau** `now() > expires_at` → `FAILED`/`EXPIRED` + `error_code` + notifikasi operator. Pada hari `bullmq`/`ioredis` terpasang (`RD-11`, TECH_CONVENTIONS §6), baris `FAILED` dipetakan ke queue `sica-dlq`; hari ini DLQ-nya adalah **kumpulan baris `FAILED` di tabel ini** — itulah sebabnya kolom `error_code` dan indeks parsialnya wajib ada sekarang.
+7. **Pemrosesan ulang manual.** Baris terminal **tidak pernah di-UPDATE**. Operator memicu operasi **baru** dengan `idempotency_key` turunan (`<key-lama>:r2`) dan `request` yang sama; `audit_logs` mencatat keduanya. Aturan ini juga yang membuat `position` aman untuk dikosongkan.
+8. **`position`.** Diperkirakan service dengan `COUNT(*) … WHERE state='QUEUED' AND enqueue_at < saya` per `(tenant_id, kind)`, disimpan sebagai cache dan **boleh basi**; API menjawab `null` bila worker belum menuliskannya. Jangan pernah menjanjikan angka antrean real-time dari DB.
+9. **Read/write split.** Klaim & finalisasi hanya ke **Primary**. Polling status `GET /krs/operations/{opId}` boleh ke **Replica hanya bila** `state` sudah terminal; untuk state berjalan wajib ke Primary (read-your-writes, §13.2).
+
+#### 16.1.6 Partisi, retensi, dan ukuran
+
+`krs_baskets` dan `krs_offering_seats` **tidak dipartisi** (alasan teknis sama persis dengan §7: `krs_baskets` ber-PK `(id)` dengan unik `(tenant_id, student_id, period_id, class_id)`; mempartisinya menuntut PK komposit yang mematikan FK `enrollment_id` dan `op_id`). Volume ditahan oleh retensi 30 hari baris non-`ACTIVE` dan oleh `UNIQUE` per kursi. `queue_operations` juga tidak dipartisi: umurnya menit, retensi baris terminal 30 hari, dan ia dirujuk FK dari `enrollments` serta `krs_baskets`. Perkiraan write amplification satu submit: 1 baris operasi + N baris lease + 1 UPDATE offering — bukan N UPDATE `FOR UPDATE` pada baris `classes` yang sama (itu yang dilarang AGENTS §3.7 pada beban puncak).
+
+#### 16.1.7 Registrasi dan yang ditolak
+
+`krs_baskets` **dipindah** dari `0023_krs_visibility.sql` ke `0030_krs_lease_war.sql` karena `op_id REFERENCES queue_operations(id)` — dan `0023` dijalankan sebelum `0030`, sehingga FK-nya mustahil dibuat pada urutan itu. `0023` **belum pernah dieksekusi** (di `packages/database/migrations/` baru ada `0001`–`0006` dan `0011`), jadi pemindahan nomor sah menurut aturan "penomoran ulang hanya sebelum nomornya dieksekusi" (§14.7). `0023` tetap memegang `class_distributions` dan `krs_packages`. **Urutan isi `0030` wajib**: `CREATE TYPE` lease dan queue → `queue_operations` → `krs_baskets` → `krs_offering_seats` → `ALTER classes` → `ALTER enrollments`; dua blok pertama tidak boleh ditukar karena `krs_baskets.op_id` menunjuk `queue_operations`.
+
+Alternatif yang **ditolak**, dengan alasan:
+- **`krs_lease_ledger` append-only per kejadian** (bentuk yang diminta secara harfiah): ditolak, karena setiap kejadian lease sudah tercatat sebagai `state` + `released_at` + `release_reason` pada baris `krs_baskets` itu sendiri dan setiap perpindahan wajib menuliskan `audit_logs`/`outbox`. Ledger terpisah berarti empat tulis per request pada jalur terpanas dan satu permukaan drift baru tanpa menambah bukti apa pun.
+- **`krs_baskets` + `krs_basket_items`** (baris agregat + baris anak): ditolak, lihat §16.1.2.
+- **Tiga counter ditaruh semua di `classes`** (`enrolled + held + waitlisted <= capacity` row-local): ditolak dan **dibuktikan salah** oleh AC-KRS-3 — antrean pada kelas penuh menembus `capacity` sebelum kelas split ada.
+- **`enrollments.status='DRAFT'` sebagai pemegang kursi** (bentuk yang paling mendekati kode lama): ditolak, karena membuat `enrolled_count` tidak dapat direkonstruksi dari `enrollments`, menyalakan kembali kontradiksi I-2, dan memaksa roster kelas memuat baris yang belum disetujui PA.
+- ** decrement `classes.capacity_available` per request**: tetap dilarang AGENTS §3.7; `classes.capacity` tidak pernah bergerak, yang bergerak hanya counter.
+
+#### 16.1.8 Kenapa bentuknya begini
+
+Perebutan kursi KRS adalah masalah **klaim sementara atas sumber daya langka**, bukan masalah pencatatan riwayat; karena itu bentuk yang benar adalah lease yang bisa kedaluwarsa sendiri, bukan decrement pada baris kelas yang harus di-`UPDATE` ulang setiap kali seseorang menutup tab. Lease dipisah dari enrollment supaya dua pertanyaan yang selama ini dijawab oleh satu kolom dapat dijawab terpisah: "kursi ini sedang dipegang siapa" (lease, umur menit, boleh hilang) dan "kursi ini sudah menjadi hak akademik siapa" (enrollment, umur tahunan, tidak boleh hilang). Pemisahan itu sekaligus membuat `classes.enrolled_count` tetap merupakan proyeksi yang dapat dibuktikan ulang dari `enrollments` — prasyarat agar invariance bisa diaudit, bukan hanya diharapkan. Counter diletakkan pada dua aras karena batas fisik (satu kelas) dan batas ekonomi (satu tawaran yang bisa di-split) memang dua hal berbeda: memaksakan keduanya ke satu baris `classes` akan menolak antrean yang justru diwajibkan AC-KRS-3. Dan `queue_operations` berdiri sendiri — bukan tambahan kolom pada `idempotency_keys` §4 — karena `idempotency_keys` menjawab "respons HTTP yang mana yang harus saya ulangi" (umur transport, milik satu request) sementara operasi menjawab "pekerjaan ini sampai mana" (umur domain, bisa berisi banyak request dan banyak baris domain); menggabungkan keduanya akan memaksa salah satu tabel menyimpan kolom milik konsep lain, dan membuat respons `202` yang dijanjikan GLOSSARY tidak punya objek untuk ditunjuk.
+
+---
+
+### 16.2 Gugus kurikulum OBE dan konversi SKS MBKM
+
+Dua hal yang selama ini tidak punya rumah: (a) **rantai outcome** Profil Lulusan → CPL → CPMK → Sub-CPMK → Indikator Asesmen → Item Penilaian, yang diminta akreditasi tetapi belum berbentuk DDL di dokumen mana pun (`0014` baru berupa baris antrean §14.7), dan (b) **konversi MBKM** yang belum punya cara sah untuk mengubah SKS dan nilai dari aktivitas eksternal menjadi hasil studi internal tanpa merusak dua angka IPK (BR-G6) dan plafon SKS (BR-A2).
+
+Rujukan peran/izin: hierarki outcome dibaca `QUALITY_OFFICER` dan Kaprodi, ditulis oleh Kaprodi (`sc=prodi`) dan Dosen pengampu; konversi MBKM butuh verb `VALIDATE` dua orang. Bagian ini **tidak** menciptakan kode izin — permintaannya dicatat di §16.6 sebagai kepemilikan [RBAC_MATRIX §4](file:///c:/SICA/docs/RBAC_MATRIX.md).
+
+#### 16.2.1 Rantai outcome (satu tabel satu blok DDL, FK berantai)
+
+```sql
+CREATE TYPE outcome_category AS ENUM ('SIKAP','SKPP','KK');        -- triatom CPL (Permendikbudristek 3/2020)
+CREATE TYPE outcome_level AS ENUM ('CPL','CPMK','SUB_CPMK','INDICATOR');
+CREATE TYPE outcome_attainment_scope AS ENUM ('CLASS','COHORT','PROGRAM');
+
+-- (1) PROFIL LULUSAN — jabatan/peran yang diharapkan pasar; ayah dari seluruh CPL.
+CREATE TABLE graduation_profiles (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  code text NOT NULL, name text NOT NULL,
+  description text NOT NULL CHECK (length(description) >= 15),
+  cqf_level int CHECK (cqf_level BETWEEN 1 AND 9),      -- level mutu KKNI; 1..9, bukan per prodi
+  is_active boolean NOT NULL DEFAULT true,
+  sort_order int NOT NULL DEFAULT 100,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, program_id, code), UNIQUE (tenant_id, id)
+);
+CREATE INDEX idx_grad_profiles ON graduation_profiles(tenant_id, program_id, is_active, sort_order);
+
+-- (2) CPL — turunan Profil Lulusan; milik prodi, bukan milik matakuliah.
+CREATE TABLE program_outcomes (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  profile_id uuid NOT NULL REFERENCES graduation_profiles(id),
+  code text NOT NULL,                                   -- 'CPL-01'
+  statement text NOT NULL CHECK (length(statement) >= 15),
+  category outcome_category NOT NULL DEFAULT 'KK',
+  cqf_level int CHECK (cqf_level BETWEEN 1 AND 9),
+  sort_order int NOT NULL DEFAULT 100, is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, program_id, code), UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, profile_id) REFERENCES graduation_profiles(tenant_id, id)
+);
+CREATE INDEX idx_cpl_program ON program_outcomes(tenant_id, program_id, is_active, sort_order);
+
+-- (3) CPMK — milik matakuliah DI DALAM satu versi kurikulum (§5: `courses.curriculum_id NOT NULL`).
+CREATE TABLE course_outcomes (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  curriculum_id uuid NOT NULL REFERENCES curricula(id),
+  course_id uuid NOT NULL REFERENCES courses(id),
+  code text NOT NULL,                                   -- 'CPMK-01'
+  statement text NOT NULL CHECK (length(statement) >= 15),
+  bloom_level text CHECK (bloom_level IS NULL OR bloom_level IN ('C1','C2','C3','C4','C5','C6')),
+  sort_order int NOT NULL DEFAULT 100, is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, curriculum_id, course_id, code), UNIQUE (tenant_id, id),
+  FOREIGN KEY (curriculum_id) REFERENCES curricula(id),   -- bentuk SAH hari ini; lihat catatan (a)
+);
+
+-- (4) Sub-CPMK — kemampuan akhir yang dapat diukur; ibu dari Indikator Asesmen.
+CREATE TABLE outcome_sub_components (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  course_outcome_id uuid NOT NULL,
+  code text NOT NULL,                                   -- 'SubCPMK-01'
+  statement text NOT NULL CHECK (length(statement) >= 15),
+  bloom_level text CHECK (bloom_level IS NULL OR bloom_level IN ('C1','C2','C3','C4','C5','C6')),
+  sort_order int NOT NULL DEFAULT 100,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, course_outcome_id, code), UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, course_outcome_id) REFERENCES course_outcomes(tenant_id, id)
+);
+CREATE INDEX idx_subcpmk_co ON outcome_sub_components(tenant_id, course_outcome_id, sort_order);
+
+-- (5) INDIKATOR ASESMEN — apa yang diukur; menunjuk Item Penilaian = `grade_components` (§5, ADA di kode).
+CREATE TABLE assessment_indicators (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  sub_component_id uuid NOT NULL,
+  grade_component_id uuid REFERENCES grade_components(id),  -- NULL = indikator indirect (angket/rubrik)
+  code text NOT NULL, measurement text NOT NULL CHECK (length(measurement) >= 10),
+  measurement_kind text NOT NULL DEFAULT 'DIRECT' CHECK (measurement_kind IN ('DIRECT','INDIRECT')),
+  target_pct numeric(5,2) NOT NULL DEFAULT 65.00 CHECK (target_pct BETWEEN 1 AND 100),
+  weight_pct numeric(5,2) CHECK (weight_pct IS NULL OR weight_pct BETWEEN 0 AND 100),
+  rubric jsonb NOT NULL DEFAULT '{}'::jsonb,          -- {level: {label, descriptor}} — bebas bentuk
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, sub_component_id, code), UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, sub_component_id) REFERENCES outcome_sub_components(tenant_id, id),
+  CHECK (measurement_kind = 'DIRECT' OR grade_component_id IS NULL)
+);
+CREATE INDEX idx_indicators_sub ON assessment_indicators(tenant_id, sub_component_id);
+CREATE INDEX idx_indicators_component ON assessment_indicators(tenant_id, grade_component_id)
+  WHERE grade_component_id IS NOT NULL;
+
+-- (6) MATRIKS — bobot CPMK/komponen terhadap CPL. Wajib berbobot; jumlah = 100% per CPL (service).
+CREATE TABLE outcome_matrix (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  curriculum_id uuid NOT NULL REFERENCES curricula(id),
+  program_outcome_id uuid NOT NULL,
+  course_outcome_id uuid NOT NULL,
+  grade_component_id uuid NOT NULL REFERENCES grade_components(id),
+  contribution_pct numeric(5,2) NOT NULL CHECK (contribution_pct > 0 AND contribution_pct <= 100),
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, curriculum_id, program_outcome_id, course_outcome_id, grade_component_id),
+  FOREIGN KEY (tenant_id, program_outcome_id) REFERENCES program_outcomes(tenant_id, id),
+  FOREIGN KEY (tenant_id, course_outcome_id) REFERENCES course_outcomes(tenant_id, id)
+);
+CREATE INDEX idx_matrix_cpl ON outcome_matrix(tenant_id, curriculum_id, program_outcome_id);
+CREATE INDEX idx_matrix_component ON outcome_matrix(tenant_id, grade_component_id, is_active);
+
+-- (7) CAPAIAN — hasil hitung per kelas / angkatan / prodi; turunan, TIDAK pernah diedit manual.
+CREATE TABLE outcome_attainments (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  outcome_level outcome_level NOT NULL,
+  outcome_id uuid NOT NULL,                       -- polymorphic; dibuktikan pemicu (lihat catatan (b))
+  scope outcome_attainment_scope NOT NULL,
+  class_id uuid REFERENCES classes(id),
+  entry_year int CHECK (entry_year IS NULL OR entry_year > 1990),
+  period_id uuid REFERENCES academic_periods(id),   -- NULL = agregat lintas periode (basis kelulusan)
+  target_pct numeric(5,2) NOT NULL CHECK (target_pct BETWEEN 1 AND 100),
+  achieved_pct numeric(5,2) NOT NULL CHECK (achieved_pct BETWEEN 0 AND 100),
+  sample_size int NOT NULL DEFAULT 0 CHECK (sample_size >= 0),
+  population_size int NOT NULL DEFAULT 0 CHECK (population_size >= sample_size),
+  mean_score numeric(5,2),
+  method text NOT NULL DEFAULT 'DIRECT' CHECK (method IN ('DIRECT','INDIRECT','COMBINED')),
+  scope_key text NOT NULL,                        -- 'class:<id>' | 'cohort:<tahun>' | 'program'
+  inputs_digest char(64) NOT NULL,                -- digest himpunan nilai yang dipakai → replikasi hitung
+  is_current boolean NOT NULL DEFAULT true,
+  supersedes_id uuid REFERENCES outcome_attainments(id),
+  computed_by uuid, computed_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((scope = 'CLASS')   = (class_id IS NOT NULL)),
+  CHECK ((scope = 'COHORT')  = (entry_year IS NOT NULL)),
+  CHECK (scope <> 'PROGRAM' OR (class_id IS NULL AND entry_year IS NULL)),
+  CHECK (supersedes_id IS NULL OR supersedes_id <> id),
+  CHECK (length(inputs_digest) = 64),
+  CHECK (scope_key IS NOT NULL)
+);
+CREATE UNIQUE INDEX uq_attain_current ON outcome_attainments
+  (tenant_id, outcome_level, outcome_id, scope_key) WHERE is_current;
+CREATE UNIQUE INDEX uq_attain_once ON outcome_attainments
+  (tenant_id, outcome_level, outcome_id, scope, scope_key, computed_at);
+CREATE INDEX idx_attain_program ON outcome_attainments(tenant_id, program_id, outcome_level, is_current);
+CREATE INDEX idx_attain_period  ON outcome_attainments(tenant_id, period_id) WHERE period_id IS NOT NULL;
+```
+**Aturan rantai dan bobot:**
+- (a) FK komposit hanya sah bila sisi yang ditunjuk punya `UNIQUE (tenant_id, id)`. Blok di atas memakai pola itu pada **tabel yang lahir di bagian ini**: `graduation_profiles`, `program_outcomes`, `course_outcomes`, `outcome_sub_components`, `assessment_indicators`, `mbkm_conversions` — semuanya diberi `UNIQUE (tenant_id, id)` justru supaya anak-anaknya dapat membuktikan kesamaan tenant. Untuk `curricula` bentuknya **masih FK tunggal** (`REFERENCES curricula(id)`) karena `curricula` (§5) belum punya `UNIQUE (tenant_id, id)`; menulis `FOREIGN KEY (tenant_id, curriculum_id) REFERENCES curricula(tenant_id, id)` di blok itu akan menjadi pseudo-DDL yang gagal saat migrasi dibaca (`RD-05` adalah nama cacatnya). Penambahan `UNIQUE (tenant_id, id)` pada `curricula`, `courses`, `study_programs`, `students`, `classes`, `enrollments`, `grades`, `grade_components` adalah **pekerjaan Expand tersendiri** yang saya daftarkan di §16.6 dan §14.7, bukan sesuatu yang boleh diselundupkan sebagai sintaks yang tidak ada.
+- (b) `outcome_id` polymorphic tidak bisa punya FK. Yang menegakkannya adalah satu pemicu `BEFORE INSERT` yang mencocokkan `outcome_level` ke tabel yang benar (`CPL`→`program_outcomes`, `CPMK`→`course_outcomes`, `SUB_CPMK`→`outcome_sub_components`, `INDICATOR`→`assessment_indicators`) dengan `WHERE tenant_id = NEW.tenant_id AND id = NEW.outcome_id`; nol baris = tolak. Ini bukan gaya kode: tanpa pemicu, capaian dapat menunjuk baris prodi lain (pola kegagalan `SEC-04`).
+- (c) **Jumlah bobot = 100% per CPL.** `CHECK` tidak dapat membaca baris lain, maka aturannya begini: service menolak **aktivasi kurikulum** (`curricula.is_active = true`) bila `SUM(contribution_pct)` per `(curriculum_id, program_outcome_id)` bukan 100.00, dan pemicu `DEFERRABLE INITIALLY DEFERRED` menahan transisi yang sama di level DB supaya jalur impor massal tidak bisa menghindar. Nilai **1.00** dalam blueprint dibaca sebagai 100 persen — kosakata yang dipakai di dokumen ini adalah persen (`_pct`), konsisten dengan `grade_components.weight_pct` (§5).
+- (d) Jumlah `weight_pct` indikator per Sub-CPMK juga 100; dan bobot satu komponen terhadap **seluruh CPL** tidak boleh melebihi `grade_components.weight_pct` komponen itu (aturan turunan, service, dilaporkan sebagai temuan bila dilanggar).
+- (e) **Capaian tidak pernah dihitung dua kali.** Baris baru selalu ditulis dengan `is_current = true` dan baris lama grup yang sama di-`UPDATE` menjadi `false` **dalam transaksi yang sama**; `uq_attain_current` menjadikannya mustahil ada dua "keadaan kini". `outcome_attainments` adalah tabel turunan: satu-satunya jalan mengubah `achieved_pct` adalah menghitung ulang, bukan `UPDATE` nilai (pola `semester_results`, §14.7 `0018`).
+- (f) CPL wajib punya minimal satu baris matriks aktif sebelum akreditasi periode itu ditutup; prodi tanpa bukti capaian per CPL = temuan, bukan kegagalan migrasi.
+
+#### 16.2.2 Konversi SKS dan nilai MBKM
+
+```sql
+CREATE TYPE mbkm_type AS ENUM
+  ('PERTUKARAN','MAGANG','KAMPUS_MENGAJAR','RISET','WIRAUSAHA','HUMANIORA');
+CREATE TYPE mbkm_conversion_status AS ENUM
+  ('DRAFT','SUBMITTED','APPROVED','REJECTED','APPLIED','REVERSED');
+CREATE TYPE score_value_kind AS ENUM ('NUMERIC','LETTER','DESCRIPTIVE');
+```
+> **Daftar KBMI tidak ditutup oleh bagian ini.** Delapan aktivitas MBKM resmi tidak sama enam nilai enum di atas; `KAMPUS_MENGAJAR` dan `HUMANIORA` adalah nama yang diminta siklus ini dan keduanya **bukan** istilah baku delapan aktivitas KBMI. Menambah anggota enum = `ALTER TYPE … ADD VALUE` + kontrak + §15.2 ditulis lebih dulu; nilai sisa ditolak sebagai usulan sampai keputusan produk tercatat (`P-*` di AUDIT_READINESS), bukan diputuskan diam-diam di DDL.
+
+```sql
+-- Peta konversi nilai: kuantitatif / huruf / deskriptif → huruf skala SICA.
+CREATE TABLE mbkm_grade_mappings (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id uuid REFERENCES study_programs(id),        -- NULL = berlaku kampus; isi = khusus satu prodi
+  scale_id uuid NOT NULL REFERENCES grade_scales(id),   -- skala TUJUAN; wajib baris `grade_scales` yang ada
+  source_kind score_value_kind NOT NULL,
+  source_min numeric(6,2), source_max numeric(6,2),     -- hanya untuk NUMERIC; batas INKLUSIF
+  source_code text,                                     -- hanya untuk LETTER/DESCRIPTIVE, mis. 'A','SANGAT BAIK'
+  target_letter text NOT NULL,                          -- harus ada di `grade_scale_bands` (FK, bukan CHECK)
+  rounding_mode text NOT NULL DEFAULT 'HALF_UP'
+    CHECK (rounding_mode IN ('HALF_UP','HALF_EVEN','FLOOR','CEIL')),
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((source_kind = 'NUMERIC') = (source_min IS NOT NULL AND source_max IS NOT NULL)),
+  CHECK (source_kind = 'NUMERIC' OR source_code IS NOT NULL),
+  CHECK (source_kind <> 'NUMERIC' OR source_max >= source_min),
+  CHECK (source_min IS NULL OR (source_min BETWEEN 0 AND 100 AND source_max BETWEEN 0 AND 100)),
+  FOREIGN KEY (tenant_id, scale_id, target_letter)
+    REFERENCES grade_scale_bands(tenant_id, scale_id, letter_code),
+  EXCLUDE USING gist (tenant_id WITH =, scale_id WITH =,
+                      numrange(source_min, source_max, '[]') WITH &&)
+    WHERE (source_kind = 'NUMERIC' AND is_active)
+);
+-- Prasyarat FK di atas (Expand, dijalankan SEBELUM tabel ini di 0033):
+CREATE UNIQUE INDEX uq_grade_scale_bands_tenant_letter
+  ON grade_scale_bands(tenant_id, scale_id, letter_code);
+CREATE INDEX idx_mbkm_map_lookup ON mbkm_grade_mappings(tenant_id, scale_id, source_kind, is_active);
+```
+**Aturan pembulatan dan cakupan peta** (semuanya service, karena tidak ada `CHECK` yang dapat menyatakan "union semua band = 0..100"): (1) skala tujuan dipakai skala **prodi** bila ada (`grade_scales.owner_level='PROGRAM'`, §5 `RD-29`), kalau tidak ada maka skala kampus — konversi tidak boleh diam-diam memakai skala lain; (2) nilai sumber di-**skala-kan** lebih dulu ke 0..100 bila mitra memakai 0..4 atau 0..5 (`reference_items.kind='skala_mitra'` menyimpan pembaginya), **lalu** dibulatkan menurut `rounding_mode`; (3) band wajib **kontinu tanpa celah** dari 0 sampai 100 —service validasi menutup celah sebelum peta boleh di-`is_active`; (4) `EXCLUDE` di atas memakai `'[]'` (inklusif) sehingga dua band `[70,79]` dan `[80,90]` **boleh** berdampingan, tetapi `[70,80]` dan `[80,90]` ditolak — ini berbeda dari `grade_scale_bands` (§5) yang memakai `'[)'`, dan bedanya disengaja: sumber eksternal memberikan batas "70 sampai 79" secara inklusif, sedangkan band internal SICA separuh-terbuka. Perlu diketahui juga cacat lama §5: `max_score <= 100` dengan `'[)'` membuat angka **100** tidak tercakup band mana pun; perbaikan (§5) didaftarkan di §16.6, bukan ditambal di sini.
+
+```sql
+-- Konversi MBKM: satu kontrak satu mahasiswa → satu baris konversi + baris per pemetaan matakuliah.
+CREATE TABLE mbkm_conversions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  period_id uuid NOT NULL REFERENCES academic_periods(id),        -- periode TUJUAN pengakuan
+  source_period_id uuid REFERENCES academic_periods(id),
+  contract_id uuid NOT NULL,                       -- mbkm_contracts (0016); FK dipasang saat 0016 ditulis
+  mbkm_type mbkm_type NOT NULL,
+  external_pt_name text, external_program_code text, external_country text NOT NULL DEFAULT 'ID',
+  external_start_on date, external_end_on date,
+  sks_external numeric(4,1) NOT NULL CHECK (sks_external > 0),
+  sks_recognized numeric(4,1) NOT NULL CHECK (sks_recognized > 0 AND sks_recognized <= 24),  -- BR-R2 plafon nasional
+  status mbkm_conversion_status NOT NULL DEFAULT 'DRAFT',
+  requested_by uuid NOT NULL, requested_at timestamptz NOT NULL DEFAULT now(),
+  first_approved_by uuid, first_approved_at timestamptz, first_note text,
+  second_approved_by uuid, second_approved_at timestamptz, second_note text,
+  applied_at timestamptz, applied_op_id uuid REFERENCES queue_operations(id),
+  reversed_at timestamptz, reversed_by uuid, reversal_reason text,
+  evidence jsonb NOT NULL DEFAULT '[]'::jsonb,     -- [{attachment_id, digest}] — kontrak `attachments` (0020)
+  notes text, version int NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, contract_id, student_id), UNIQUE (tenant_id, id),
+  CHECK (external_end_on IS NULL OR external_start_on IS NULL OR external_end_on >= external_start_on),
+  CHECK (sks_recognized <= sks_external),
+  CHECK (first_approved_by IS NULL OR first_approved_by <> requested_by),
+  CHECK (second_approved_by IS NULL OR
+         (second_approved_by <> requested_by AND second_approved_by IS DISTINCT FROM first_approved_by)),
+  CHECK (first_approved_at IS NULL OR first_approved_by IS NOT NULL),
+  CHECK (second_approved_at IS NULL OR second_approved_by IS NOT NULL),
+  CHECK (status <> 'APPROVED' OR (first_approved_by IS NOT NULL AND second_approved_by IS NOT NULL
+         AND second_approved_at IS NOT NULL)),
+  CHECK (status <> 'APPLIED' OR (applied_at IS NOT NULL AND applied_op_id IS NOT NULL)),
+  CHECK (status <> 'REVERSED' OR (reversed_by IS NOT NULL AND length(COALESCE(reversal_reason,'')) >= 15))
+);
+CREATE INDEX idx_mbkm_conv_student ON mbkm_conversions(tenant_id, student_id, period_id, status);
+CREATE INDEX idx_mbkm_conv_pending ON mbkm_conversions(tenant_id, status, requested_at)
+  WHERE status IN ('SUBMITTED','APPROVED');
+
+-- Baris pemetaan: MK internal <-> MK/aktivitas eksternal + nilai + SKS diakui.
+CREATE TABLE mbkm_conversion_lines (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  conversion_id uuid NOT NULL,
+  student_id uuid NOT NULL REFERENCES students(id),        -- denormalisasi SAJA untuk indeks anti-dobel-hitung
+  period_id uuid NOT NULL REFERENCES academic_periods(id), -- denormalisasi, wajib sama dengan conversion
+  internal_course_id uuid NOT NULL REFERENCES courses(id),
+  internal_sks numeric(4,1) NOT NULL CHECK (internal_sks > 0),
+  external_course_code text NOT NULL, external_course_name text NOT NULL,
+  external_sks numeric(4,1) NOT NULL CHECK (external_sks > 0),
+  recognized_sks numeric(4,1) NOT NULL DEFAULT 0 CHECK (recognized_sks >= 0),
+  equivalency_id uuid REFERENCES course_equivalencies(id), -- §14.3; jalur RPL/pindah memakainya
+  source_grade text, source_kind score_value_kind,
+  mapped_letter text, mapped_point numeric(3,2),
+  grade_scale_id uuid REFERENCES grade_scales(id), mapping_id uuid REFERENCES mbkm_grade_mappings(id),
+  is_active boolean NOT NULL DEFAULT true, seq int NOT NULL DEFAULT 1,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, conversion_id, internal_course_id),
+  UNIQUE (tenant_id, conversion_id, external_course_code),
+  FOREIGN KEY (tenant_id, conversion_id) REFERENCES mbkm_conversions(tenant_id, id),
+  CHECK (recognized_sks <= external_sks),
+  CHECK (source_grade IS NULL OR source_kind IS NOT NULL),
+  CHECK (mapped_letter IS NULL OR (mapped_point IS NOT NULL AND grade_scale_id IS NOT NULL)),
+  CHECK (mapped_letter IS NULL OR mapping_id IS NOT NULL OR source_kind = 'LETTER')
+);
+-- GUARD IPK DOBEL-HITUNG (BR-G6): satu matakuliah internal hanya boleh diakui SATU kali per mahasiswa.
+CREATE UNIQUE INDEX uq_mbkm_no_double_count ON mbkm_conversion_lines
+  (tenant_id, student_id, internal_course_id) WHERE is_active AND recognized_sks > 0;
+CREATE INDEX idx_mbkm_lines_student ON mbkm_conversion_lines(tenant_id, student_id, period_id);
+```
+**Empat aturan yang harus ditulis sebagai keharusan, bukan pertanyaan:**
+1. **Denormalisasi `student_id`/`period_id` pada baris hanya ada untuk satu indeks** (`uq_mbkm_no_double_count`); keduanya **wajib** disamakan dengan induknya oleh pemicu, dan job reconcile membuktikan keduanya tidak pernah berbeda. Ini bukan gaya: tanpa denormalisasi, PostgreSQL tidak dapat membuat indeks unik parsial yang menyeberangi FK.
+2. **SKS diakui tidak dapat menghasilkan IPK dua kali.** Jalur `APPLIED` menulis **satu** hasil studi per matakuliah internal: baris pengakuan (di sini) **atau** enrollment+grade lokal, tidak keduanya. Karena `enrollments` ber-`UNIQUE (tenant_id, student_id, class_id)` (§5), matakuliah yang diakui lewat MBKM **tidak boleh** punya kelas internal di periode yang sama; service menolak combo itu dengan `MBKM_ALREADY_ENROLLED`. Untuk pengulangan matakuliah, yang berlaku adalah **BR-G6** + `enrollments.repeat_of_id` (`0016`, FR-AKA-29): attempt mana yang dihitung (pertama/terbaik/terakhir) dibaca dari **satu parameter** `academic_rules.params`, tidak pernah diimplisitkan ke urutan tanggal.
+3. **`recognized_sks` terhadap plafon SKS (BR-A2) — aturannya:** SKS yang diakui dari MBKM **tidak memakan plafon SKS periode berjalan** (`max_sks_by_ip`) untuk semester tempat mahasiswa **tidak** mengambil matakuliah lokal, karena pembatasan itu dibuat untuk beban belajar satu semester di kampus. Tetapi SKS diakui **selalu** dihitung ke `total_sks` kumulatif, ke denominator **IPK Kumulatif** bila ada nilainya, dan ke **plafon nasional 24 SKS/periode** (BR-R2) — `CHECK (sks_recognized <= 24)` di atas adalah gerbang DB-nya. Mahasiswa yang menjalani MBKM **di dalam** periode yang sama dengan matakuliah lokal: jumlah `local_sks + recognized_sks` dibatasi plafon band IPS periode itu; ini dihitung service dari `academic_rules.params` + baris `APPLIED`, dan hasilnya ditulis ke `semester_results.sks_semester` (bukan dikarang saat tampilan).
+4. **SoD dua penyetuju.** `requested_by`, `first_approved_by`, `second_approved_by` wajib tiga orang berbeda untuk konversi yang menyentuh nilai; `APPLIED` hanya boleh dieksekusi worker dengan `applied_op_id` (`queue_operations` `0030`), tidak pernah lewat tombol "simpan". Pembatalan = status `REVERSED` + baris baru bila ingin mengakui ulang; `is_active` baris lama dimatikan dalam transaksi yang sama sehingga indeks anti-dobel-hitung tetap konsisten.
+
+#### 16.2.3 Partisi, retensi, ukuran
+
+Semua tabel §16.2 **tidak dipartisi**: ukurannya ditentukan jumlah prodi × matakuliah × CPL (ratusan–ribuan baris per prodi), bukan volume transaksional, dan PK-nya tunggal `(id)` dengan FK berantai — syarat partisi RANGE tidak terpenuhi (§7). Yang menahan pertumbuhan adalah (a) satu `outcome_attainments` per `(outcome, scope_key)` yang berlaku (`is_current`), (b) retensi baris historis capaian **5 tahun** (kelas baru `outcome_attainment`, §16.5) karena akreditasi meminta tren, bukan seluruh riwayat hitung, dan (c) `mbkm_conversions` dipegang permanen selama menjadi dasar transkrip (BR-R12) — konversi adalah rekaman akademik, bukan log. Indeks selalu `tenant_id` di depan; tidak ada `INCLUDE` pada tabel tulis-berat karena tabel ini tulisnya sedikit-baca-banyak (`CREATE INDEX CONCURRENTLY` di produksi, §3.7).
+
+#### 16.2.4 Registrasi: sudah terdaftar vs objek baru
+
+| Objek | Status | Nomor |
+|---|---|---|
+| `graduation_profiles` | **baru** (Profil Lulusan belum pernah didaftarkan; `0014` hanya memuat CPL ke bawah) | `0032_obe_outcomes.sql` |
+| `program_outcomes`, `course_outcomes`, `outcome_sub_components`, `outcome_matrix`, `outcome_attainments` | **sudah terdaftar** di §14.7 baris A kurikulum/OBE; **DDL-nya baru ditulis sekarang** | tetap `0014_obe_curriculum.sql` |
+| `assessment_indicators` | **baru** (Indikator Asesmen tidak ada di daftar `0014`) | `0032` |
+| `learning_products`, `course_evaluation_plans` | **sudah terdaftar** di `0014`, **DDL masih belum ditulis** — bukan pekerjaan siklus ini | `0014` |
+| `mbkm_contracts`, `mbkm_logs`, `mbkm_programs` | **sudah terdaftar** di §14.7 baris C KRS/MBKM, **DDL masih belum ditulis**; `mbkm_conversions.contract_id` baru boleh menegakkan FK setelah keduanya ada | `0016_krs_mbkm.sql` |
+| `mbkm_conversions` | **sudah terdaftar** di `0016`; DDL ditulis di §16.2.2 | tetap `0016`, **dengan syarat** `0030` (`queue_operations`) lebih dulu ada karena `applied_op_id` menunjuknya |
+| `mbkm_conversion_lines`, `mbkm_grade_mappings` | **baru** | `0033_mbkm_conversion.sql` |
+| `grade_components`, `grade_scales`, `grade_scale_bands` | **sudah ada di kode** (`enrollments.ts`) — Item Penilaian tidak perlu tabel baru | tidak ada migrasi baru; hanya indeks unik tambahan `uq_grade_scale_bands_tenant_letter` di `0033` |
+| `course_equivalencies` | **sudah ada DDL-nya** di §14.3 (belum jadi kode) | `0010` |
+
+Alternatif yang **ditolak**: (i) **satu tabel `outcomes` dengan `parent_id` self-FK dan `level`** — ditolak, karena `bloom_level` hanya sah di CPMK/Sub-CPMK, `cqf_level` hanya sah di CPL, `target_pct` hanya sah di Indikator; menyatukannya menghasilkan enam kolom NULL per baris dan tidak ada `CHECK` yang bisa membedakan, lalu setiap query akreditasi harus menyaring `level` (indeks komposit membengkak). (ii) **`assessment_items` sebagai tabel baru** — ditolak: Item Penilaian **adalah** `grade_components` yang sudah hidup di kode (`enrollments.ts`) dan sudah ditunjuk `grade_component_scores` (`0018`); tabel kedua untuk fakta yang sama adalah defek `RD-06` dalam bentuk baru. (iii) **nilai konversi disimpan sebagai angka saja, huruf diturunkan saat tampilan** — ditolak, karena `grade_scale_bands` dapat berubah dan transkrip 20 tahun mendatang wajib menampilkan huruf yang sama (kewajiban arsip BR-R12, pola yang sama dengan `transcript_lines.course_name_at_issue`). (iv) **MBKM ditulis langsung ke `grades`** — ditolak; `grades.enrollment_id NOT NULL` dan enrollment lokal tidak ada, sehingga memaksanya berarti membuat kelas hantu. (v) **satu penyetuju saja** — ditolak oleh SoD (§14.9, `BR-K2`) dan oleh kenyataan bahwa konversi mengubah IPK.
+
+#### 16.2.5 Kenapa bentuknya begini
+
+Rantai outcome adalah **pohon dengan kedalaman tetap**, bukan graf bebas: setiap level punya kata benda yang berbeda di peraturan dan di layar Kaprodi, sehingga melonggarkan bentuknya menjadi satu tabel self-FK yang serba-umum akan memindahkan validasi dari skema ke setiap query. Karena itu FK ditulis berantai dan setiap level punya `code` unik dalam induknya — inilah yang membuat matriks akreditasi dapat dirender tanpa logika aplikasi. Bobot dibuat **persen di kolom bertipe** dan diverifikasi "jumlah = 100 per CPL" oleh service plus pemicu deferrable, sebab sebuah `CHECK` dalam satu baris tidak dapat menjumlah saudaranya; memilih jsonb untuk bobot akan membuatnya tidak ter-index dan tidak dapat dijumlah, padahal seluruh laporan capaian adalah query jumlah. Capaian dibuat tabel turunan ber-`is_current` dengan digest masukan karena pertanyaan akreditasi bukan "berapa angkanya" tetapi "angka ini dari data mana" — tanpa `inputs_digest`, capaian tidak dapat direplikasi saat assessor meminta. Di sisi MBKM, pemetaan dipaksa menjadi baris (bukan kolom tunggal di kepala konversi) karena satu kontrak magang dapat mengakui tiga matakuliah; dan anti-dobel-hitung dibuat indeks unik parsial di aras **mahasiswa**, bukan aras konversi, karena bahaya sebenarnya bukan duplikasi satu kontrak melainkan dua kontrak berbeda yang mengakui matakuliah internal yang sama — keadaan yang secara nyata menghasilkan IPK di atas 4,00 dan transkrip yang tidak dapat dilaporkan.
+
+---
+
+### 16.3 Gugus jejak audit insert-only dan enkripsi PII (UU PDP)
+
+Dua hal yang selama ini hanya berupa klaim. Pertama, `audit_logs` (§4) melindungi dirinya dengan `GRANT INSERT, SELECT` + pemicu, tetapi **perpindahan nilai** — peristiwa yang paling disengketakan di SIAKAD — tidak punya jejak khusus: `grade_corrections` (§5) menyimpan *permintaan*, bukan *perpindahan*, dan kolom `old_letter`/`new_letter` di dalamnya hanya satu pasang per baris sehingga koreksi berantai tidak dapat direkonstruksi. Kedua, enkripsi field dinormakan di SECURITY §3.7 dan GLOSSARY (blind index, AES-256-GCM envelope) dan dijanjikan oleh `students.personal_nik_encrypted` di §5, tetapi **tidak ada satu pun kolom terenkripsi di kode kecuali `mfa_factors.credential_encrypted`**, dan **sumber kuncinya tidak ada** (`TENANT_ENCRYPTION_MASTER_KEY` tidak ada di `apps/web/src/config/env.ts`, tercatat ENV_CONTRACT §6.3).
+
+#### 16.3.1 `grade_change_logs` — perpindahan nilai, insert-only, terpartisi
+
+```sql
+CREATE TYPE grade_change_reason_kind AS ENUM
+  ('DRAFT_TO_SUBMIT','SUBMIT','LOCK','UNLOCK','CORRECTION','RECOMPUTED',
+   'ADMIN_OVERRIDE','REPEATED_COURSE','MBKM_RECOGNITION','BLANK_RESET');
+
+-- INSERT-ONLY: TIDAK ada `updated_at`; baris tidak pernah diubah, tidak pernah dihapus.
+-- Terpartisi RANGE per bulan pada `occurred_at`; PRIMARY KEY wajib memuat partition key.
+CREATE TABLE grade_change_logs (
+  id            uuid NOT NULL,
+  tenant_id     uuid NOT NULL,                       -- tanpa FK: tetap tersimpan bila tenant diarsip (§4)
+  grade_id      uuid NOT NULL REFERENCES grades(id),
+  enrollment_id uuid NOT NULL REFERENCES enrollments(id),
+  period_id     uuid NOT NULL,
+  student_id    uuid NOT NULL,
+  class_id      uuid,
+  change_kind   grade_change_reason_kind NOT NULL,
+  before_letter text, after_letter text NOT NULL,    -- huruf SEBELUM dan SESUDAH; NULL saat pertama terisi
+  before_point  numeric(3,2), after_point  numeric(3,2) CHECK (after_point IS NULL OR after_point BETWEEN 0 AND 4),
+  before_raw    numeric(5,2), after_raw    numeric(5,2),
+  before_status grade_status, after_status grade_status NOT NULL,
+  scale_id uuid REFERENCES grade_scales(id),          -- skala yang berlaku saat huruf ditetapkan
+  correction_id uuid REFERENCES grade_corrections(id),
+  conversion_id uuid REFERENCES mbkm_conversions(id), -- 0016; NULL bila bukan jalur MBKM
+  op_id uuid REFERENCES queue_operations(id),         -- 0030; jalur asinkron/DPA batch
+  reason        text NOT NULL CHECK (length(reason) >= 15),
+  actor_user_id uuid NOT NULL,
+  approved_by   uuid,                                 -- pemegang `VALIDATE`; wajib orang kedua
+  request_id    uuid,
+  ip_hash bytea, user_agent_hash bytea,               -- SHA-256(ip || daily-pepper), bukan nilai mentah
+  occurred_at   timestamptz NOT NULL DEFAULT now(),
+  seq           int NOT NULL DEFAULT 1 CHECK (seq > 0),   -- urutan dalam satu grade
+  prev_hash     bytea,                                    -- 32 byte
+  hash          bytea NOT NULL,                           -- digest(prev_hash || kanonik(baris ini))
+  key_version   int,                                      -- versi kunci pembungkus (bila kolom PII ikut di-hash)
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (id, occurred_at),
+  UNIQUE (tenant_id, grade_id, seq, occurred_at),      -- partition key wajib ada di SETIAP unik (RD-21)
+  CHECK (approved_by IS NULL OR approved_by <> actor_user_id),   -- empat mata, tidak bisa dibalik
+  CHECK (change_kind NOT IN ('CORRECTION','ADMIN_OVERRIDE','MBKM_RECOGNITION','REPEATED_COURSE')
+         OR approved_by IS NOT NULL),                 -- perubahan isi nilai MUSTAHI punya penyetuju
+  CHECK (before_letter IS DISTINCT FROM after_letter
+         OR before_point IS DISTINCT FROM after_point
+         OR before_status IS DISTINCT FROM after_status
+         OR change_kind IN ('SUBMIT','LOCK','UNLOCK')),   -- tolak baris "tidak mengubah apa pun"
+  CHECK (after_status <> 'LOCKED' OR change_kind IN ('LOCK','SUBMIT','CORRECTION','RECOMPUTED','BLANK_RESET'))
+) PARTITION BY RANGE (occurred_at);
+
+CREATE TABLE grade_change_logs_2026_10 PARTITION OF grade_change_logs
+  FOR VALUES FROM ('2026-10-01') TO ('2026-11-01');
+-- partisi berikutnya dibuat job bulanan (lihat §16.3.3) — bukan dibiarkan sampai INSERT gagal.
+CREATE INDEX idx_gcl_tenant_time  ON grade_change_logs(tenant_id, occurred_at DESC);
+CREATE INDEX idx_gcl_grade        ON grade_change_logs(tenant_id, grade_id, seq);
+CREATE INDEX idx_gcl_student      ON grade_change_logs(tenant_id, student_id, occurred_at DESC);
+CREATE INDEX idx_gcl_period_kind  ON grade_change_logs(tenant_id, period_id, change_kind, occurred_at DESC);
+```
+Kolom yang sengaja **tidak** ada: `updated_at`, `is_deleted`, dan `current_flag`. Yang pertama dilarang oleh sifat tabel; yang kedua digantikan oleh `seq` (baris dengan `seq` terbesar = keadaan kini, dan keadaan kini juga tersimpan di `grades` sehingga tidak perlu disalin); yang ketiga tidak boleh ada karena "hapus" pada jejak nilai sama artinya dengan memusnahkan bukti.
+
+#### 16.3.2 `system_audit_trails` — event mesin, bukan jejak domain
+
+`audit_logs` (§4) menjawab "siapa mengubah data akademik apa". Ia **tidak** cocok untuk event mesin: login, perubahan izin, aktivasi modul, webhook, dan job Feeder tidak punya `before`/`after` baris domain, volumenya berbeda dua orden, dan pembacanya berbeda (SOIT/keamanan, bukan auditor akademik). Menumpuknya ke `audit_logs` membuat setiap agregat keamanan harus menyaring kolom domain yang selalu NULL, dan membuat retensi 24 bulan tidak dapat diterapkan tanpa menyeret rekaman akademik.
+
+```sql
+CREATE TYPE system_audit_event_kind AS ENUM
+  ('LOGIN','LOGOUT','LOGIN_FAIL','MFA_ENROLL','MFA_FAIL','TOKEN_REUSE','IMPERSONATION_START',
+   'IMPERSONATION_STOP','PERMISSION_CHANGE','ROLE_ASSIGNMENT_CHANGE','MODULE_ENABLE','MODULE_DISABLE',
+   'WEBHOOK_RECEIVED','WEBHOOK_REJECTED','FEEDER_JOB','FEEDER_TOKEN_NEGOTIATED','SCHEDULED_JOB',
+   'SCHEMA_MIGRATION','KEY_LIFECYCLE','EXPORT_MASSAL','QUOTA_EXCEEDED','RATE_LIMIT_BLOCKED');
+CREATE TYPE system_audit_severity AS ENUM ('INFO','WARN','CRITICAL');
+
+CREATE TABLE system_audit_trails (
+  id            uuid NOT NULL,
+  tenant_id     uuid,                                -- NULL = event lapisan platform; TIDAK terbaca tenant
+  event_kind    system_audit_event_kind NOT NULL,
+  severity      system_audit_severity NOT NULL DEFAULT 'INFO',
+  actor_user_id uuid,
+  actor_role_ctx jsonb,                              -- {assignmentId, roleCode, scope…} saat itu
+  subject_type  text,                                -- 'user' | 'role' | 'tenant_module' | 'bridge' | 'job'
+  subject_id    uuid,
+  module_code   text,                                -- kunci katalog `modules.code` (§12)
+  request_id    uuid,
+  session_id    uuid,
+  endpoint      text, http_method text,
+  response_status int CHECK (response_status IS NULL OR response_status BETWEEN 100 AND 599),
+  latency_ms    int CHECK (latency_ms IS NULL OR latency_ms >= 0),
+  ip_hash bytea, user_agent_hash bytea,
+  payload       jsonb NOT NULL DEFAULT '{}'::jsonb,  -- SUDAH TERREDOKSI: tanpa body mentah, tanpa PII, tanpa token
+  error_code    text,
+  occurred_at   timestamptz NOT NULL DEFAULT now(),
+  prev_hash     bytea, hash bytea NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (id, occurred_at),
+  UNIQUE (tenant_id, event_kind, request_id, occurred_at),
+  CHECK (event_kind <> 'IMPERSONATION_START' OR (actor_user_id IS NOT NULL AND subject_id IS NOT NULL)),
+  CHECK (severity = 'INFO' OR payload ? 'reason' OR error_code IS NOT NULL)  -- WARN/CRITICAL wajib beralasan
+) PARTITION BY RANGE (occurred_at);
+
+CREATE TABLE system_audit_trails_2026_10 PARTITION OF system_audit_trails
+  FOR VALUES FROM ('2026-10-01') TO ('2026-11-01');
+CREATE INDEX idx_sat_tenant_time ON system_audit_trails(tenant_id, occurred_at DESC);
+CREATE INDEX idx_sat_kind_time   ON system_audit_trails(tenant_id, event_kind, occurred_at DESC);
+CREATE INDEX idx_sat_subject     ON system_audit_trails(tenant_id, subject_type, subject_id);
+CREATE INDEX idx_sat_alert       ON system_audit_trails(tenant_id, severity, occurred_at DESC)
+  WHERE severity <> 'INFO';
+```
+> Baris `CHECK (severity = 'INFO' OR payload ? 'reason' …)` memakai operator keberadaan kunci JSONB `?` yang **sah** di PostgreSQL, tetapi ia hanya memastikan kuncinya ada, bukan isinya bermakna; pemeriksaan "alasan ≥ 15 karakter" tetap di service. Jangan menafsirkan CHECK ini sebagai validasi isi.
+
+**Pembagian tanggung jawab** (empat kolom, satu baris per aspek; dibaca berurutan):
+
+| Aspek | `audit_logs` (§4) | `system_audit_trails` (baru, `0034`) |
+|---|---|---|
+| Pertanyaan yang dijawab | "data akademik/keuangan apa berubah, sebelum dan sesudah bagaimana" | "apa yang terjadi pada sistem, siapa masuk, izin siapa berubah" |
+| Penulis | service domain, satu transaksi dengan perubahan (outbox §4) | middleware, worker, pemroses webhook, job terjadwal |
+| Granularitas | satu baris per perubahan baris domain (`target_entity`, `target_id`) | satu baris per kejadian mesin (boleh tanpa objek domain) |
+| Muatan | `before`/`after` jsonb ter-mask | `payload` jsonb **ter-redaksi**; tidak pernah body mentah |
+| Retensi | minimal 5 tahun (SOC2/ISO + audit kampus), ekspor storage immutable bulanan | 24 bulan di DB, 5 tahun bentuk agregat (kelas `audit_immutable`, §16.5) |
+| Pembaca utama | auditor akademik/keuangan, manajemen, sengketa nilai | SOIT, deteksi anomali, insiden (`ISSUE_RESOLUTION`), forensik login |
+| Tenant `NULL` | tidak boleh (satu baris selalu milik satu tenant) | boleh, untuk event platform; tidak pernah terbaca oleh tenant |
+| Insert-only | `GRANT INSERT, SELECT` + pemicu (§4) | `REVOKE UPDATE, DELETE` + policy SELECT-only + pemicu (§16.3.3) |
+| Rantai hash | per `(tenant, partisi)` lewat `audit_chain_head` | stream sendiri, kunci majemuk berversi stream (§16.3.3) |
+
+Yang **tidak** berubah: `audit_logs` tetap satu-satunya jejak perubahan data domain. `grade_change_logs` adalah perpanjangan khusus untuk kolom yang paling disengketakan, bukan pengganti; setiap perpindahan nilai tetap memancarkan satu baris `audit_logs` (`action = 'grade.change'`) yang `target_id`-nya menunjuk `grade_change_logs.id`.
+
+#### 16.3.3 Penegakan insert-only — dan peringatan jujurnya
+
+```sql
+-- (1) Dinding utama: HAK, bukan policy. Tanpa langkah ini, langkah (2) dan (3) tidak berarti.
+REVOKE UPDATE, DELETE, TRUNCATE ON grade_change_logs, system_audit_trails FROM sica_app;
+REVOKE ALL ON grade_change_logs, system_audit_trails FROM sica_readonly, sica_platform;
+GRANT  INSERT, SELECT ON grade_change_logs, system_audit_trails TO sica_app;
+-- Hak pada tabel INDUK berlaku untuk SELURUH partisi anak: jangan pernah GRANT per-partisi
+-- (itu sumber drift ketika partisi baru dibuat job bulanan).
+
+-- (2) Dinding pemisah tenant: policy BACA-saja + policy TULIS-terpisah.
+--     Dua objek ini TIDAK disentuh generator §6.2 (tabel induk partisi ber-`relkind 'p'`), jadi
+--     policy-nya ditulis eksplisit seperti `audit_logs`.
+ALTER TABLE grade_change_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE grade_change_logs FORCE  ROW LEVEL SECURITY;
+CREATE POLICY gcl_read ON grade_change_logs AS PERMISSIVE FOR SELECT TO sica_app
+  USING (tenant_id = app.tenant_id());
+CREATE POLICY gcl_insert ON grade_change_logs AS PERMISSIVE FOR INSERT TO sica_app
+  WITH CHECK (tenant_id = app.tenant_id());
+-- Tidak ada policy UPDATE/DELETE: PostgreSQL menuntut izin UPDATE/DELETE lebih dulu, dan
+-- izin itu sudah dicabut di (1); policy tambahan tidak akan pernah memberi hak yang tidak ada.
+
+ALTER TABLE system_audit_trails ENABLE ROW LEVEL SECURITY;
+ALTER TABLE system_audit_trails FORCE  ROW LEVEL SECURITY;
+CREATE POLICY sat_read ON system_audit_trails AS PERMISSIVE FOR SELECT TO sica_app
+  USING (tenant_id = app.tenant_id());              -- baris ber-tenant NULL tidak terlihat
+CREATE POLICY sat_insert ON system_audit_trails AS PERMISSIVE FOR INSERT TO sica_app
+  WITH CHECK (tenant_id = app.tenant_id());
+CREATE POLICY sat_platform_read ON system_audit_trails AS PERMISSIVE FOR SELECT TO sica_platform
+  USING (true);
+CREATE POLICY sat_platform_insert ON system_audit_trails AS PERMISSIVE FOR INSERT TO sica_platform
+  WITH CHECK (true);                                 -- event lapis platform boleh ber-tenant NULL
+
+-- (3) Dinding terakhir untuk peran yang kebal (owner migrasi, CI, `BYPASSRLS`): pemicu.
+CREATE OR REPLACE FUNCTION app.reject_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION '% is insert-only: % is not permitted on %', TG_TABLE_NAME, TG_OP, TG_TABLE_NAME
+    USING ERRCODE = 'insufficient_privilege';
+END $$;
+CREATE TRIGGER trg_gcl_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON grade_change_logs
+  FOR EACH STATEMENT EXECUTE FUNCTION app.reject_mutation();
+CREATE TRIGGER trg_sat_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON system_audit_trails
+  FOR EACH STATEMENT EXECUTE FUNCTION app.reject_mutation();
+```
+**Peringatan yang tidak boleh dihilangkan dari dokumen ini:** *RLS policy saja tidak cukup untuk melarang UPDATE.* Tiga alasan konkret: (a) policy `tenant_isolation` bentuk `FOR ALL` (§6.2) **mengizinkan** UPDATE selama `tenant_id` cocok — memisah-misah policy (`FOR SELECT`, `FOR INSERT`) adalah satu-satunya cara policy ikut membatasi aksi, dan itu pun hanya menyaring baris, bukan memberi hak; (b) pemeriksaan **hak berjalan sebelum RLS**, sehingga peran yang punya `UPDATE` akan lolos ke evaluasi policy dan peran yang tidak punya akan menolak dengan `permission denied` — artinya **yang bekerja adalah `REVOKE`**, dan policy hanyalah dinding kedua; (c) peran **superuser dan `BYPASSRLS`** (`sica_owner` di §6.3) tidak tertahan oleh keduanya: hanya pemicu yang menghentikan mereka, dan pemicu pun **tidak** berjalan ketika seseorang memuat-ulang tabel atau memainkan WAL. Karena itu kalimat yang jujur adalah: *jejak ini tahan terhadap kelalaian aplikasi dan terhadap admin yang lalai, tetapi tidak tahan terhadap orang yang memegang kredensial `sica_owner` atau superuser DB.* Penutup celah itu bukan DDL, melainkan operasi: kredensial `sica_owner` hanya ada di pipeline (SECURITY §5), tidak ada di runtime, dan salinan luar yang tak dapat diubah (ekspor storage immutable/WORM) adalah bukti yang dituju — bukan `CHECK` di kolom.
+
+**Rantai hash lintas stream.** `audit_chain_head` (§4) hari ini berkey `(tenant_id, partition_start)`; tiga tabel berantai tidak dapat berbagi satu kepala tanpa saling memblokir. Expand yang sah:
+```sql
+ALTER TABLE audit_chain_head ADD COLUMN stream text NOT NULL DEFAULT 'audit_logs'
+  CHECK (stream IN ('audit_logs','grade_change_logs','system_audit_trails'));
+ALTER TABLE audit_chain_head DROP CONSTRAINT audit_chain_head_pkey;
+ALTER TABLE audit_chain_head ADD PRIMARY KEY (tenant_id, partition_start, stream);
+```
+Satu baris kepala per `(tenant, partisi, stream)`, dikunci `SELECT … FOR UPDATE` saat menulis — perhitungan hash tetap **tidak** dilakukan di pemicu naif (alasan dan bentuk benar sudah ditulis di §4).
+
+**Partisi dan operasi.** Partisi bulan berikutnya **wajib** dibuat sebelum bulan berjalan + 1 (job terjadwal, satu runbook untuk tiga tabel terpartisi). Kalau partisi habis, `INSERT` gagal dengan `no partition of relation … found for row` — artinya kehabisan partisi adalah **insiden ketersediaan**, bukan senyap. `MIGRATION_SOP` dan `DEPLOYMENT_DEVOPS` memiliki kewenangan atas runbook itu (dicatat di §16.6). Retensi partisi tua dilakukan dengan `DETACH PARTITION` lalu ekspor, **bukan** `DROP` langsung, karena §7 melarang memusnahkan rekaman tanpa JRA. Tidak ada FK yang **menuju** dua tabel terpartisi ini (hanya dari keduanya), sehingga syarat partisi §7 tetap terpenuhi dan tidak melahirkan defek baru.
+
+#### 16.3.4 Enkripsi field: bentuk amplop, kunci, dan blind index
+
+**Format amplop (satu-satunya; kolom `bytea`):**
+`v(1 byte = 0x01) || key_version(2 byte big-endian) || iv(12 byte) || ciphertext(n) || tag(16 byte)`
+Panjang total = `31 + n`. AES-256-GCM (authenticated): tag 16 byte bukan tambahan, ia yang membuat ubahan terdeteksi (GLOSSARY AES-256-GCM). IV **unik per enkripsi** — memakai ulang IV dengan kunci yang sama = kebocoran plaintext. `key_version` disimpan **di dalam** amplop sehingga setiap baris dapat melaporkan kunci pembuatnya tanpa kolom pendamping, dan rekey dapat diaudit dengan query (`app.enc_key_version(col) <> aktif`). Contoh terukur: NIK 16 digit → `octet_length = 47`; nomor HP 20 digit → `51`; CHECK memakai **batas bawah 31** (bukan panjang tetap) agar kolom tetap dapat menampung nilai yang panjangnya bervariasi.
+
+```sql
+CREATE OR REPLACE FUNCTION app.enc_key_version(blob bytea) RETURNS int
+LANGUAGE sql IMMUTABLE AS
+$$ SELECT CASE WHEN blob IS NULL OR octet_length(blob) < 31 THEN NULL
+               ELSE ('x' || encode(substring(blob from 2 for 2),'hex'))::bit(16)::int END $$;
+```
+**Dua kunci per tenant, tidak boleh satu:** DEK (AES-256, untuk enkripsi) dan kunci HMAC (untuk blind index). Memakai satu kunci untuk keduanya membuat indeks dapat membalik plaintext dan sebaliknya. Master key tidak pernah masuk basis data: `wrapped_key` adalah DEK/HMAC yang dibungkus master key di **KMS/HSM**; kolom `master_key_ref` hanya menyimpan *referensi* (key id/alias), bukan bahan kunci.
+
+```sql
+CREATE TYPE tenant_key_state AS ENUM ('ACTIVE','LEGIBLE','RETIRED','REVOKED','COMPROMISED');
+
+CREATE TABLE tenant_encryption_keys (
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  key_version    int NOT NULL CHECK (key_version >= 1),
+  purpose        text NOT NULL CHECK (purpose IN ('FIELD_ENCRYPTION','BLIND_INDEX','TRANSIT')),
+  wrapped_key    bytea NOT NULL,                     -- DEK/HMAC terbungkus; TIDAK pernah plaintext
+  algorithm      text NOT NULL DEFAULT 'AES-256-GCM' CHECK (algorithm IN ('AES-256-GCM','HMAC-SHA256')),
+  kms_envelope_digest char(64),                      -- digest amplop KMS, untuk membuktikan bahan yang sama
+  state          tenant_key_state NOT NULL DEFAULT 'ACTIVE',
+  created_at     timestamptz NOT NULL DEFAULT now(), created_by uuid NOT NULL,
+  activated_at   timestamptz, retired_at timestamptz, revoked_at timestamptz,
+  rotated_from   int CHECK (rotated_from IS NULL OR rotated_from < key_version),
+  notes          text,
+  PRIMARY KEY (tenant_id, key_version),
+  CHECK (algorithm = 'AES-256-GCM' OR purpose = 'BLIND_INDEX'),
+  CHECK (state <> 'LEGIBLE' OR retired_at IS NOT NULL),
+  CHECK (state NOT IN ('RETIRED','REVOKED','COMPROMISED') OR retired_at IS NOT NULL
+         OR revoked_at IS NOT NULL)
+);
+-- Hanya SATU kunci boleh ditulis per tujuan per tenant: inilah yang membuat `app.enc_key_version`
+-- punya jawaban tunggal dan membuat rotasi tidak dapat dua-duanya "aktif".
+CREATE UNIQUE INDEX uq_tenant_key_active ON tenant_encryption_keys(tenant_id, purpose)
+  WHERE state = 'ACTIVE';
+
+-- Jejak lifecycle kunci: INSERT-only, partisi tahunan (volume kecil, retensi panjang).
+CREATE TABLE encryption_key_events (
+  id           uuid NOT NULL,
+  tenant_id    uuid NOT NULL,
+  key_version  int NOT NULL,
+  event_kind   text NOT NULL CHECK (event_kind IN
+                 ('CREATED','ACTIVATED','ROTATED','RETIRED','REVOKED','COMPROMISED',
+                  'REENCRYPT_BATCH','DECRYPT_DENIED','BLIND_INDEX_REBUILT')),
+  actor_user_id uuid, op_id uuid, rows_affected int CHECK (rows_affected IS NULL OR rows_affected >= 0),
+  batch_cursor text,                       -- titik lanjut re-encrypt yang dapat di-resume
+  reason text, occurred_at timestamptz NOT NULL DEFAULT now(),
+  hash bytea NOT NULL,
+  PRIMARY KEY (id, occurred_at)
+) PARTITION BY RANGE (occurred_at);
+CREATE INDEX idx_key_events_tenant ON encryption_key_events(tenant_id, occurred_at DESC);
+CREATE INDEX idx_key_events_batch  ON encryption_key_events(tenant_id, key_version, event_kind);
+```
+**Kolom target dan bentuknya.** Daftar ini adalah kontrak bagian ini; **tidak ada satu pun** di antaranya yang ada di kode hari ini (diukur: `users.phone` `auth.ts:18`, `students.mobile_phone` `classes.ts:53`, `lecturers.mobile_phone` `people.ts:66`, `staff.mobile_phone` `people.ts:106`, `student_guardians.phone` `people.ts:165` semuanya `text` polos; `sessions.ip_hash`/`user_agent_hash` `text` di kode vs `bytea` di §3; `students.personal_nik_encrypted` ada **di dokumen saja**):
+
+| Field target | Kolom cipher baru | Blind index | Rumah kolom | Catatan |
+|---|---|---|---|---|
+| NIK mahasiswa | `students.personal_nik_encrypted bytea` | `personal_nik_bidx char(64)` | §5 | sudah ditulis di §5; **belum pernah dibuat di kode** — kolom cipher dan indeksnya lahir bersama di `0035` |
+| Nama ibu kandung (kunci DUKCAPIL) | `students.mother_name_encrypted bytea` | `mother_name_bidx char(64)` | §5 | dibaca `FEEDER_DUKCAPIL_MISMATCH` lewat pasangan bidx, tanpa membuka plaintext (§14.5 aturan 3) |
+| HP mahasiswa | `students.mobile_phone_encrypted bytea` | `mobile_phone_bidx char(64)` | §11.2 | kolom lama `students.mobile_phone text` di-depresikan lewat Expand-and-Contract |
+| HP akun | `users.phone_encrypted bytea` | `phone_bidx char(64)` | §3 | `users` global tanpa `tenant_id`: indeks **tidak unik** (nomor rumah/kantor dapat sama) |
+| HP dosen | `lecturers.mobile_phone_encrypted bytea` | `mobile_phone_bidx char(64)` | §11.3 | lookup BKD/SISTER tetap dapat dilakukan lewat bidx |
+| HP tendik | `staff.mobile_phone_encrypted bytea` | `mobile_phone_bidx char(64)` | §11.3 | sama |
+| HP ortu/wali | `student_guardians.phone_encrypted bytea` | `phone_bidx char(64)` | §11.2 | tidak unik (satu nomor untuk banyak anak dalam satu keluarga) |
+| Nomor rekening | `student_bank_accounts.account_number_encrypted bytea` | `account_number_bidx char(64)` | **baru** `0035` | objeknya **belum ada di mana pun** (diukur: tidak ada kolom `bank`/`rekening` di kode maupun dokumen) — dibuat di bagian ini karena pengembalian dana dan beasiswa membutuhkannya |
+| Nilai saat transit | `pddikti_staging_nilai.canonical_payload_encrypted bytea` (§16.4.3), `queue_operations.result_encrypted` (§16.1.4), `grade_change_logs` lewat hash amplop | tidak ada | `0031`/`0030` | nilai tidak pernah keluar dari DB dalam bentuk terbaca pada jalur antrean/kirim |
+
+```sql
+CREATE TABLE student_bank_accounts (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  owner_kind text NOT NULL DEFAULT 'STUDENT' CHECK (owner_kind IN ('STUDENT','GUARDIAN')),
+  guardian_id uuid REFERENCES student_guardians(id),
+  bank_code text NOT NULL, bank_name text NOT NULL,
+  account_number_encrypted bytea NOT NULL,
+  account_number_bidx char(64) NOT NULL,
+  account_holder_name text NOT NULL,
+  purpose text NOT NULL CHECK (purpose IN ('REFUND','SCHOLARSHIP','STIPEND','TUITION_DIRECT')),
+  is_default boolean NOT NULL DEFAULT false,
+  verified_by uuid, verified_at timestamptz,          -- rekening harus diverifikasi sebelum refund
+  state text NOT NULL DEFAULT 'ACTIVE' CHECK (state IN ('ACTIVE','SUSPENDED','CLOSED')),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (octet_length(account_number_encrypted) >= 31),
+  CHECK (account_holder_name NOT SIMILAR TO '[0-9 ]+'),   -- mencegah nomor masuk ke kolom nama
+  UNIQUE (tenant_id, account_number_bidx),                -- satu rekening tidak boleh dua pemilik di satu kampus
+  UNIQUE (tenant_id, student_id, bank_code, account_number_bidx)
+);
+CREATE INDEX idx_bank_accounts_student ON student_bank_accounts(tenant_id, student_id, state);
+CREATE INDEX idx_bank_accounts_default ON student_bank_accounts(tenant_id, student_id) WHERE is_default;
+```
+**Blind index: cara kerja dan batas jujurnya.** `*_bidx char(64)` = hex HMAC-SHA-256 atas plaintext ternormalisasi, dengan kunci `purpose='BLIND_INDEX'` tenant itu, dihitung **di aplikasi** (`node:crypto`), bukan di SQL: mengirim kunci HMAC lewat GUC/parameter berarti kunci muncul di `pg_stat_statements` dan log pernyataan. Normalisasi wajib sebelum HMAC (pangkas spasi, lowercase untuk email, `+62` → `628` untuk nomor Indonesia) — dua normalisasi berbeda menghasilkan dua indeks berbeda dan pencarian gagal **senyap**. Konsekuensi yang harus diterima: bidx membocorkan **kesamaan** (dua baris dengan NIK sama dapat dikenali tanpa membuka), jadi ia tidak aman terhadap serangan kamus — untuk NIK, ruang kandidatnya kecil dan terstruktur, sehingga indeks ini **bukan** pengganti pembatasan akses; ia alat cari. Karena itu: keunikan hanya dipasang tempat plaintext-nya memang unik per tenant (`uq_students_nik_bidx`, `UNIQUE (tenant_id, account_number_bidx)`), dan tidak pernah di tempat yang boleh berulang (`users.phone_bidx`, `student_guardians.phone_bidx`, `lecturers.mobile_phone_bidx` = indeks biasa).
+```sql
+CREATE UNIQUE INDEX uq_students_nik_bidx ON students(tenant_id, personal_nik_bidx)
+  WHERE personal_nik_bidx IS NOT NULL;
+CREATE INDEX idx_students_phone_bidx ON students(tenant_id, mobile_phone_bidx)
+  WHERE mobile_phone_bidx IS NOT NULL;
+CREATE INDEX idx_guardians_phone_bidx ON student_guardians(tenant_id, phone_bidx)
+  WHERE phone_bidx IS NOT NULL;
+CREATE INDEX idx_users_phone_bidx ON users(phone_bidx) WHERE phone_bidx IS NOT NULL;
+-- Pasangan pencocokan DUKCAPIL (NIK + nama ibu) dicari lewat dua bidx sekaligus, tanpa decrypt:
+CREATE INDEX idx_students_dukcapil ON students(personal_nik_bidx, mother_name_bidx)
+  WHERE personal_nik_bidx IS NOT NULL AND mother_name_bidx IS NOT NULL;
+```
+Indeks `idx_students_dukcapil` **sengaja tidak dimulai dengan `tenant_id`**: ia melayani pencocokan lintas-tenant oleh jalur verifikasi nasional yang berjalan sebagai `sica_platform` (§6.3), dan §3.7 melarang indeks domain tanpa tenant di depan **untuk query domain** — pengecualian ini harus tercatat, bukan diam-diam.
+
+#### 16.3.5 Mask format per peran dan kontrol ekspor massal
+
+Mask diterapkan pada **proyeksi server** (§14.9 butir 2), bukan di React/Flutter dan bukan sebagai kolom hasil. Kolom mask **tidak pernah disimpan** di DB: menyimpan mask berarti suatu saat orang akan membacanya sebagai data. Aturan hidup di `FIELD_RULES` (`packages/contracts/src/authz.ts`).
+
+| Field | Peran yang berhak penuh | Peran lain melihat | Dasar |
+|---|---|---|---|
+| NIK | `ADMIN_ACADEMIC` (verifikasi DUKCAPIL), `Compliance Officer` | `3201••••••••1234` (4 awal + 4 akhir) | §14.9, UU PDP data spesifik |
+| Nama ibu kandung | tidak ada peran read-display; hanya pencocokan bidx | `••••••` (tidak pernah ditampilkan, bahkan ke Kaprodi) | §14.5 aturan 3 |
+| Nomor HP | dosen wali & admin akademik untuk kelasnya (`X:assigned`) | `+62 812•••4567` | BR-K4, scope `CLASS`/`PERIOD` |
+| Nomor rekening | `ADMIN_FINANCE` dan `TREASURER` saat pencairan | tidak pernah — peran lain menerima boolean "rekening terverifikasi/tidak" | SoD BAAK↔BAUK, §14.9 butir 5 |
+| Alamat dan koordinat | admin surat-menyurat, cetak ijazah | provinsi/kota saja; `latitude/longitude` **tidak pernah** keluar (hanya `distance_meters`) | §11.4, BENCH-81 |
+| Nominal keuangan | peran keuangan | boolean "tertahan/tidak" + sebab | §14.9, `invoices` |
+| Nilai saat transit | peran akademik berhak | `letter`/`point` penuh hanya dari `grades`; angka mentah `raw_score` lewat beralasan | `grade_change_logs` |
+
+**Ekspor massal tidak pernah menghasilkan plaintext.** Penegakannya bukan ajimat "jangan", melainkan objek kerja:
+```sql
+CREATE TYPE bulk_export_state AS ENUM
+  ('REQUESTED','APPROVED','REJECTED','RUNNING','DELIVERED','EXPIRED','FAILED');
+
+CREATE TABLE bulk_export_requests (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  requested_by uuid NOT NULL, requested_at timestamptz NOT NULL DEFAULT now(),
+  kind text NOT NULL CHECK (kind IN
+    ('STUDENT_MASTER','TRANSCRIPT_BATCH','GRADE_BATCH','FEEDER_MANIFEST','ATTENDANCE_RECAP','PII_ACCESS')),
+  scope jsonb NOT NULL,                       -- {period_id, program_id, class_ids, entry_year} — dibatasi, bukan "semua"
+  pii_level text NOT NULL DEFAULT 'MASKED' CHECK (pii_level IN ('NONE','MASKED','PSEUDONYMISED')),
+  row_limit int NOT NULL DEFAULT 5000 CHECK (row_limit BETWEEN 1 AND 200000),
+  format text NOT NULL DEFAULT 'XLSX' CHECK (format IN ('XLSX','CSV','PDF','JSONL')),
+  reason text NOT NULL CHECK (length(reason) >= 20),
+  legal_basis text NOT NULL CHECK (legal_basis IN ('LEGAL_OBLIGATION','CONTRACT','CONSENT','VITAL_INTEREST')),
+  dsr_id uuid,                                -- jalur hak subjek (UU PDP Ps 6–12) memakai `dsr_requests`
+  state bulk_export_state NOT NULL DEFAULT 'REQUESTED',
+  approved_by uuid, approved_at timestamptz, reject_reason text,
+  op_id uuid REFERENCES queue_operations(id),
+  row_count int CHECK (row_count IS NULL OR row_count >= 0),
+  file_digest char(64), attachment_id uuid,   -- berkas hasil lewat kontrak `attachments` (0020)
+  expires_at timestamptz NOT NULL,            -- presigned URL berumur pendek; tidak ada unduhan permanen
+  delivered_to uuid,                          -- wajib = requested_by
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),          -- SoD ekspor
+  CHECK (pii_level <> 'PSEUDONYMISED' OR (approved_by IS NOT NULL AND legal_basis <> 'CONSENT')),
+  CHECK (state <> 'DELIVERED' OR (file_digest IS NOT NULL AND delivered_to = requested_by)),
+  CHECK (state <> 'REJECTED' OR reject_reason IS NOT NULL),
+  CHECK (state <> 'RUNNING' OR op_id IS NOT NULL),
+  CHECK (expires_at > requested_at)
+);
+CREATE INDEX idx_export_open ON bulk_export_requests(tenant_id, state, requested_at)
+  WHERE state IN ('REQUESTED','APPROVED','RUNNING');
+```
+Aturan ekspor yang mengikat: (1) **`pii_level='MASKED'` adalah default dan satu-satunya** untuk peran non-keuangan/non-akademik-berhak; tidak ada nilai `'PLAIN'` di kosakata ini — permintaan plaintext **naik ke jalur `PII_ACCESS`** yang menuntut `dsr_id` atau kewajiban hukum, MFA, dan penyetuju kedua; (2) hasil ekspor ditulis ke storage melalui `attachments` dengan `expires_at` pendek dan **nama berkas tidak pernah** memuat NIK/NIM penuh (pola sanitasi `storage_key` §14.7 `0020`); (3) setiap ekspor massal menulis **satu** baris `system_audit_trails` (`event_kind='EXPORT_MASSAL'`, `severity='WARN'`) — tidak hanya `audit_logs`, karena deteksinya milik SOIT; (4) `row_limit` di atas 50 ribu memicu `WARN` dan penyetuju kedua; (5) `queue_operations` menyimpan hasilnya di `result_encrypted`, tidak di `result`.
+
+#### 16.3.6 Prosedur rekey dan rotasi kunci
+
+1. **Pemicu.** Rotasi terjadwal **tahunan** (SECURITY §3.7) atau segera setelah insiden. Aksi `OTHER` di layar Admin Keamanan, **wajib MFA**, satu tenant per eksekusi.
+2. **Tulis kunci baru.** `INSERT tenant_encryption_keys (key_version = aktif+1, state='ACTIVE')` lalu pindahkan lama ke `LEGIBLE` **dalam transaksi yang sama** — `uq_tenant_key_active` menjamin tidak pernah ada dua ACTIVE; jika transaksinya gagal, keadaannya tetap satu dan dapat dijelaskan.
+3. **Potong-potong.** `POST /admin/keamanan/kunci-rotasi` menghasilkan `queue_operations (kind='PII_REENCRYPT')`; worker membaca baris ber-`app.enc_key_version(col) <> aktif`, membuka dengan `LEGIBLE`, menutup dengan ACTIVE, menulis batch per 500 baris di **Primary**, tiap batch menyelesaikan satu `encryption_key_events ('REENCRYPT_BATCH', rows_affected, batch_cursor)`. Job dapat di-**resume** dari cursor terakhir; seluruh jalur idempoten karena baris yang sudah berversi baru dilewati.
+4. **Buta indeks ikut.** Blind index **tidak dapat** dihitung ulang tanpa plaintext, karena itu rotasi `purpose='BLIND_INDEX'` selalu **satu paket** dengan re-encryption penuh. Selama transisi, kolom `*_bidx_next char(64)` diisi (Expand), indeks unik dibuat padanya, lalu **rename** dan kolom lama dibuang pada rilis berikutnya (Contract). Tidak ada keadaan "dua bidx unik paralel" pada tabel besar — biaya indeksnya nyata dan dapat memicu penulisan ganda per baris.
+5. **Tutup.** Setelah `COUNT(...) WHERE app.enc_key_version(col) <> aktif = 0` untuk semua tabel target (query §8 nomor 9), `LEGIBLE` → `RETIRED`; bahan kunci lama **tidak dimusnahkan** selama masih ada backup yang membutuhkannya (retensi `encryption_key_audit`).
+6. **Kompromi.** `state='COMPROMISED'` + `revoked_at` + satu baris `system_audit_trails` `severity='CRITICAL'`. Data yang hanya dapat dibuka DEK itu praktis musnah (*crypto-shredding*) — keadaan ini juga adalah jalan pemusnahan yang sah menurut UU PDP Ps 38, sehingga keputusan "apa yang harus bisa dimusnahkan" harus dibuat **sebelum** kunci dibuat, bukan sesudah insiden. Pemberitahuan tertulis ke DPO dan subjek paling lambat **3×24 jam** (UU PDP Ps 34).
+7. **Prasyarat yang belum ada.** `TENANT_ENCRYPTION_MASTER_KEY` **tidak ada** di `apps/web/src/config/env.ts` (diukur: yang ada hanya `JWT_*_KEY`, `MIDTRANS_*`, `XENDIT_SECRET_KEY`, `RESEND_API_KEY`, `STORAGE_*`). ENV_CONTRACT §6.3 sudah mencatat bahwa ketiadaan variabel ini **memblokir** klaim enkripsi §5. Konsekuensi bagian ini: seluruh gugus §16.3 **tidak boleh** diklaim "siap" sebelum (a) variabel + skema validasinya masuk `env.ts` dan ENV_CONTRACT §2, (b) SDK KMS masuk sebagai dependensi nyata, (c) `argon2`/`pg`/`testcontainers` menyusul TECH_CONVENTIONS §6. Semuanya saya daftarkan di §16.6 sebagai kepemilikan dokumen lain.
+
+#### 16.3.7 Registrasi, yang ditolak, dan kenapa bentuknya begini
+
+Objek **baru** siklus ini di `0034_audit_immutability.sql`: `grade_change_logs`, `system_audit_trails`, fungsi `app.reject_mutation()`, tiga policy eksplisit, ALTER `audit_chain_head`. Di `0035_pii_encryption.sql`: `tenant_encryption_keys`, `encryption_key_events`, `student_bank_accounts`, `bulk_export_requests`, fungsi `app.enc_key_version()`, seluruh kolom `*_encrypted`/`*_bidx` + indeksnya. Objek **lama yang disentuh** (bukan dibuat ulang): `audit_logs` (§4, tetap jejak domain), `audit_chain_head` (§4, ALTER kunci majemuk), `grade_corrections` (§5, `id`-nya kini ditunjuk `grade_change_logs.correction_id`), `students`/`users`/`lecturers`/`staff`/`student_guardians` (ALTER tambah kolom; blok `CREATE` masing-masing tetap satu di §3/§5/§11).
+
+Yang **ditolak**, dengan alasan:
+- **`pii_field_registry` sebagai tabel database** — ditolak. §14.9 butir 1 menormakan aturan field **hidup di kode** (`FIELD_RULES`), dan membuat tabel register berarti perubahan seed DB dapat membuka kolom PII — persis kegagalan yang ingin dicegah. Gantinya: CI memeriksa bahwa kolom berversi amplop `octet_length >= 31` dan bahwa setiap `*_bidx` punya pasangan `*_encrypted`.
+- **Enkripsi seluruh baris dengan satu kunci platform** — ditolak: tanpa DEK per tenant, satu kebocoran membuka semua tenant, dan crypto-shredding per tenant (jalur pemusnahan UU PDP) menjadi mustahil.
+- **`updated_at` di tabel jejak** — ditolak: kolom itu adalah undangan untuk mengedit, dan keberadaannya membuat pertanyaan "kapan ini diubah" tidak terjawab.
+- **Policy `FOR ALL` diwarisi dari generator §6.2 untuk dua tabel jejak** — ditolak, karena bentuk itu mengizinkan UPDATE selama `tenant_id` cocok (lihat §16.3.3). Generator §6.2 juga memang tidak menyentuhnya (`relkind 'p'`).
+- **Menyimpan nilai mentah di `outbox.payload` dan `queue_operations.result` untuk `GRADE_PUBLISH`** — ditolak; keduanya dibatasi id + digest (`payload` outbox) dan `result_encrypted` (queue), karena outbox dibaca worker lintas proses dan bisa tertahan di log.
+- **Satu tabel gabungan `all_audit_streams` dengan kolom `stream`** — ditolak: tiga pertanyaan berbeda (domain, nilai, mesin) punya retensi, pembaca, dan kebolehNULL-an `tenant_id` yang berbeda; menggabungkannya menghasilkan ratusan baris NULL per event dan memaksa satu retensi untuk tiga kewajiban hukum.
+
+Kenapa bentuknya begini: jejak perpindahan nilai adalah bukti hukum, dan bukti hukum hanya bernilai jika tidak dapat diubah dan dapat direkonstruksi — karena itu tabelnya terpartisi (volume), tanpa `updated_at` (tak dapat diedit), berrantai hash (tak dapat disisip diam-diam), dan menunjuk `correction_id`/`conversion_id`/`op_id` (rantai sebab-akibat sampai ke permintaannya, bukan cuma ke pelakunya). Pemisahan `system_audit_trails` dari `audit_logs` dibuat karena **pembacanya berbeda**: memaksa SOIT membaca tabel yang sama dengan auditor akademik berarti memberi keduanya akses ke kolom satu sama lain, yang justru melanggar prinsip need-to-know yang sedang ditegakkan. Di sisi PII, amplop self-describing (versi kunci di dalam ciphertext) dipilih karena rotasi kunci adalah operasi berjalan, bukan peristiwa satu hari: tanpa informasi itu di setiap baris, rekey tidak dapat divereksi progresnya dan "sudah dirotasi" menjadi klaim tanpa bukti. Blind index dipilih bukan karena ia kuat — ia tidak kuat terhadap serangan kamus untuk NIK — melainkan karena tanpa indeks deterministik, satu-satunya cara mencari mahasiswa lewat NIK adalah mendekripsi seluruh tenant di memori, yaitu kunci bocor demi kenyamanan. Dan ekspor massal dijadikan objek kerja ber-SoD karena "jangan ekspor plaintext" tidak pernah bisa ditegakkan sebagai kalimat; ia hanya bisa ditegakkan sebagai pintu yang punya penyetuju, alasan, jumlah baris, dan tanggal kedaluwarsa.
+
+---
+
+### 16.4 Gugus staging PDDikti (buffer sebelum kirim ke pangkalan nasional)
+
+Selama ini jalur kirim Feeder punya objek untuk **rekaman percobaan** (`pddikti_sync_runs`) dan objek untuk **temuan** (`pddikti_validation_findings`), tetapi tidak punya objek yang menyimpan **apa yang akan dikirim**. Tanpa buffer, "payload persis yang dikirim ke pusat" hanya bisa direkonstruksi dari kode packer — dan kode itu berubah. Gugus ini menutupnya. Rujukan bentuk kolom per aksi ambil dari [INTEGRATIONS §1.4](file:///c:/SICA/docs/INTEGRATIONS.md) (tabel "Objek × Checkpoint") dan dari temuan kamus §14.5.
+
+**Prasyarat eksekusi.** `0031` menunjuk `feeder_jobs` dan `feeder_identities` yang baru didaftarkan di `0028` (bentuk kolomnya tercatat di §14.7 baris G platform/feeder, **DDL-nya belum ditulis**). Jadi `0031` hanya boleh dieksekusi **setelah** `0028` ditulis dan dijalankan; tabel staging sendiri tidak butuh `0028` (tidak ada FK-nya ke objek itu), tetapi view keadaan (§16.4.4) membutuhkannya. Itu sebabnya `0031` dibagi dua bagian: **bagian A** (tabel, bisa jalan lebih dulu) dan **bagian B** (view + indeks rekonsiliasi, menunggu `0028`).
+
+**Empat aturan bentuk yang mengikat seluruh gugus ini:**
+1. **Append-only secara struktural.** Semua tabel `pddikti_staging_*`, `pddikti_payload_snapshots`, dan `pddikti_reconciliation_diffs` hanya menerima `INSERT` dari `sica_app` (`REVOKE UPDATE, DELETE` di §16.4.6). Tidak ada kolom `state` di baris staging: keadaan dihitung, bukan disimpan (§16.4.4). Konsekuensi yang diterima sadar: memperbaiki data berarti menulis **run baru**, bukan menambal run lama — dan itulah persis jejak yang diminta auditor pusat.
+2. **Tidak ada satu pun kolom `feeder_id` di staging.** Invariance **I-14** ("id pangkalan nasional hanya boleh terisi dari respons bridge") ditegakkan oleh **bentuk skema**, bukan oleh kedisiplinan: id pusat hanya hidup di `feeder_identities` (`0028`) dan di `pddikti_payload_snapshots.feeder_id_returned` (`0031`). Packer memutuskan `Insert` vs `Update` dengan membaca `feeder_identities` pada saat kirim, bukan dengan menyalin id ke baris staging.
+3. **Retensi snapshot** (`payload` + respons mentah): **730 hari** di basis data, lalu seluruh baris **dipindah utuh** ke storage objek (bucket retensi, `attachments.storage_key` pola §14.7 `0020`) dan **tidak pernah di-UPDATE untuk dipangkas** — memangkas dengan UPDATE pada tabel append-only adalah kontradiksi yang membuat revoke tidak berguna. Arsip per-run, bukan per-kolom.
+4. **PII tidak pernah plaintext di staging.** NIK, nomor HP, dan nama ibu kandung masuk sebagai kolom terenkripsi + blind index (§16.3.2); `canonical_payload` **dilarang** memuatnya (dijaga trigger, §16.4.2).
+
+#### 16.4.1 Kosakata
+
+```sql
+CREATE TYPE pddikti_domain AS ENUM
+  ('MAHASISWA','KURIKULUM','KELAS','KRS_AKM','NILAI','AKTIVITAS','KELUAR');
+-- Keadaan HASIL HITUNG ULANG (dipakai view + kontrak API; TIDAK pernah disimpan di baris staging):
+CREATE TYPE pddikti_staging_state AS ENUM
+  ('PREPARED','VALIDATED','BLOCKED','PACKED','PUSHED','ACKNOWLEDGED','REJECTED','SUPERSEDED');
+CREATE TYPE pddikti_reconciliation_decision AS ENUM
+  ('LOCAL_AS_BASE','CENTER_AS_BASE','NEEDS_PDM','DEFERRED');
+```
+Tujuh nilai `pddikti_domain` adalah satu tabel per domain kirim, dipetakan satu-satu ke baris "Objek × Checkpoint" INTEGRATIONS §1.4: MAHASISWA (biodata/CP1), KURIKULUM (matakuliah/CP1), KELAS (kelas + komponen evaluasi/CP1), KRS_AKM (perkuliahan dan status AKM per periode/CP1+CP2), NILAI (CP2), AKTIVITAS (aktivitas mahasiswa dan MBKM/CP2), KELUAR (lulus, DO, putus, pindah/CP2). **KARDINALITAS TETAP TUJUH**: domain baru = `ALTER TYPE … ADD VALUE` + satu tabel staging baru + satu kontrak Zod; tidak ada domain yang "dititipkan" ke tabel lain, karena penolakan pusat datang per record, bukan per berkas.
+
+#### 16.4.2 Kolom yang sama di semua tabel staging
+
+Setiap tabel staging punya **kerangka identik** — inilah yang membuat satu layar "Antrean Kirim" dapat merender tujuh domain tanpa kode per domain:
+
+```sql
+-- Penolakan PII di dalam payload kanonik; dipakai oleh ketujuh tabel staging.
+CREATE OR REPLACE FUNCTION app.reject_pii_in_payload() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  banned constant text[] := ARRAY['nik','no_nik','nama_ibu','ibu_kandung','no_hp','handphone',
+                                  'telepon','no_rekening','nomor_rekening','no_kps_plaintext'];
+  k text;
+BEGIN
+  FOR k IN SELECT jsonb_object_keys(NEW.canonical_payload) LOOP
+    IF lower(k) = ANY (banned) THEN
+      RAISE EXCEPTION 'pddikti staging: kolom payload "%" dilarang memuat PII; pakai kolom terenkripsi tabel ini', k
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END LOOP;
+  RETURN NEW;
+END $$;
+```
+Kerangka (ditulis satu kali di sini, lalu **diulang apa adanya** di tiap blok tabel, karena aturan §1 menuntut satu tabel satu blok DDL yang berdiri sendiri): `id uuid PRIMARY KEY`, `tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE`, `run_id uuid NOT NULL REFERENCES pddikti_sync_runs(id)`, `record_key text NOT NULL` (kunci stabil `'<domain_kecil>:' || <id sumber>` — format yang sama dipakai `feeder_jobs.record_key`), domain-specific typed columns, `canonical_payload jsonb NOT NULL` (kecuali domain NILAI, §16.4.3), `payload_digest char(64) NOT NULL`, `packer_version int NOT NULL DEFAULT 1`, `source_updated_at timestamptz NOT NULL`, `created_at timestamptz NOT NULL DEFAULT now()`, `created_by uuid`, `UNIQUE (tenant_id, run_id, record_key)`, `CHECK (length(payload_digest) = 64)`, indeks `idx_<tabel>_(tenant_id, run_id, record_key)` dan `idx_<tabel>_source(tenant_id, <id sumber>)`.
+
+> `payload_digest` dihitung atas **kanonikalisasi plaintext** (urutan kunci tetap, `jsonb` → teks UTF-8) **sebelum** enkripsi kolom PII. Karena itu keutuhan bukti dapat diverifikasi tanpa membuka isi yang dirahasiakan — dan karena HMAC/DEK tidak dibutuhkan untuk mencocokkan digest, petugas audit dapat bekerja di pembacaan `sica_readonly`.
+
+#### 16.4.3 Tujuh tabel domain kirim
+
+```sql
+-- (1) MAHASISWA — InsertBiodataMahasiswa / UpdateBiodataMahasiswa (CP1)
+CREATE TABLE pddikti_staging_mahasiswa (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES pddikti_sync_runs(id),
+  record_key text NOT NULL,
+  student_id uuid NOT NULL REFERENCES students(id),
+  nim text NOT NULL, person_name text NOT NULL,
+  sex_code text NOT NULL CHECK (sex_code IN ('L','P')),      -- kode PUSAT; enum internal tetap M/F (§14.5 aturan 1)
+  birth_date date, birth_place text,
+  religion_code text, nationality_code text NOT NULL DEFAULT '1',
+  province_code text, regency_code text, district_code text, village_code text, postal_code text,
+  entry_period_code text, study_program_code text, program_level_code text, entry_route_code text,
+  funding_code text, receives_kps boolean, entry_type_code text NOT NULL DEFAULT '1'
+    CHECK (entry_type_code IN ('1','2','3','4','5')),
+  recognized_sks numeric(4,1),
+  father_occupation_code text, father_income_code text,
+  mother_occupation_code text, mother_income_code text,
+  special_need_code text, nisn text,
+  nik_encrypted bytea, nik_bidx char(64),
+  phone_encrypted bytea, phone_bidx char(64),
+  mother_name_encrypted bytea, mother_name_bidx char(64),
+  contact_email citext, photo_digest char(64),
+  canonical_payload jsonb NOT NULL, payload_digest char(64) NOT NULL,
+  packer_version int NOT NULL DEFAULT 1, source_updated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), created_by uuid,
+  UNIQUE (tenant_id, run_id, record_key),
+  CHECK (entry_type_code = '1' OR recognized_sks IS NOT NULL),   -- pindah/RPL wajib sks_diakui; baru wajib kosong
+  CHECK (entry_type_code <> '1' OR recognized_sks IS NULL),
+  CHECK ((nik_encrypted IS NULL) = (nik_bidx IS NULL)),
+  CHECK ((phone_encrypted IS NULL) = (phone_bidx IS NULL)),
+  CHECK ((mother_name_encrypted IS NULL) = (mother_name_bidx IS NULL)),
+  CHECK (octet_length(nik_encrypted) IS NULL OR octet_length(nik_encrypted) = 47),  -- envelope §16.3.2 atas NIK 16 digit
+  CHECK (length(payload_digest) = 64)
+);
+CREATE INDEX idx_stag_mhs_run    ON pddikti_staging_mahasiswa(tenant_id, run_id, record_key);
+CREATE INDEX idx_stag_mhs_source ON pddikti_staging_mahasiswa(tenant_id, student_id);
+CREATE TRIGGER trg_stag_mhs_no_pii BEFORE INSERT OR UPDATE ON pddikti_staging_mahasiswa
+  FOR EACH ROW EXECUTE FUNCTION app.reject_pii_in_payload();
+
+-- (2) KURIKULUM — InsertMataKuliah (CP1); empat rincian SKS wajib Feeder (§11.4)
+CREATE TABLE pddikti_staging_kurikulum (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES pddikti_sync_runs(id),
+  record_key text NOT NULL,
+  course_id uuid NOT NULL REFERENCES courses(id),
+  curriculum_id uuid NOT NULL REFERENCES curricula(id),
+  course_code text NOT NULL, course_name text NOT NULL,
+  sks_total numeric(4,1) NOT NULL CHECK (sks_total BETWEEN 1 AND 9),   -- Feeder menolak 0 dan > 9 (AC-FDR-2)
+  sks_face_to_face numeric(4,1) CHECK (sks_face_to_face >= 0),
+  sks_practice numeric(4,1) CHECK (sks_practice >= 0),
+  sks_fieldwork numeric(4,1) CHECK (sks_fieldwork >= 0),
+  sks_simulation numeric(4,1) CHECK (sks_simulation >= 0),
+  course_kind_code text, course_group_code text,       -- id_jenis_mata_kuliah, id_kelompok_mata_kuliah (BENCH-132)
+  semester_offered int CHECK (semester_offered BETWEEN 1 AND 14),
+  language_code text NOT NULL DEFAULT 'ID', status_code text NOT NULL DEFAULT '1',
+  canonical_payload jsonb NOT NULL, payload_digest char(64) NOT NULL,
+  packer_version int NOT NULL DEFAULT 1, source_updated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), created_by uuid,
+  UNIQUE (tenant_id, run_id, record_key),
+  CHECK (sks_total = COALESCE(sks_face_to_face,0) + COALESCE(sks_practice,0)
+                      + COALESCE(sks_fieldwork,0) + COALESCE(sks_simulation,0)),
+  CHECK (length(payload_digest) = 64)
+);
+CREATE INDEX idx_stag_kur_run    ON pddikti_staging_kurikulum(tenant_id, run_id, record_key);
+CREATE INDEX idx_stag_kur_source ON pddikti_staging_kurikulum(tenant_id, course_id);
+CREATE TRIGGER trg_stag_kur_no_pii BEFORE INSERT OR UPDATE ON pddikti_staging_kurikulum
+  FOR EACH ROW EXECUTE FUNCTION app.reject_pii_in_payload();
+
+-- (3) KELAS — InsertKomponenEvaluasiKelas + kelas perkuliahan (CP1)
+CREATE TABLE pddikti_staging_kelas (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES pddikti_sync_runs(id),
+  record_key text NOT NULL,
+  class_id uuid NOT NULL REFERENCES classes(id),
+  class_seq text NOT NULL,                               -- no_urut kelas
+  course_code text NOT NULL, course_name text NOT NULL,
+  program_code text NOT NULL, study_period_code text NOT NULL,
+  sks_face_to_face numeric(4,1), sks_practice numeric(4,1),
+  sks_fieldwork numeric(4,1), sks_simulation numeric(4,1),
+  participant_count int NOT NULL CHECK (participant_count >= 0),
+  activity_kind_code text NOT NULL,                      -- id_aktif_kuliah
+  lecturer_list jsonb NOT NULL DEFAULT '[]'::jsonb,      -- [{nidn, job_code, sks_weight}] — BENCH-62
+  evaluation_plan jsonb NOT NULL DEFAULT '[]'::jsonb,    -- komponen + bobot; wajib ada (FEEDER_EVALUATION_PLAN_MISSING)
+  weight_sum_pct numeric(6,2) NOT NULL DEFAULT 0 CHECK (weight_sum_pct BETWEEN 0 AND 100),
+  canonical_payload jsonb NOT NULL, payload_digest char(64) NOT NULL,
+  packer_version int NOT NULL DEFAULT 1, source_updated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), created_by uuid,
+  UNIQUE (tenant_id, run_id, record_key),
+  CHECK (length(payload_digest) = 64)
+);
+```
+> `weight_sum_pct` **bukan** `GENERATED ALWAYS AS`: generated column hanya boleh membaca barisnya sendiri dan tidak boleh berisi subquery/`jsonb_array_elements`. Angka jumlah bobot dihitung **packer** saat baris ditulis, dan aturan "jumlah bobot komponen = 100" ditegakkan **service** dengan temuan `FEEDER_COMPONENT_WEIGHT_SUM` — persis pola `grade_components` (§5) yang juga agregat lintas baris. Kolomnya tetap disimpan supaya layar pratinjau menampilkan angka tanpa menghitung ulang jsonb per baris.
+
+```sql
+CREATE INDEX idx_stag_kelas_run    ON pddikti_staging_kelas(tenant_id, run_id, record_key);
+CREATE INDEX idx_stag_kelas_source ON pddikti_staging_kelas(tenant_id, class_id);
+CREATE TRIGGER trg_stag_kelas_no_pii BEFORE INSERT OR UPDATE ON pddikti_staging_kelas
+  FOR EACH ROW EXECUTE FUNCTION app.reject_pii_in_payload();
+
+-- (4) KRS_AKM — InsertPerkuliahanMahasiswa (CP1) dan status AKM per periode (CP1+CP2)
+CREATE TABLE pddikti_staging_krs_akm (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES pddikti_sync_runs(id),
+  record_key text NOT NULL,
+  enrollment_id uuid REFERENCES enrollments(id),          -- NULL = baris AKM tanpa enrollment lokal (mutasi masuk)
+  student_id uuid NOT NULL REFERENCES students(id),
+  period_code text NOT NULL,                              -- id_periode pusat (5 digit), bukan academic_periods.id
+  akm_status_code text NOT NULL CHECK (akm_status_code IN ('1','2','3','4','5')),  -- 1 AKTIF..5 LULUS (kamus §2.5)
+  activity_kind_code text NOT NULL,
+  class_seq text, course_code text,
+  registered_sks numeric(4,1) NOT NULL CHECK (registered_sks BETWEEN 0 AND 24),  -- FEEDER_SEMESTER_SKS > 24 ditolak
+  ips numeric(3,2) CHECK (ips IS NULL OR ips BETWEEN 0 AND 4),
+  study_plan_checkpoint text NOT NULL DEFAULT 'CP1' CHECK (study_plan_checkpoint IN ('CP1','CP2')),
+  canonical_payload jsonb NOT NULL, payload_digest char(64) NOT NULL,
+  packer_version int NOT NULL DEFAULT 1, source_updated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), created_by uuid,
+  UNIQUE (tenant_id, run_id, record_key),
+  CHECK (registered_sks > 0 OR akm_status_code <> '1'),   -- AKTIF tanpa SKS = FEEDER_ACTIVE_WITHOUT_KRS
+  CHECK (length(payload_digest) = 64)
+);
+CREATE INDEX idx_stag_akm_run     ON pddikti_staging_krs_akm(tenant_id, run_id, record_key);
+CREATE INDEX idx_stag_akm_source  ON pddikti_staging_krs_akm(tenant_id, student_id, period_code);
+CREATE TRIGGER trg_stag_akm_no_pii BEFORE INSERT OR UPDATE ON pddikti_staging_krs_akm
+  FOR EACH ROW EXECUTE FUNCTION app.reject_pii_in_payload();
+
+-- (5) NILAI — UpdateNilaiPerkuliahanKelas (CP2). SATU-SATUNYA domain yang payload-nya ikut terenkripsi:
+--     angka dan huruf nilai adalah data mahasiswa yang sedang transit, dan tidak punya dasar hukum
+--     untuk terbaca oleh operator platform. Typed columns tetap ada agar rekonsiliasi dapat dibaca.
+CREATE TABLE pddikti_staging_nilai (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES pddikti_sync_runs(id),
+  record_key text NOT NULL,
+  grade_id uuid NOT NULL REFERENCES grades(id),
+  enrollment_id uuid NOT NULL REFERENCES enrollments(id),
+  student_id uuid NOT NULL REFERENCES students(id),
+  class_id uuid NOT NULL REFERENCES classes(id),
+  period_code text NOT NULL, course_code text NOT NULL,
+  raw_score numeric(5,2) CHECK (raw_score IS NULL OR raw_score BETWEEN 0 AND 100),
+  letter_code text, point_value numeric(3,2) CHECK (point_value IS NULL OR point_value BETWEEN 0 AND 4),
+  grade_scale_owner text NOT NULL DEFAULT 'PROGRAM' CHECK (grade_scale_owner IN ('TENANT','PROGRAM')),
+  final_grade_encrypted bytea,          -- envelope §16.3.2; ciphertext `(raw,letter,point)` kanonik
+  components jsonb,                     -- TIDAK memuat angka; hanya [{component_code, weight_pct, digest}]
+  assessment_date date,
+  canonical_payload_encrypted bytea NOT NULL, payload_digest char(64) NOT NULL,
+  packer_version int NOT NULL DEFAULT 1, source_updated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), created_by uuid,
+  UNIQUE (tenant_id, run_id, record_key),
+  CHECK (length(payload_digest) = 64),
+  CHECK (octet_length(canonical_payload_encrypted) >= 31),
+  CHECK (letter_code IS NULL OR point_value IS NOT NULL)      -- FEEDER_LETTER_WITHOUT_INDEX
+);
+CREATE INDEX idx_stag_nilai_run     ON pddikti_staging_nilai(tenant_id, run_id, record_key);
+CREATE INDEX idx_stag_nilai_source  ON pddikti_staging_nilai(tenant_id, grade_id);
+CREATE INDEX idx_stag_nilai_kelas   ON pddikti_staging_nilai(tenant_id, class_id, period_code);
+
+-- (6) AKTIVITAS — InsertAktivitasMBKMFlagship (CP2, v2.4); id_jenis WAJIB hasil GetJenisAktivitasMahasiswa
+CREATE TABLE pddikti_staging_aktivitas (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES pddikti_sync_runs(id),
+  record_key text NOT NULL,
+  student_activity_id uuid NOT NULL,        -- student_activities (0026); FK dipasang saat 0026 ditulis
+  activity_kind_code text NOT NULL,         -- dari reference_dictionary_entries, bukan dikarang (BENCH-131)
+  activity_title text NOT NULL, activity_desc text,
+  starts_on date NOT NULL, ends_on date NOT NULL,
+  role_code text, organizer text, location text,
+  credit_points numeric(6,1) CHECK (credit_points IS NULL OR credit_points >= 0),
+  is_international boolean NOT NULL DEFAULT false,
+  mbkm_flagship boolean NOT NULL DEFAULT false,
+  evidence_digest char(64),
+  canonical_payload jsonb NOT NULL, payload_digest char(64) NOT NULL,
+  packer_version int NOT NULL DEFAULT 1, source_updated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), created_by uuid,
+  UNIQUE (tenant_id, run_id, record_key),
+  CHECK (ends_on >= starts_on),
+  CHECK (length(payload_digest) = 64)
+);
+CREATE INDEX idx_stag_akt_run    ON pddikti_staging_aktivitas(tenant_id, run_id, record_key);
+CREATE TRIGGER trg_stag_akt_no_pii BEFORE INSERT OR UPDATE ON pddikti_staging_aktivitas
+  FOR EACH ROW EXECUTE FUNCTION app.reject_pii_in_payload();
+
+-- (7) KELUAR — InsertMahasiswaLulusDO (CP2). no_seri_ijazah boleh kosong untuk Profesi/SP1/SP2 (PISN yang menggenerate)
+CREATE TABLE pddikti_staging_keluar (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES pddikti_sync_runs(id),
+  record_key text NOT NULL,
+  student_id uuid NOT NULL REFERENCES students(id),
+  graduation_record_id uuid,                -- graduation_records (§5 blok kanonik); FK dipasang bersama 0019
+  exit_kind_code text NOT NULL,              -- id_jenis_keluar dari GetJenisKeluar
+  exit_period_code text NOT NULL,            -- id_periode_keluar
+  yudisium_sk_number text, yudisium_date date,
+  cumulative_gpa numeric(3,2) NOT NULL CHECK (cumulative_gpa BETWEEN 0 AND 4),  -- FEEDER_IPK_RANGE
+  thesis_title text, thesis_route text,
+  supervisor_1 text, supervisor_2 text, supervisor_3 text,
+  sup1_month_from int CHECK (sup1_month_from IS NULL OR sup1_month_from BETWEEN 1 AND 12),
+  sup1_month_to   int CHECK (sup1_month_to   IS NULL OR sup1_month_to   BETWEEN 1 AND 12),
+  sup2_month_from int CHECK (sup2_month_from IS NULL OR sup2_month_from BETWEEN 1 AND 12),
+  sup2_month_to   int CHECK (sup2_month_to   IS NULL OR sup2_month_to   BETWEEN 1 AND 12),
+  sup3_month_from int CHECK (sup3_month_from IS NULL OR sup3_month_from BETWEEN 1 AND 12),
+  sup3_month_to   int CHECK (sup3_month_to   IS NULL OR sup3_month_to   BETWEEN 1 AND 12),
+  examiners jsonb NOT NULL DEFAULT '[]'::jsonb,
+  diploma_serial_number text, profession_certificate_number text,
+  canonical_payload jsonb NOT NULL, payload_digest char(64) NOT NULL,
+  packer_version int NOT NULL DEFAULT 1, source_updated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), created_by uuid,
+  UNIQUE (tenant_id, run_id, record_key),
+  CHECK (exit_kind_code NOT IN ('1','2') OR yudisium_sk_number IS NOT NULL),  -- LULUS/DO butuh SK yudisium
+  CHECK (length(payload_digest) = 64)
+);
+CREATE INDEX idx_stag_keluar_run    ON pddikti_staging_keluar(tenant_id, run_id, record_key);
+CREATE INDEX idx_stag_keluar_source ON pddikti_staging_keluar(tenant_id, student_id);
+CREATE TRIGGER trg_stag_kel_no_pii BEFORE INSERT OR UPDATE ON pddikti_staging_keluar
+  FOR EACH ROW EXECUTE FUNCTION app.reject_pii_in_payload();
+```
+Catatan bentuk yang wajib dibaca bersama blok di atas:
+- **Nama kolom di staging memakai ejaan Feeder, bukan ejaan SICA.** Alasannya: staging adalah bukti tentang **apa yang dikirim**; kalau kolomnya memakai `sks_teori`, setiap rekonsiliasi harus menerjemahkan dua kali dan setiap temuan "beda dengan pusat" menjadi tidak jelas sisi mana yang dimaksud. Tabel domain (`courses`) tetap memakai `sks_teori` (§11.4) — penerjemahannya adalah `pddikti_mappings` `kind='FIELD'` (§5). Satu arah, tidak bolak-balik.
+- **Bulan pembimbing memakai enam kolom `int`, bukan `intrange`.** Feeder menuntut BULAN awal dan BULAN akhir per pembimbing (BENCH-102); `intrange` bukan tipe PostgreSQL dan `tsrange` salah semantik (yang dikirim adalah nomor bulan 1..12, bukan rentang waktu). Pasangan `sup1_month_from/sup1_month_to` boleh kosong bila pembimbingnya tidak ada, karena itu CHECK-nya menerima NULL dan aturan `to >= from` dieksekusi hanya bila keduanya terisi.
+- Tabel `pddikti_staging_*` **tidak punya FK ke `feeder_jobs`**: `feeder_jobs` adalah milik `0028` dan bisa dijalankan setelah staging; hubungan dibentuk lewat `record_key` + `run_id`, yang memang kunci uniknya di kedua sisi.
+
+#### 16.4.4 `pddikti_validation_runs` — nama yang kalah, objeknya tetap ada
+
+Yang diminta adalah tabel "hasil validasi pra-kirim". Yang **sudah** ada adalah `pddikti_sync_runs` (§5) dengan `status ∈ VALIDATING · READY · PARTIAL · SENT · FAILED`, `dry_run boolean`, `environment`, dua-penyetuju untuk `PRODUCTION`, dan `pddikti_validation_findings.run_id` menunjuk ke sana. Membuat `pddikti_validation_runs` sebagai tabel kedua berarti satu fakta ("satu percobaan validasi/kirim per periode per arah") punya dua rumah, dan `findings.run_id` harus memilih salah satu. **Putusan: `pddikti_validation_runs` KALAH sebagai tabel; menang `pddikti_sync_runs` + view.** Nama itu tetap tersedia bagi pembaca kontrak sebagai view, supaya API tidak memaksa semua orang menghafal `sync_runs`:
+
+```sql
+-- Kolom yang hilang untuk menjadikan sync_runs benar-benar "runs" (ALTER, bukan blok CREATE kedua):
+ALTER TABLE pddikti_sync_runs
+  ADD COLUMN checkpoint text CHECK (checkpoint IS NULL OR checkpoint IN ('CP1','CP2')),
+  ADD COLUMN ruleset_version int NOT NULL DEFAULT 1,      -- versi aturan validasi yang dipakai (reproduksibilitas)
+  ADD COLUMN staging_rows int NOT NULL DEFAULT 0,
+  ADD COLUMN blocked_rows int NOT NULL DEFAULT 0,
+  ADD COLUMN manifest_digest char(64),                    -- digest daftar record_key run ini
+  ADD COLUMN push_started_at timestamptz;
+
+CREATE OR REPLACE VIEW pddikti_validation_runs
+WITH (security_invoker = true) AS
+SELECT r.id, r.tenant_id, r.period_id, r.checkpoint, r.ruleset_version, r.environment, r.dry_run,
+       r.status, r.started_at, r.finished_at, r.total_rows, r.accepted_rows, r.rejected_rows,
+       r.staging_rows, r.blocked_rows, r.manifest_digest, r.operator_id, r.approved_by, r.approved_at
+FROM pddikti_sync_runs r
+WHERE r.status IN ('VALIDATING','READY','PARTIAL') OR r.dry_run = true;
+```
+Klausa `WITH (security_invoker = true)` **wajib** ditulis **sebelum** `AS` — itu sintaks PostgreSQL (`CREATE VIEW nama WITH (opsi) AS query`); menaruhnya di akhir statement adalah error parse, dan bentuk itulah yang dulu ditulis di sini sehingga dikoreksi pada siklus ini. Opsi itu sendiri **bukan** hiasan: tanpanya view berjalan dengan hak pemiliknya dan menembus RLS seluruh tabel dasar — yaitu kebocoran lintas tenant yang siap dibuat siapa pun yang "cuma mau menampilkan daftar run". PostgreSQL 16 mendukungnya; view ini hanya boleh dibuat setelah `0001` (RLS) dan kolom hasil ALTER di atas ada.
+
+Temuan validasi (sudah ada bloknya di §14.5(5)) diberi kemampuan yang belum dimilikinya:
+```sql
+ALTER TABLE pddikti_validation_findings
+  ADD COLUMN domain pddikti_domain,
+  ADD COLUMN staging_record_key text,             -- baris staging mana yang ditolak
+  ADD COLUMN feeder_error_code text,              -- error_code resmi Feeder bila pusat yang menolak
+  ADD COLUMN feeder_error_msg text,
+  ADD COLUMN snapshot_id uuid REFERENCES pddikti_payload_snapshots(id);
+
+-- CACAT yang ditutup: UNIQUE (tenant_id, check_code, entity_type, entity_id) tanpa WHERE berarti
+-- temuan yang sudah `resolved_at` TIDAK PERNAH bisa terdeteksi ulang. Perbaikan Expand-and-Contract:
+ALTER TABLE pddikti_validation_findings DROP CONSTRAINT <nama_sebagaimana_di_pg_constraint>;
+CREATE UNIQUE INDEX uq_pddikti_findings_open ON pddikti_validation_findings
+  (tenant_id, check_code, entity_type, entity_id) WHERE resolved_at IS NULL;
+CREATE INDEX idx_stag_findings_run ON pddikti_validation_findings(tenant_id, run_id, domain);
+```
+Nama constraint pada baris `DROP CONSTRAINT` **tidak boleh ditebak**: constraint `UNIQUE (…)` yang dibuat di dalam `CREATE TABLE` diberi nama otomatis oleh PostgreSQL dan dipotong ke 63 byte. Migrasi membacanya dari `pg_constraint` (`conrelid = 'pddikti_validation_findings'::regclass AND contype='u'`) dan menuliskannya sebagai langkah eksplisit; `DROP CONSTRAINT` tidak punya varian `CONCURRENTLY`, jadi langkah ini butuh jendela singkat dan tetap diuji di staging (`MIGRATION_SOP` §3).
+
+Keadaan hasil hitung (`0031` bagian B, setelah `0028` hidup):
+```sql
+CREATE OR REPLACE VIEW pddikti_staging_status
+WITH (security_invoker = true) AS
+SELECT s.tenant_id, s.run_id, 'MAHASISWA'::pddikti_domain AS domain, s.id AS staging_id, s.record_key,
+       CASE
+         WHEN fi.feeder_id IS NOT NULL THEN 'ACKNOWLEDGED'::pddikti_staging_state
+         WHEN j.status = 'FAILED'      THEN 'REJECTED'::pddikti_staging_state
+         WHEN j.status IN ('SENT','PROCESSING') THEN 'PUSHED'::pddikti_staging_state
+         WHEN f.open_block IS NOT NULL THEN 'BLOCKED'::pddikti_staging_state
+         WHEN j.id IS NULL             THEN 'PREPARED'::pddikti_staging_state
+         ELSE 'VALIDATED'::pddikti_staging_state
+       END AS state
+FROM pddikti_staging_mahasiswa s
+LEFT JOIN feeder_jobs j
+       ON j.tenant_id = s.tenant_id AND j.run_id = s.run_id AND j.record_key = s.record_key
+LEFT JOIN feeder_identities fi
+       ON fi.tenant_id = s.tenant_id AND fi.entity_type = 'student' AND fi.local_id = s.student_id
+LEFT JOIN (SELECT tenant_id, run_id, staging_record_key, count(*) AS open_block
+           FROM pddikti_validation_findings
+           WHERE resolved_at IS NULL AND severity = 'BLOCK'
+           GROUP BY 1,2,3) f
+       ON f.tenant_id = s.tenant_id AND f.run_id = s.run_id AND f.staging_record_key = s.record_key;
+```
+Satu view per domain (tujuh view, sama bentuknya, hanya beda tabel dan `entity_type`); tidak ada "satu view unions semuanya" karena union memaksa PostgreSQL menyapu ketujuh tabel untuk satu pertanyaan yang selalu menyebut satu domain. `SUPERSEDED` adalah nilai yang **tidak** dihasilkan view ini — ia hanya sah bila suatu run sengaja ditutup tanpa dikirim, dan itu diputuskan oleh service dengan menandai run-nya, bukan baris staging-nya.
+
+#### 16.4.5 `pddikti_payload_snapshots` — bukti persis yang dikirim
+
+```sql
+CREATE TABLE pddikti_payload_snapshots (
+  id                 uuid PRIMARY KEY,
+  tenant_id          uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id             uuid NOT NULL REFERENCES pddikti_sync_runs(id),
+  job_id             uuid,                    -- feeder_jobs.id (0028); FK dipasang di bagian B
+  domain             pddikti_domain NOT NULL,
+  record_key         text NOT NULL,
+  attempt            int NOT NULL CHECK (attempt >= 1),
+  feeder_action      text NOT NULL,           -- 'InsertBiodataMahasiswa' | 'Update…' — kosakata INTEGRATIONS §1.4
+  environment        text NOT NULL CHECK (environment IN ('LOCAL','SANDBOX','PRODUCTION')),
+  http_request       jsonb NOT NULL,          -- persis badan yang dikirim; TANPA token, TANPA kredensial
+  request_digest     char(64) NOT NULL,
+  http_status        int,
+  response_code      int,                     -- `error_code` Feeder: 0 sukses, 100 token kedaluwarsa, -1/-2 timeout
+  response_msg       text,
+  response_body      jsonb,                   -- dipangkas ke `data` yang diperlukan saja
+  feeder_id_returned uuid,                    -- SATU-SATUNYA sumber id pangkalan nasional (I-14)
+  acknowledged_at    timestamptz,
+  storage_key        text,                    -- bila arsip sudah pindah bucket retensi (§16.4.6)
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, run_id, domain, record_key, attempt),
+  CHECK (length(request_digest) = 64),
+  CHECK (acknowledged_at IS NULL OR (http_status = 200 AND response_code = 0)),
+  CHECK (response_code IS NULL OR response_code <> 0 OR feeder_id_returned IS NOT NULL
+         OR feeder_action LIKE 'Get%'),
+  CHECK (NOT (environment = 'PRODUCTION' AND http_request ? 'token'))   -- guard: token tidak pernah ikut
+);
+CREATE INDEX idx_snapshots_run     ON pddikti_payload_snapshots(tenant_id, run_id, domain);
+CREATE INDEX idx_snapshots_record  ON pddikti_payload_snapshots(tenant_id, domain, record_key, attempt DESC);
+CREATE INDEX idx_snapshots_feeder  ON pddikti_payload_snapshots(tenant_id, feeder_id_returned)
+  WHERE feeder_id_returned IS NOT NULL;
+```
+Aturan:
+1. Satu baris per **percobaan**, bukan per record. `attempt` naik untuk resume parsial; karena `feeder_jobs` sudah ber-`UNIQUE (tenant_id, idempotency_key)` per record (BENCH-129), tidak ada rekaman yang hilang dan tidak ada baris ganda saat resume.
+2. **`http_request` tidak pernah memuat token.** Token Feeder hidup di `feeder_credentials`/vault (`0028`, BENCH-130); kolomnya ada di sini justru supaya diff plan dapat membuktikan absennya. Guard `NOT (… ? 'token')` memakai operator JSONB `?`; ia **tidak** menangkap key bersarang, sehingga packer juga memfilter recursive dan CI §8 nomor 8 membandingkan hasil filter itu.
+3. **`feeder_id_returned` adalah satu-satunya jalan masuk id pusat.** Kolom `pddikti_*_id` pada tabel domain (`SERVER_ONLY`, §14.9) hanya boleh ditulis dari baris snapshot ber-`response_code = 0`; tes CI §8 nomor 7 membuktikan tidak ada id yang lahir tanpa jejak itu.
+4. Retensi **730 hari** di DB (kelas `feeder_snapshot`, §16.4.6), lalu arsip utuh ke storage; `storage_key` diisi **pada saat insert arsip**, bukan dengan UPDATE — sebabnya lihat aturan append-only §16.4(1): baris arsip ditulis sebagai baris baru berversi, baris lama dibiarkan.
+
+#### 16.4.6 Rekonsiliasi lokal vs pusat
+
+Pusat dapat benar (mahasiswa sudah dilaporkan dari portal lain, atau PDM kampus sudah jalan) dan lokal dapat benar (kita yang punya nilai terbaru). Karena itu perbedaan **bukan** kesalahan, dan tidak boleh "diselesaikan" oleh pekerja senyap. Objeknya:
+
+```sql
+CREATE TABLE pddikti_reconciliation_diffs (
+  id              uuid PRIMARY KEY,
+  tenant_id       uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id          uuid NOT NULL REFERENCES pddikti_sync_runs(id),   -- arah INBOUND (BENCH-128)
+  domain          pddikti_domain NOT NULL,
+  local_entity    text NOT NULL,             -- kosakata SAMA dengan findings.entity_type (§14.5(5))
+  local_id        uuid NOT NULL,
+  record_key      text NOT NULL,
+  local_digest    char(64) NOT NULL,
+  center_digest   char(64) NOT NULL,
+  diff            jsonb NOT NULL,            -- [{field, local, center}] — TANPA nilai PII plaintext
+  severity        text NOT NULL DEFAULT 'WARN' CHECK (severity IN ('WARN','BLOCK')),
+  decision        pddikti_reconciliation_decision,
+  decision_reason text,
+  evidence_ref    text,                      -- nomor surat PDM / bukti entri portal pusat
+  detected_by     uuid NOT NULL,             -- operator ATAU worker (worker ⇒ actor NULL di audit, bukan di sini)
+  decided_by      uuid, validated_by uuid, decided_at timestamptz, validated_at timestamptz,
+  applied_at timestamptz, applied_run_id uuid REFERENCES pddikti_sync_runs(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, domain, local_id, center_digest),
+  CHECK (length(local_digest) = 64 AND length(center_digest) = 64),
+  CHECK (decision IS NULL OR decision_reason IS NOT NULL),
+  CHECK (decided_by IS NULL OR validated_by IS NULL OR validated_by <> decided_by),
+  CHECK (decision IS NULL OR decision NOT IN ('CENTER_AS_BASE','NEEDS_PDM')
+         OR (validated_by IS NOT NULL AND validated_at IS NOT NULL)),
+  CHECK (decision <> 'NEEDS_PDM' OR evidence_ref IS NOT NULL),
+  CHECK (applied_at IS NULL OR decision IS NOT NULL)
+);
+CREATE INDEX idx_recon_open     ON pddikti_reconciliation_diffs(tenant_id, domain, severity)
+  WHERE applied_at IS NULL;
+CREATE INDEX idx_recon_record   ON pddikti_reconciliation_diffs(tenant_id, record_key);
+```
+
+**Matriks keputusan** (empat kolom, satu baris per keadaan; dibaca berurutan dari kiri):
+
+| Kondisi data | Keputusan | Siapa yang berhak memutuskan | Efek yang ditulis |
+|---|---|---|---|
+| Pusat belum pernah menerima record ini (`feeder_identities` kosong), lokal lengkap | `LOCAL_AS_BASE` | Operator Feeder (`VALIDATE` kirim) | staging run baru, aksi `Insert…`; tidak ada baris diff yang perlu dibuka |
+| Pusat sudah punya, lokal **lebih baru** dan perubahannya transaksional (nilai, AKM, kelas) | `LOCAL_AS_BASE` | Operator + penyetuju kedua untuk `PRODUCTION` (sudah ada di `pddikti_sync_runs`) | staging run `Update…`; diff ditutup dengan `applied_run_id` |
+| Pusat sudah punya, lokal **lebih lama** dan pusat adalah sumber otoritatif (id_pd, status keluar yang ditetapkan PDM, NIK hasil DUKCAPIL) | `CENTER_AS_BASE` | Kaprodi/Admin Akademik **bukan** operator tunggal; `validated_by <> decided_by` | tulis ke tabel domain lewat jalur `SERVER_ONLY`; `students.pddikti_id_pd` hanya dari `feeder_id_returned` |
+| Perbedaan pada **data pokok** yang tidak bisa di-`Update` lewat web service (NIM, jenis daftar, tanggal masuk, prodi salah) | `NEEDS_PDM` | Pimpinan/akademik + bukti surat; `evidence_ref` wajib | **tidak ada** insert lokal; diff dibiarkan terbuka sampai PDM kembali, `period_reopen_requests` (§5) dijadikan gerbang |
+| Belum jelas mana yang benar, atau periode pusat sedang tertutup (`FEEDER_MINISTRY_PERIOD_CLOSED`) | `DEFERRED` | Operator, dengan alasan tertulis | diff tetap terbuka; blok `BLOCK` menahan run berikutnya agar tidak mengirim setengah benar |
+
+Aturan turunannya, ditulis sebagai keharusan: (a) **tidak ada rekonsiliasi otomatis tanpa keputusan tercatat** — worker `FEEDER_PULL_RECONCILE` hanya boleh menulis baris `pddikti_reconciliation_diffs` ber-`decision IS NULL`, tidak pernah menulis ke tabel domain; (b) `CENTER_AS_BASE` pada kolom `SERVER_ONLY` tetap harus lewat transisi state, bukan `UPDATE` langsung; (c) diff yang diputuskan `NEEDS_PDM` **tidak boleh** dianggap selesai oleh `applied_at` — penutupnya adalah keputusan LLDIKTI, bukan pekerjaan kita.
+
+**Penegakan append-only dan peran DB** (`0031`, dijalankan setelah seluruh tabel gugus ini ada):
+```sql
+REVOKE UPDATE, DELETE ON
+  pddikti_staging_mahasiswa, pddikti_staging_kurikulum, pddikti_staging_kelas,
+  pddikti_staging_krs_akm, pddikti_staging_nilai, pddikti_staging_aktivitas,
+  pddikti_staging_keluar, pddikti_payload_snapshots FROM sica_app;
+-- diffs boleh UPDATE: ia objek kerja ber-status (decided_by/validated_by), bukan buffer kirim.
+REVOKE UPDATE, DELETE, TRUNCATE ON pddikti_payload_snapshots FROM sica_readonly, sica_platform;
+GRANT SELECT ON pddikti_validation_runs, pddikti_staging_status TO sica_app, sica_readonly;
+```
+Peringatan yang sama berlaku seperti §16.3: tanpa `REVOKE`, policy `tenant_isolation` bentuk `FOR ALL` (§6.2) **mengizinkan** UPDATE selama `tenant_id` cocok. Revoke adalah dinding pertama; RLS dinding pemisah tenant; pemicu dinding terakhir untuk peran `BYPASSRLS`.
+
+Retensi gugus ini (detail di §16.5): `feeder_staging` **365 hari** setelah run mencapai keadaan ack, `feeder_snapshot` **730 hari** di DB lalu arsip storage, `reconciliation_diff` **permanen** sampai ditutup oleh keputusan (karena diff terbuka adalah bukti due diligence), dan semua tabel gugus ini **tidak dipartisi** — alasan yang sama seperti §7: PK tunggal `(id)` + FK masuk, dan volumenya per-run, tidak per-scan.
+
+`[TIDAK-TERVERIFIKASI]`: **katalog lengkap `error_code` resmi Feeder tidak ada di repo ini.** Yang dapat dibuktikan hanya `0` (sukses), `100` (token kedaluwarsa), `-1`/`-2` (timeout/parse) — INTEGRATIONS §1.4. Karena itu `feeder_error_code` di §16.4.4 bertipe `text`, dan menambah daftar kode resmi adalah pekerjaan [INTEGRATIONS §1.4](file:///c:/SICA/docs/INTEGRATIONS.md) (kepemilikan dokumen lain, terdaftar di §14.7), **bukan** pekerjaan bagian ini.
+
+#### 16.4.7 Registrasi: sudah terdaftar vs objek baru
+
+| Objek | Status registrasi | Nomor |
+|---|---|---|
+| `pddikti_sync_runs` | sudah ada DDL-nya di §5; **kolom baru** lewat ALTER di §16.4.4 | bukan migrasi baru; kolom ikut `0031` |
+| `pddikti_validation_findings` | sudah ada DDL-nya di §14.5(5); kolom baru + penggantian indeks unik | `0031` bagian A |
+| tujuh tabel `pddikti_staging_*` | **baru** | `0031_pddikti_staging.sql` bagian A |
+| `pddikti_payload_snapshots` | **baru** | `0031` bagian A |
+| `pddikti_reconciliation_diffs` | **baru** | `0031` bagian A |
+| `pddikti_validation_runs` | **nama view**, bukan tabel (§16.4.4) | `0031` bagian A |
+| `pddikti_staging_status` | **baru** (view per domain) | `0031` bagian B, butuh `0028` |
+| `feeder_jobs`, `feeder_identities` | **sudah terdaftar** di `0028`; DDL-nya masih jadi pekerjaan §14.7 | `0028` |
+| `student_activities`, `graduation_records` | sumber data domain AKTIVITAS/KELUAR; `graduation_records` **sudah** didefinisikan di §5, `student_activities` masih antrean `0026` | `0026` |
+
+Alternatif yang **ditolak**: (i) **satu tabel `pddikti_staging_records` polymorphic `domain` + `payload jsonb` saja** — ditolak karena rekonsiliasi dan validasi pra-kirim butuh kolom bertipe (`registered_sks`, `sks_total = Σ rincian`, `exit_kind_code`) untuk menangkap `FEEDER_*` sebelum byte dikirim; menyisakan jsonb berarti memindahkan seluruh validasi ke runtime packer. (ii) **kolom `state` di baris staging** — ditolak karena kontradiksi dengan append-only; keadaan berasal dari `feeder_jobs`/`findings`, dan keadaan yang disimpan harus di-UPDATE, yang berarti revoke jadi palsu. (iii) **tabel `pddikti_validation_runs` kedua** — ditolak, lihat §16.4.4. (iv) **`feeder_id` di staging sebagai cache** — ditolak karena I-14 hanya berarti jika tidak ada tempat lain untuk menuliskannya.
+
+#### 16.4.8 Kenapa bentuknya begini
+
+Staging dipisah dari tabel domain karena umur dan bahasanya berbeda: tabel domain menyimpan kebenaran akademik kampus dengan ejaan SICA dan tidak pernah dihapus; staging menyimpan **terjemahan sekali pakai** dengan ejaan Feeder yang akan usang dalam satu rilis kamus. Menyatukan keduanya berarti setiap perubahan kamus pusat menjadi migrasi data pada tabel rekaman, dan setiap percobaan kirim meninggalkan jejak pada objek yang harus diaudit. Bentuk append-only dipilih justru karena ia membuat klaim "ini persis yang kami kirim" dapat dibuktikan: baris yang tidak dapat diubah, digest yang dapat dicocokkan ulang tanpa membuka PII, dan snapshot berisi badan permintaan nyata adalah tiga lapis bukti yang tidak dapat dihasilkan oleh tabel yang bisa ditambal. Keputusan paling keras di gugus ini adalah **menghilangkan kolom `feeder_id` dari staging** — ia bukan kosmetika: invariance I-14 selama ini hanya berupa kalimat larangan, dan dengan tidak adanya kolom tempat pelanggaran itu bisa ditulis, invariance berubah dari kebijakan menjadi sifat skema. Rekonsiliasi dibuat menjadi objek kerja ber-status dua penyetuju karena perbedaan dengan pusat adalah keputusan institusi dengan konsekuensi hukum (PDM, surat, jendela LLDIKTI), dan menyimpannya sebagai `decision NULL` menunggu manusia adalah satu-satunya keadaan yang jujur.
+
+---
+
+### 16.5 Kelas retensi baru (isian register `retention_rules`, §5)
+
+Kolom `retention_rules.data_class` adalah `text` (§15.3) — tambah kelas = tambah baris dokumen ini lebih dulu, bukan menambah string di kode. Nilai retensi ditulis ISO 8601 pada kolom `retention`; `disposition` mengikuti CHECK §5. Tabel ini adalah **satu-satunya** daftar kelas retensi yang lahir di §16 (lima kolom, satu baris per kelas):
+
+| Kelas `data_class` | Objek yang tunduk | Retensi | Disposition | Dasar dan pemilik keputusan |
+|---|---|---|---|---|
+| `krs_lease` | `krs_baskets` non-`ACTIVE`, `krs_offering_seats` periode tertutup | `P30D` | `DESTROY` | bukan rekaman akademik; lease adalah klaim kedaluwarsa (§16.1.6) |
+| `queue_operation` | `queue_operations` ber-state terminal | `P30D` | `ANONYMIZE` lalu `DESTROY` | umur `opId` 15 menit (GLOSSARY); hasil akhirnya tetap di `audit_logs` |
+| `feeder_staging` | tujuh tabel `pddikti_staging_*` | `P365D` | `ARCHIVE` | bukti kirim per-run; BR-R9/R10; append-only memaksa arsip per baris, bukan pemangkasan (§16.4) |
+| `feeder_snapshot` | `pddikti_payload_snapshots` | `P730D` di DB lalu arsip storage | `ARCHIVE` | jawaban resmi atas sengketa "apa yang dikirim"; tidak pernah di-UPDATE untuk dipangkas |
+| `reconciliation_diff` | `pddikti_reconciliation_diffs` | `PERMANENT` selama `applied_at IS NULL` | `KEEP` | diff terbuka = due diligence; penutupnya keputusan LLDIKTI/PDM, bukan kita (§16.4.6) |
+| `outcome_attainment` | `outcome_attainments` ber-`is_current = false` | `P5Y` | `ARCHIVE` | akreditasi menuntut tren, bukan seluruh riwayat hitung (§16.2.3) |
+| `grade_change_log` | `grade_change_logs` | `PERMANENT` | `KEEP` (`is_locked = true`) | perpindahan nilai adalah rekaman akademik; BR-R12; partisi tua hanya boleh `DETACH` + ekspor |
+| `system_audit_trail` | `system_audit_trails` | `P24M` rinci, `P5Y` agregat | `ARCHIVE` | kebutuhan deteksi vs kepatuhan (SECURITY §3.7) berbeda dari jejak domain |
+| `encryption_key_audit` | `tenant_encryption_keys`, `encryption_key_events` | `P10Y` | `KEEP` | tanpa jejak kunci, dekripsi masa lalu tidak dapat dibuktikan sahnya |
+| `pii_encrypted_column` | kolom `*_encrypted` dan `*_bidx` (§16.3.4) | mengikuti retensi entitas induk | `ANONYMIZE` | hak hapus UU PDP Ps 38 dipenuhi lewat `COMPROMISED` (crypto-shredding), bukan `DELETE` baris akademik |
+| `pmb_applicant` | `pmb_applications` tidak lolos (bukan objek §16) | usulan `P2Y` | `ANONYMIZE` | **kepemilikan `0021`** (§14.7 baris PMB); disebut di sini hanya agar kelasnya tidak diciptakan dua kali |
+
+Tiga baris pertama menutup lubang yang selama ini hanya diakui sebagian: §7 sudah mencabut klaim partisi `enrollments`/`grades`/`invoices` (`RD-21`), tetapi tidak pernah menetapkan retensi untuk objek sementara. Sekarang objek sementara punya umur tercatat, dan objek bukti punya umur yang **tidak** boleh dipangkas dengan `UPDATE`.
+
+### 16.6 Kepemilikan dokumen lain (yang TIDAK boleh saya tulis di sini)
+
+Aturan §14.7: dokumen ini memegang registrasi objek dan nomor migrasi. Empat hal di bawah dibutuhkan oleh DDL di §16 tetapi **rumahnya di dokumen lain** — ditulis sebagai baris tugas, bukan diselundupkan sebagai kolom atau komentar kode.
+
+| Kebutuhan yang lahir dari §16 | Dokumen pemilik | Bentuk yang dibutuhkan |
+|---|---|---|
+| Variabel `TENANT_ENCRYPTION_MASTER_KEY` + sumber kunci KMS/HSM | [ENV_CONTRACT §2 dan §6.3](file:///c:/SICA/docs/ENV_CONTRACT.md) | sudah tercatat di §6.3 sebagai **blokir**; wajib masuk `ServerEnvSchema` dengan `.min(32)` dan **tanpa default** sebelum gugus §16.3 diklaim siap |
+| Dependensi `bullmq`, `ioredis` (klaim `queue_operations`, DLQ), `@aws-sdk/client-kms` (pembungkusan DEK), `pg`/`testcontainers` (tes insert-only) | [TECH_CONVENTIONS §6](file:///c:/SICA/docs/TECH_CONVENTIONS.md) | baris ber-❌ hari ini; statusnya **tetap ❌** sampai `package.json` berubah, dan §16 menyebutnya "dinormakan, belum dipasang" |
+| Kode izin atomik: `obe.outcome.*`, `obe.attainment.compute`, `mbkm.conversion.request`, `mbkm.conversion.validate`, `security.key.rotate`, `security.export.request`, `security.export.validate`, `feeder.staging.pack`, `feeder.reconcile.decide` | [RBAC_MATRIX §4](file:///c:/SICA/docs/RBAC_MATRIX.md) | nama di kiri **usulan non-normatif** sampai masuk katalog (aturan `G-15`); §16 tidak boleh menciptakan verb di luar `READ INSERT UPDATE DELETE VALIDATE OTHER` |
+| Kontrak `202 Accepted` + `GET /api/v1/operations/{opId}`, layar antrean kirim Feeder, layar kunci dan rotasi, form ekspor massal | [API_SPEC](file:///c:/SICA/docs/API_SPEC.md), [UI_UX_DESIGN §9](file:///c:/SICA/docs/UI_UX_DESIGN.md) | `opId` = `queue_operations.id`; posisi antrean **boleh** `null` (§16.1.5 butir 8) dan itu harus ditulis di kontrak, bukan di improvisasi UI |
+| Kosakata `error_code` resmi Feeder (lengkap) | [INTEGRATIONS §1.4](file:///c:/SICA/docs/INTEGRATIONS.md) | `pddikti_validation_findings.feeder_error_code` sengaja `text` karena katalog resminya belum terverifikasi di repo ini (`[TIDAK-TERVERIFIKASI]`, §16.4.6) |
+| Restatement invariance I-2 dan status AC-KRS-3 | [BLUEPRINT_ENTERPRISE §7](file:///c:/SICA/docs/BLUEPRINT_ENTERPRISE.md), [PRD §5.5/§6.1](file:///c:/Sica/docs/PRD.md) | rumus baru ada di §16.1.1; dokumen itu menyusul mengikuti dokumen ini (aturan `K-2` §6.2), bukan sebaliknya |
+| Alias `async_operations` dicabut, rumah `opId` = `queue_operations` | [GLOSSARY `opId`](file:///c:/Sica/docs/GLOSSARY.md) | rujukan lama menunjuk "DATA_MODEL `async_operations`"; nama pemenang ada di §14.8 |
+| Runbook partisi bulanan (empat tabel jejak: `audit_logs`, `grade_change_logs`, `system_audit_trails`, `encryption_key_events`) + ekspor storage tak-terhapus (WORM) | [DEPLOYMENT_DEVOPS §4](file:///c:/SICA/docs/DEPLOYMENT_DEVOPS.md), [MIGRATION_SOP §5](file:///c:/SICA/docs/MIGRATION_SOP.md) | rujukan lama `docs/runbook/audit-partition.md` **tidak ada di repo** (diukur 2026-10-20 — direktori `docs/runbook/` tidak ada) sehingga tautan di §4 putus; harus dibuat atau dipindah, dan registrasi nama berkas `0030`–`0035` masuk MIGRATION_SOP §5 |
+| DPIA dan JRA untuk kelas retensi §16.5, pemberitahuan kebocoran 3×24 jam | [SECURITY_COMPLIANCE §3.7](file:///c:/SICA/docs/SECURITY_COMPLIANCE.md), [PRD BR-R14](file:///c:/Sica/docs/PRD.md) | `retention_rules.approved_by` wajib terisi sebelum `DESTROY` pertama dijalankan |
+| Jadwal pengerjaan: `0030`–`0035` belum punya slice | [ROADMAP_TASKS §2.5](file:///c:/Sica/docs/ROADMAP_TASKS.md) | kolom "Slice" di §14.7 saya isi `ADM-13`/`ADM-14` sebagai **usulan**; penjadwalan resmi tetap keputusan PM |
+| Seed: `grade_scales` nasional, `mbkm_grade_mappings` default, `modules` untuk OBE/MBKM | [SEED_DATA](file:///c:/Sica/docs/SEED_DATA.md) | tanpa baris pemetaan, konversi MBKM pertama akan gagal lookup `mbkm_grade_mappings` — ini **bukan** alasan untuk memberi nilai hardcode di kode |
+| Tes insert-only dan tes RLS terhadap DB nyata | [TESTING_STRATEGY §3.2](file:///c:/Sica/docs/TESTING_STRATEGY.md) | query §8 nomor 6–11 adalah spesifikasi tes; hari ini tidak dapat dijalankan tanpa `pg` + `testcontainers` (`RD-11`) |
+
+---
+
+## 17. Skema Engine Algoritma Deterministik (ALG-1…ALG-7) — 2026-10-20
+
+Rujukan norma: [ARCHITECTURE §11](file:///c:/SICA/docs/ARCHITECTURE.md) (algoritma & kompleksitas), ADR-14…ADR-17, AGENTS §3.7 (indexing) & §3.8 (hak), [RBAC_MATRIX §4.5](file:///c:/SICA/docs/RBAC_MATRIX.md) (titik aksi). **Bagian ini tidak mengubah §5 maupun §14**; ia menambahkan objek milik engine.
+
+### 17.1 Konvensi yang mengikat seluruh tabel engine
+
+1. **Satu tabel harness bersama** (`engine_runs`) untuk semua engine: status, versi, snapshot hash, budget, hasil, dan tautan explain. Tanpa ini, tujuh engine menghasilkan tujuh tabel pekerjaan yang tidak bisa diaudit seragam.
+2. **Hasil engine selalu milik engine sendiri** (`*_runs` / `*_items` / `*_placements`) dan menjadi data resmi hanya setelah aksi `VALIDATE` manusia yang memanggil **service domain yang sudah ada**. Tidak ada trigger, tidak ada tulisan engine ke `enrollments`, `grades`, `class_schedules`.
+3. Semua tabel domain engine **ber-`tenant_id`**, `ENABLE`+`FORCE` ROW LEVEL SECURITY + policy `tenant_isolation` (generator §6.2). Tabel katalog global (mis. `rete_fact_types` versi platform) adalah pengecualian tercatat, seperti `permissions`/`modules`.
+4. Indeks domain selalu menempatkan **`tenant_id` sebagai kolom pertama** (AGENTS §3.7); indeks besar dibuat `CONCURRENTLY` saat produksi.
+5. **UUIDv7 dibangkitkan aplikasi** (ADR-6). Kolom `DEFAULT gen_random_uuid()` hanya penahan baris yang ditulis migrasi/seed — baris runtime wajib membawa UUIDv7 agar B-tree tetap lokal. (Catatan deviasi yang sama sudah didaftarkan untuk `0011_rbac_scoped.sql`.)
+6. Angka keputusan disimpan sebagai `numeric`/integer basis poin, **bukan** `real`/`double precision` (parity Web↔Mobile, ADR-5).
+7. Retensi: salinan mentah dokumen dan citra hasil render memiliki `expires_at`; hasil ekstraksi yang tidak dikonfirmasi dalam 30 hari dihapus otomatis (SECURITY §10.4).
+
+### 17.2 Tabel harness + lintasan kerja (semua engine)
+
+```sql
+CREATE TABLE engine_runs (
+  id                uuid PRIMARY KEY,                       -- UUIDv7 dari aplikasi
+  tenant_id         uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  engine_code       text NOT NULL CHECK (engine_code IN
+    ('graduation-path','lab-allocator','concentration','cumlaude-rete','room-rerouter','grade-ast','doc-extract')),
+  status            text NOT NULL DEFAULT 'QUEUED'
+                      CHECK (status IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELLED','NEEDS_REVIEW')),
+  requested_by      uuid NOT NULL REFERENCES users(id),
+  parameter_version text NOT NULL,                          -- versi academic_rules / *_rule_definitions / template
+  engine_version    text NOT NULL,                          -- versi build (mis. '1.4.0')
+  input_snapshot_hash text NOT NULL,                        -- SHA-256 atas input terurut; bukti replay
+  budget            jsonb NOT NULL DEFAULT '{}'::jsonb,     -- {maxNodes,maxSeconds,maxBacktrack}
+  stats             jsonb NOT NULL DEFAULT '{}'::jsonb,     -- {iterations,nodesVisited,durationMs,objective}
+  explain_payload   jsonb,                                  -- jalur kritis / aturan menyala / inti konflik (bukan kata kunci SQL)
+  degraded          text,                                   -- 'NO_PREREQ_DATA' dsb.; NULL = penuh
+  error_code        text,                                   -- salah satu kode register API_SPEC §2.x
+  idempotency_key   text NOT NULL,
+  started_at        timestamptz, finished_at timestamptz,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, idempotency_key)
+);
+CREATE INDEX idx_engine_runs_queue ON engine_runs(tenant_id, engine_code, status, created_at);
+```
+
+Antrean dikerjakan worker dengan `SELECT … FROM engine_runs WHERE status='QUEUED' AND engine_code=$1 ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1` — pola yang sama dipakai saat kelak pindah ke BullMQ (`RD-11`), sehingga kontrak tidak berubah.
+
+### 17.3 ALG-2 — kapasitas lab & alokasi shift (`int4range` + GiST)
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;   -- GiST gabungan uuid/int + range
+
+CREATE TABLE lab_resource_capabilities (     -- kapasitas yang TIDAK ada di `rooms`
+  id           uuid PRIMARY KEY,
+  tenant_id    uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  room_id      uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  resource_key text NOT NULL,                -- 'mesin_cnc','lisensi_matlab_concurrent','mikroskop'
+  quantity     integer NOT NULL CHECK (quantity > 0),
+  unit         text,                          -- 'unit','seat','license'
+  valid_from   date, valid_to date,
+  CHECK (valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from),
+  UNIQUE (tenant_id, room_id, resource_key, valid_from)
+);
+
+CREATE TABLE lab_allocation_items (
+  id             uuid PRIMARY KEY,
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id         uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  session_group  text NOT NULL,               -- 'Kelompok A — Praktikum Basis Data'
+  class_id       uuid NOT NULL REFERENCES classes(id),
+  room_id        uuid NOT NULL REFERENCES rooms(id),
+  day_of_week    smallint NOT NULL CHECK (day_of_week BETWEEN 1 AND 7),
+  start_min      integer NOT NULL CHECK (start_min >= 0),   -- menit sejak 00:00
+  end_min        integer NOT NULL CHECK (end_min > start_min),
+  slot           int4range GENERATED ALWAYS AS (numrange(start_min, end_min, '[)')) STORED,
+  seats          integer NOT NULL CHECK (seats > 0),
+  consumptions   jsonb NOT NULL DEFAULT '{}'::jsonb,        -- {'mesin_cnc':6,'lisensi_matlab_concurrent':20}
+  score          numeric(6,3),                              -- nilai objektif leksikografis yang dicapai
+  accepted_at    timestamptz, accepted_by uuid REFERENCES users(id),   -- NULL = draf
+  UNIQUE (tenant_id, run_id, session_group, day_of_week)
+);
+-- Bentrok dicek dengan operator &&, bukan BETWEEN per baris:
+CREATE INDEX idx_lab_items_slot ON lab_allocation_items USING gist (tenant_id, room_id, day_of_week, slot);
+```
+
+`class_schedules` hari ini memakai `start_time`/`end_time` bertipe `time` (`schema/classes.ts`); pemetaan ke menit dilakukan sekali saat menyusun graf kendala, sehingga GiST di atas `int4range` dapat dipakai tanpa mengubah tabel berjalan (expand-only).
+
+### 17.4 ALG-1 — jalur kritis kelulusan
+
+```sql
+CREATE TABLE graduation_path_nodes (          -- simpul ter-snapshot per mahasiswa per run
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id      uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  student_id  uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  course_id   uuid NOT NULL REFERENCES courses(id),
+  state       text NOT NULL CHECK (state IN ('DONE','PLANNED','BLOCKED','REPEAT')),
+  done_period_id uuid REFERENCES academic_periods(id),
+  earliest_term integer,                      -- indeks term pada kalender tenant
+  latest_term    integer,
+  slack        integer,                        -- LS − ES; 0 → jalur kritis
+  open_pattern text                            -- 'ODD','EVEN','BOTH','ANTAR' dari aturan ketersediaan
+);
+CREATE INDEX idx_grad_nodes_run ON graduation_path_nodes(tenant_id, run_id, student_id, slack);
+
+CREATE TABLE graduation_path_edges (          -- prasyarat beruntun hasil snapshot (sumber: course_prerequisites)
+  run_id       uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  from_course  uuid NOT NULL REFERENCES courses(id),
+  to_course    uuid NOT NULL REFERENCES courses(id),
+  edge_kind    text NOT NULL DEFAULT 'HARD' CHECK (edge_kind IN ('HARD','SOFT','COREQUITE')),
+  tenant_id    uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  PRIMARY KEY (run_id, from_course, to_course, edge_kind)
+);
+
+CREATE TABLE graduation_simulations (
+  id             uuid PRIMARY KEY,
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id         uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  student_id     uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  estimated_term integer NOT NULL,
+  lower_bound_term integer NOT NULL,          -- maks(kedalaman prasyarat, sisa_sks/maks_sks) → anti optimisme palsu
+  deficit_sks    numeric(5,1) NOT NULL DEFAULT 0,
+  critical_path  jsonb NOT NULL DEFAULT '[]'::jsonb,   -- array course_id terurut
+  blockers       jsonb NOT NULL DEFAULT '[]'::jsonb,   -- [{course_id, reason}] ← sumber denialreason
+  published_at   timestamptz, published_by uuid REFERENCES users(id)
+);
+```
+
+### 17.5 ALG-3 — konsentrasi (AHP/TOPSIS + penugasan stabil)
+
+```sql
+CREATE TABLE concentration_criteria_weights (
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id  uuid NOT NULL REFERENCES study_programs(id) ON DELETE CASCADE,
+  entry_year  smallint NOT NULL,               -- angkatan; aturan bisa beda per angkatan
+  criterion   text NOT NULL,                   -- 'ipk','skrs_topsis','wawancara','portofolio','kuota_dosen'
+  kind        text NOT NULL CHECK (kind IN ('QUANTITATIVE','ORDINAL')),
+  weight_bp   integer NOT NULL CHECK (weight_bp BETWEEN 0 AND 10000),  -- basis poin; Σ per (program,entry_year)=10000
+  pairwise    jsonb,                            -- matriks AHP {rows:[…], values:[[…]]}
+  consistency_ratio numeric(5,4),               -- CR hasil; NULL bila belum dihitung
+  version     text NOT NULL,
+  effective_from date NOT NULL,
+  approved_by uuid REFERENCES users(id),         -- empat-mata: pembobotan tidak boleh tunggal
+  UNIQUE (tenant_id, program_id, entry_year, criterion, version)
+);
+CREATE INDEX idx_conc_weights_lookup ON concentration_criteria_weights(tenant_id, program_id, entry_year, version);
+
+CREATE TABLE concentration_preferences (        -- usulan mahasiswa (terkunci setelah penutupan)
+  tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id  uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  run_id      uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  rank        smallint NOT NULL CHECK (rank > 0),
+  concentration_ref text NOT NULL,              -- kode `reference_items(kind='konsentrasi')`
+  PRIMARY KEY (tenant_id, run_id, student_id, rank)
+);
+
+CREATE TABLE concentration_placements (
+  id             uuid PRIMARY KEY,
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id         uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  student_id     uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  concentration_ref text NOT NULL,
+  supervisor_id  uuid REFERENCES lecturers(id),
+  topsis_score   numeric(6,5) NOT NULL,          -- C⁺ ∈ [0,1]
+  tie_break      text NOT NULL,                  -- 'score'|'nim'|'id' — bukti determinisme pemecah ties
+  stable         boolean NOT NULL,               -- hasil verifikasi tiadanya blocking pair
+  published_at   timestamptz, published_by uuid REFERENCES users(id),
+  UNIQUE (tenant_id, run_id, student_id)
+);
+```
+
+### 17.6 ALG-4 — RETE (aturan predikat & clearance)
+
+```sql
+CREATE TABLE rete_fact_types (                  -- katalog fakta yang BOLEH direferensikan aturan
+  fact_key    text PRIMARY KEY,                 -- 'ipk','masa_studi_semester','sks_s1','nilai_min','sertifikat_bahasa'
+  value_type  text NOT NULL CHECK (value_type IN ('numeric','integer','text','boolean','date','enum','interval_days')),
+  unit        text,
+  source      text NOT NULL,                    -- 'grades','students','person_activities','clearances'
+  pii         boolean NOT NULL DEFAULT false,   -- fakta ber-PII tidak boleh masuk log explain
+  description text NOT NULL
+);   -- global (katalog platform); pengecualian RLS tercatat, sama seperti `permissions`
+
+CREATE TABLE rete_rule_definitions (
+  id             uuid PRIMARY KEY,
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  rule_code      text NOT NULL,                  -- 'CUM-LAUDE-IPK-350'
+  scope_kind     text NOT NULL CHECK (scope_kind IN ('TENANT','ORG','PROGRAM','COHORT')),
+  scope_ref      uuid,                            -- id fakultas/prodi; NULL untuk TENANT
+  cohort         smallint,
+  when_tree      jsonb NOT NULL,                  -- {all:[{fact,op,value}|{any:[…]}]} — BUKAN SQL
+  then_actions   jsonb NOT NULL,                  -- [{set:'predicate',value:'CUM_LAUDE'}|{block:'wisuda',reason:'…'}]
+  salience       integer NOT NULL DEFAULT 100,
+  status         text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','ACTIVE','SUPERSEDED','RETIRED')),
+  version        text NOT NULL,
+  effective_from date NOT NULL, effective_to date,
+  requested_by   uuid NOT NULL REFERENCES users(id),
+  approved_by    uuid REFERENCES users(id),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),   -- empat-mata di level baris
+  CHECK (jsonb_typeof(when_tree) = 'object'),
+  UNIQUE (tenant_id, rule_code, version)
+);
+CREATE INDEX idx_rete_rules_active ON rete_rule_definitions(tenant_id, scope_kind, status, effective_from);
+
+CREATE TABLE rete_evaluations (                  -- jejak inferensi per subjek (bukti, bukan opini)
+  id             uuid PRIMARY KEY,
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id         uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  subject_kind   text NOT NULL CHECK (subject_kind IN ('STUDENT','CLASS','INVOICE')),
+  subject_id     uuid NOT NULL,
+  fired_rules    jsonb NOT NULL DEFAULT '[]'::jsonb,   -- [{rule_code,version,matched:[{fact,observed}]}]
+  derived        jsonb NOT NULL DEFAULT '{}'::jsonb,   -- fakta turunan, mis. {predicate:'CUM_LAUDE'}
+  blocked_by     jsonb NOT NULL DEFAULT '[]'::jsonb,   -- aturan pemblokir + sebab
+  snapshot_hash  text NOT NULL
+);
+CREATE INDEX idx_rete_eval_subject ON rete_evaluations(tenant_id, subject_kind, subject_id);
+```
+
+`rete_rule_definitions.status` hanya boleh bernilai `ACTIVE` setelah dua orang berbeda (pemohon ≠ penyetuju) — aturan kelulusan mengubah hak atas gelar, jadi ia diperlakukan seperti perubahan hak akses (SECURITY §3.3, RBAC §7).
+
+### 17.7 ALG-5 — insiden ruang & re-routing
+
+```sql
+CREATE TABLE room_incidents (
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  room_id     uuid REFERENCES rooms(id),
+  building    text,                               -- atau satu gedung penuh
+  scope       text NOT NULL CHECK (scope IN ('ROOM','BUILDING','FLOOR')),
+  kind        text NOT NULL,                      -- 'FLOOD','POWER','RENOVATION','SAFETY','OTHER'
+  slot        int4range NOT NULL,                 -- menit sejak awal pekan [(0,10080)
+  declared_by uuid NOT NULL REFERENCES users(id), approved_by uuid REFERENCES users(id),
+  CHECK (approved_by IS NULL OR approved_by <> declared_by),
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_room_incidents_slot ON room_incidents USING gist (tenant_id, slot);
+
+CREATE TABLE room_distance_penalties (            -- matriks biaya antar ruang/gedung (dikonfigurasi, bukan diukur runtime)
+  tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  from_zone   text NOT NULL, to_zone text NOT NULL,   -- 'GEDUNG_A/L2' atau 'ROOM:uuid'
+  walk_seconds integer NOT NULL CHECK (walk_seconds >= 0),
+  penalty_bp   integer NOT NULL DEFAULT 0,             -- tambahan penalti politis (lintas kampus, dll.)
+  PRIMARY KEY (tenant_id, from_zone, to_zone)
+);
+
+CREATE TABLE room_replan_items (
+  id            uuid PRIMARY KEY,
+  tenant_id     uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id        uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  class_session_id uuid REFERENCES class_sessions(id),
+  from_room_id  uuid REFERENCES rooms(id),
+  to_room_id    uuid REFERENCES rooms(id),
+  new_slot      int4range,
+  moved_students integer NOT NULL DEFAULT 0,
+  cost          numeric(12,3) NOT NULL DEFAULT 0,       -- jarak + penalti
+  relaxation    text NOT NULL DEFAULT 'NONE'
+                  CHECK (relaxation IN ('NONE','PARALLEL_SLOT','MERGE_GROUPS','CROSS_BUILDING','SYNC_LIVE','ASYNC_MODULE')),
+  cut_side      boolean NOT NULL DEFAULT false,          -- true = berada di sisi min-cut (tidak terselamatkan)
+  applied_at    timestamptz, applied_by uuid REFERENCES users(id)
+);
+CREATE INDEX idx_replan_items_slot ON room_replan_items USING gist (tenant_id, new_slot);
+```
+
+### 17.8 ALG-6 — AST formula nilai
+
+```sql
+CREATE TABLE grade_formula_versions (
+  id             uuid PRIMARY KEY,
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  course_id      uuid NOT NULL REFERENCES courses(id),
+  period_id      uuid REFERENCES academic_periods(id),
+  version        text NOT NULL,
+  source_text    text NOT NULL,                     -- teks asli RPS (untuk diff & audit), bukan untuk dieksekusi
+  formula_hash   text NOT NULL,                     -- hash bentuk kanonik; deteksi duplikat
+  weight_sum_bp  integer NOT NULL CHECK (weight_sum_bp = 10000),
+  status         text NOT NULL CHECK (status IN ('DRAFT','VERIFIED','LOCKED','CORRECTED')),
+  compiled_at    timestamptz, approved_by uuid REFERENCES users(id),
+  UNIQUE (tenant_id, course_id, version),
+  UNIQUE (tenant_id, course_id, formula_hash)
+);
+
+CREATE TABLE grade_ast_nodes (                      -- JSONB dipakai bila kampus memilih simpan dokumen utuh; tabel ini untuk query per simpul
+  id            uuid PRIMARY KEY,
+  tenant_id     uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  formula_id    uuid NOT NULL REFERENCES grade_formula_versions(id) ON DELETE CASCADE,
+  parent_id     uuid REFERENCES grade_ast_nodes(id),
+  ordinal       smallint NOT NULL,                  -- urutan anak; determinisme evaluasi kiri→kanan
+  node_type     text NOT NULL CHECK (node_type IN ('CONST','VAR','OP','FUNC','WEIGHT')),
+  op            text CHECK (op IN ('+','-','*','/','min','max','clamp','drop_lowest')),
+  const_value   numeric(8,5),
+  component_ref text,                                -- id/kode `grade_components`
+  weight_bp     integer CHECK (weight_bp IS NULL OR weight_bp BETWEEN 0 AND 10000),
+  depth         smallint NOT NULL CHECK (depth <= 12),
+  UNIQUE (formula_id, id)
+);
+CREATE INDEX idx_grade_ast_formula ON grade_ast_nodes(tenant_id, formula_id, parent_id, ordinal);
+```
+
+Node disimpan bertipe `numeric`, bukan `double precision` (ADR-5 + parity Flutter), dan **tidak ada kolom yang pernah dieksekusi dengan `eval()`** — evaluator membaca pohon ini (ARCHITECTURE §11.8).
+
+### 17.9 ALG-7 — ekstraksi dokumen (berisi PII; retensi wajib)
+
+```sql
+CREATE TABLE document_templates (
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind        text NOT NULL,                        -- 'transkrip_mbkm','khs','surat_tugas','berkas_pmb','ktp'
+  fingerprint jsonb NOT NULL,                        -- {contains:[…], header:'…', pageCount:1}
+  version     text NOT NULL,
+  status      text NOT NULL CHECK (status IN ('DRAFT','ACTIVE','RETIRED')),
+  requested_by uuid REFERENCES users(id), approved_by uuid REFERENCES users(id),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),      -- template = kewenangan: empat-mata
+  UNIQUE (tenant_id, kind, version)
+);
+
+CREATE TABLE document_template_anchors (
+  template_id  uuid NOT NULL REFERENCES document_templates(id) ON DELETE CASCADE,
+  field_key    text NOT NULL,                       -- 'nim','prodi','period','courses[].code','courses[].grade'
+  anchor_regex text NOT NULL,                       -- jangkar label; nilai diambil relatif terhadapnya
+  geometry     jsonb NOT NULL DEFAULT '{}'::jsonb,  -- {dx,dy,maxWidth} relatif terhadap jangkar
+  value_type   text NOT NULL CHECK (value_type IN ('string','nim','sks','grade','date','currency','enum','table_row')),
+  target_dict  text,                                -- kamus tujuan: 'courses','study_programs','reference_items', NULL
+  required     boolean NOT NULL DEFAULT false,
+  auto_fill_min numeric(5,4) NOT NULL DEFAULT 0.92 CHECK (auto_fill_min BETWEEN 0 AND 1),
+  review_min   numeric(5,4) NOT NULL DEFAULT 0.75 CHECK (review_min BETWEEN 0 AND 1),
+  PRIMARY KEY (template_id, field_key)
+);   -- tenant_id diwarisi lewat FK komposit bila diperlukan untuk RLS eksplisit
+
+CREATE TABLE document_extractions (
+  id            uuid PRIMARY KEY,
+  tenant_id     uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id        uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  template_id   uuid REFERENCES document_templates(id),
+  actor_user_id uuid REFERENCES users(id),          -- mahasiswa yang mengunggah (bisa NULL untuk berkas PMB)
+  file_sha256   text NOT NULL,
+  media_type    text NOT NULL CHECK (media_type IN ('application/pdf','image/jpeg','image/png')),
+  page_count    smallint NOT NULL CHECK (page_count BETWEEN 1 AND 50),
+  layers_used   text[] NOT NULL DEFAULT '{}',        -- {'form_fields','pdf_text','ocr'} — jujur soal jalur
+  language      text NOT NULL DEFAULT 'ind',
+  avg_confidence numeric(5,4),
+  needs_review  boolean NOT NULL DEFAULT true,       -- tidak pernah default "sudah benar"
+  pii_encrypted boolean NOT NULL DEFAULT true,
+  applied_at    timestamptz, applied_by uuid REFERENCES users(id),
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  expires_at    timestamptz NOT NULL,                -- default created_at + 30 hari
+  UNIQUE (tenant_id, run_id, file_sha256)
+);
+
+CREATE TABLE document_extraction_fields (
+  id            uuid PRIMARY KEY,
+  tenant_id     uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  extraction_id uuid NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
+  field_key     text NOT NULL,                       -- 'nim','courses[].title' dst.
+  raw_text      text,                                -- hasil baca mentah (boleh salah; disimpan untuk bukti)
+  norm_text     text,                                -- setelah NFD/casefold/kanalisasi
+  method        text NOT NULL CHECK (method IN ('form_field','pdf_text','ocr','manual')),
+  score         numeric(5,4) NOT NULL CHECK (score BETWEEN 0 AND 1),
+  margin        numeric(5,4),                         -- selisih peringkat kandidat #1 vs #2
+  candidate_ref uuid,                                 -- id baris master hasil grounding; NULL bila tak yakin
+  source_span   jsonb NOT NULL DEFAULT '{}'::jsonb,   -- {page,bbox:[x0,y0,x1,y1],row,col}
+  verdict       text NOT NULL DEFAULT 'REVIEW' CHECK (verdict IN ('AUTO','REVIEW','EMPTY','REJECTED')),
+  UNIQUE (extraction_id, field_key)
+);
+CREATE INDEX idx_doc_fields_lookup ON document_extraction_fields(tenant_id, extraction_id, verdict);
+```
+
+Teks hasil ekstraksi diperlakukan sebagai **data mentah**: tidak pernah menjadi instruksi, tidak pernah masuk ke SQL yang dirakit dinamis, dan nilai yang diterapkan ke sistem selalu lewat *allowlist* field + `candidate_ref` yang sudah diverifikasi (SECURITY §10.4).
+
+### 17.10 Enum & objek baru yang wajib masuk register §15
+
+| Objek | Jenis | Catatan |
+|---|---|---|
+| `engine_code` | CHECK enum pada `engine_runs` | 7 nilai, identik `ALG-1`…`ALG-7`; bila dijadikan `pgEnum`, daftarkan di §15 |
+| `engine_run_status` | `QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/NEEDS_REVIEW` | worker-queue contract |
+| `rete_rule_status` | `DRAFT/ACTIVE/SUPERSEDED/RETIRED` | transisi hanya via `VALIDATE` |
+| `rete_fact_value_type` | `numeric/integer/text/boolean/date/enum/interval_days` | kompilasi aturan menolak tipe tak dikenal |
+| `doc_extraction_method` | `form_field/pdf_text/ocr/manual` | wajib tampil di UI agar pengguna tahu asal angka |
+| `doc_field_verdict` | `AUTO/REVIEW/EMPTY/REJECTED` | ambang keyakinan §17.9 |
+| `room_relaxation_kind` | `NONE/PARALLEL_SLOT/MERGE_GROUPS/CROSS_BUILDING/SYNC_LIVE/ASYNC_MODULE` | urutan relaksasi min-cut |
+
+### 17.11 Status implementasi, migrasi, dan tes CI
+
+| Item | Migrasi tujuan | Kode Drizzle | Status |
+|---|---|---|---|
+| Harness `engine_runs` + 7 tabel hasil | `0036_engine_algorithms.sql` (expand-only; **ralat** dari `0013_engine_algorithms.sql` — nomor itu milik `0013_institution_gaps.sql` §14.7, vonis §18.1) | ❌ belum dibuat | 📋 spesifikasi (bab ini) |
+| `btree_gist` + indeks GiST `int4range` | `0013_…` baris pertama | ❌ | 📋 — prasyarat: extension tersedia di Supabase (sudah diizinkan) |
+| RLS `ENABLE`+`FORCE`+policy untuk seluruh tabel §17.2–§17.9 | `0013_…` blok akhir | ❌ | 📋 — generator §6.2, tanpa pengecualian |
+| `rete_fact_types` (katalog global) | `0013_…` | ❌ | 📋 — pengecualian RLS tercatat, seperti `permissions`/`modules` |
+| Dependensi data yang belum ada: `course_prerequisites`, `course_equivalencies`, `rooms` terisi | `0008_curriculum_prereq_equivalency.sql` (ADM-3) | ❌ | 🔴 **menahan ALG-1 & ALG-5 & ALG-7** — engine berjalan dalam mode turun (§11.10) sampai sini selesai |
+| Retensi & hapus otomatis berkas mentah | `0013_…` + job | ❌ | 📋 — wajib sebelum fitur unggah-isi dibuka ke mahasiswa |
+
+Query verifikasi (dipakai sebagai tes CI, bukan dokumentasi):
+
+```sql
+-- 1. Tidak ada satu pun tabel engine tanpa policy tenant_isolation:
+SELECT c.relname
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname='public' AND c.relname IN ('engine_runs','lab_allocation_items','graduation_path_nodes',
+      'graduation_path_edges','graduation_simulations','concentration_criteria_weights',
+      'concentration_preferences','concentration_placements','rete_rule_definitions','rete_evaluations',
+      'room_incidents','room_distance_penalties','room_replan_items','grade_formula_versions',
+      'grade_ast_nodes','document_templates','document_template_anchors','document_extractions',
+      'document_extraction_fields')
+  AND c.relrowsecurity = false;      -- wajib mengembalikan 0 baris
+
+-- 2. Tidak ada bobot yang tidak menutup 100%:
+SELECT formula_id FROM grade_formula_versions WHERE weight_sum_bp <> 10000;   -- wajib 0 baris
+
+-- 3. Tidak ada aturan tanpa penyetuju (kecuali DRAFT):
+SELECT rule_code, version FROM rete_rule_definitions
+WHERE status = 'ACTIVE' AND (approved_by IS NULL OR approved_by = requested_by);  -- wajib 0 baris
+
+-- 4. Bentrok alokasi tidak mungkin tersimpan pada ruang yang sama:
+SELECT a.id, b.id FROM lab_allocation_items a JOIN lab_allocation_items b
+  ON a.tenant_id=b.tenant_id AND a.room_id=b.room_id AND a.day_of_week=b.day_of_week
+ AND a.slot && b.slot AND a.id < b.id;                                            -- wajib 0 baris
+
+-- 5. Field AUTO harus punya bukti grounding:
+SELECT id FROM document_extraction_fields
+WHERE verdict='AUTO' AND (candidate_ref IS NULL OR score < 0.92);                  -- wajib 0 baris
+```
+
+---
+
+## 18. Skema Engine Gelombang 2 (ALG-8…ALG-14) — 2026-10-20
+
+Algoritmanya dimiliki [ARCHITECTURE §12](file:///c:/SICA/docs/ARCHITECTURE.md); bab ini hanya menuangkannya menjadi objek. Konvensi §1 dan §17.1 berlaku penuh (UUIDv7 dari aplikasi, `tenant_id` di semua tabel domain, uang `bigint` rupiah, SKS `numeric(4,1)`, tanpa `deleted_at`, indeks selalu berawa `tenant_id`, RLS `ENABLE`+`FORCE`+`tenant_isolation` lewat generator §6.2 tanpa pengecualian).
+
+**Nomor migrasi gelombang ini** (registrinya §14.7; satu nomor = satu nama berkas): `0036_engine_algorithms.sql` (ralat penomoran — lihat §18.1), `0037_timetabling_csp.sql`, `0038_advisor_recommendations.sql`, `0039_ews_risk_models.sql`, `0040_feeder_autofix.sql`, `0041_attendance_antifraud.sql`, `0042_obe_attainment_loop.sql`, `0043_audit_chain_anchors.sql`.
+
+### 18.1 Ralat penomoran harness engine (tutup tabrakan yang saya ukur)
+
+§17.11 mendaftarkan harness sebagai `0013_engine_algorithms.sql`, padahal §14.7 mendaftarkan `0013_institution_gaps.sql`. **Satu nomor tidak boleh dipakai dua nama berkas.** Vonis: §14.7 menang (ia pemilik register), harness + seluruh tabel hasil ALG-1…ALG-7 pindah ke **`0036_engine_algorithms.sql`**. Sah karena `0013` belum pernah dieksekusi (status seluruh gugus ini masih 📋), dan `0036` dijalankan setelah `0013_institution_gaps.sql` justru lebih baik: gugus A kelembagaan menyediakan `time_slots` yang dipakai §18.2. Baris §17.11 sudah menunjuk ke nomor baru ini.
+
+### 18.2 ALG-8 · Timetabling (CSP) — `0037_timetabling_csp.sql`
+
+Objek yang **dipakai ulang, tidak dibuat kembar**: `time_slots` (`0013`), `rooms` + `facilities jsonb` (§5), `lab_resource_capabilities` (§17.3), `room_distance_penalties` (§17.7), `class_distributions` (`0023`), `class_sessions`/`class_schedules` (§5), `class_assignments` (§5).
+
+```sql
+CREATE TYPE timetabling_constraint_kind AS ENUM ('HARD','SOFT');
+
+CREATE TABLE timetabling_constraint_defs (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  code text NOT NULL,                                  -- H1_STUDENT_CLASH … S5_MORNING_PREFERENCE
+  kind timetabling_constraint_kind NOT NULL,
+  weight_bp int CHECK ((kind = 'SOFT' AND weight_bp BETWEEN 1 AND 10000) OR (kind = 'HARD')),
+  params jsonb NOT NULL DEFAULT '{}'::jsonb,           -- ambang yang tenant boleh ubah (jam/minggu pengampu, radius pindah)
+  version int NOT NULL DEFAULT 1, status text NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('DRAFT','ACTIVE','RETIRED')),
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  effective_from date NOT NULL, effective_to date,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code, version),
+  CHECK (approved_by IS NULL OR (approved_by <> requested_by AND status = 'ACTIVE'))  -- empat-mata: kendala = kebijakan akademik
+);
+
+CREATE TABLE lecturer_availability (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  lecturer_membership_id uuid NOT NULL, program_id uuid REFERENCES study_programs(id),
+  site_id uuid,                                                    -- FK ke campus_sites, §19.1 (ditambah di 0044)
+  day_of_week smallint NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+  slot int4range NOT NULL,                                         -- [mulai,end) dalam menit-ke-menit sejak 00:00 → GiST
+  mode text NOT NULL DEFAULT 'ONSITE' CHECK (mode IN ('ONSITE','ONLINE','BLENDED')),
+  source text NOT NULL DEFAULT 'DECLARED' CHECK (source IN ('DECLARED','DERIVED_FROM_SCHEDULE','IMPORTED','BKD_PLAN')),
+  note text, created_by uuid, updated_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  EXCLUDE USING gist (tenant_id WITH =, lecturer_membership_id WITH =, day_of_week WITH =, slot WITH &&)
+);
+CREATE INDEX idx_lect_avail_lookup ON lecturer_availability(tenant_id, lecturer_membership_id, day_of_week);
+
+CREATE TABLE timetabling_requests (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  period_id uuid NOT NULL, course_id uuid NOT NULL, program_id uuid NOT NULL,
+  group_code text, concentration_id uuid, scheme_id uuid REFERENCES enrollment_schemes(id),
+  entry_year smallint, participants int NOT NULL CHECK (participants > 0),
+  meeting_count smallint NOT NULL CHECK (meeting_count BETWEEN 1 AND 8),
+  meeting_minutes smallint NOT NULL CHECK (meeting_minutes IN (50,90,100,150,170,180)),
+  required_room_type text, required_facilities jsonb NOT NULL DEFAULT '[]'::jsonb,
+  required_equipment jsonb NOT NULL DEFAULT '[]'::jsonb,           -- ditunjuk ke lab_resource_capabilities (§17.3)
+  lecturer_membership_id uuid, max_hours_week smallint,
+  fixed_slot int4range, fixed_day smallint,                        -- permintaan yang sudah tidak boleh gerak
+  source text NOT NULL DEFAULT 'CLASS_DISTRIBUTION' CHECK (source IN ('CLASS_DISTRIBUTION','MANUAL','CARRY_OVER')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, period_id, course_id, group_code, entry_year)
+);
+
+CREATE TABLE timetabling_assignments (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  run_id uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  request_id uuid NOT NULL REFERENCES timetabling_requests(id),
+  day_of_week smallint NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+  slot int4range NOT NULL, room_id uuid REFERENCES rooms(id),
+  lecturer_membership_id uuid,
+  soft_cost_bp int NOT NULL DEFAULT 0 CHECK (soft_cost_bp >= 0),
+  penalty_detail jsonb NOT NULL DEFAULT '[]'::jsonb,               -- [{code, bp, why}] — isi `explain` yang dapat dibaca
+  status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','APPLIED','REJECTED')),
+  applied_by uuid, applied_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (run_id, request_id),                                     -- satu permintaan satu tempat per run
+  CONSTRAINT uq_tt_room_slot EXCLUDE USING gist (run_id WITH =, room_id WITH =, day_of_week WITH =, slot WITH &&),
+  CONSTRAINT uq_tt_lect_slot EXCLUDE USING gist (run_id WITH =, lecturer_membership_id WITH =, day_of_week WITH =, slot WITH &&)
+);
+CREATE INDEX idx_tt_assign_room ON timetabling_assignments(tenant_id, run_id, day_of_week);
+```
+
+**Kenapa `EXCLUDE` ada di draf.** Kalau draf boleh bentrok, engine akan "menghasilkan jadwal yang tampak jadi" dan pelanggaran baru terlihat saat penerapan — persis cacat yang diperangi §11.1. Draf yang tidak layak **tidak dapat disimpan**; engine harus mengembalikannya sebagai inti konflik (`explain`), bukan sebagai baris.
+
+**`participants ≤ rooms.capacity`** tidak dapat ditegakkan `CHECK` lintas tabel → ditegakkan di service (L5) **dan** di bukti CI §18.9 butir 2 (join dua tabel, wajib 0 baris). Jangan menulis pemicu yang membaca `rooms` di dalam INSERT massal engine: itu serialisasi yang dilarang §10.2.
+
+### 18.3 ALG-9 · Rekomendasi penasihat — `0038_advisor_recommendations.sql`
+
+Dipakai ulang: `course_prerequisites` (`0008`), `advisement_assignments` (`0016`), `academic_rules` (bobot skor), `enrollments`/`grades`/`krs_offering_seats`.
+
+```sql
+CREATE TABLE advisor_recommendations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  run_id uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id), period_id uuid NOT NULL,
+  course_id uuid NOT NULL, rank int NOT NULL CHECK (rank > 0),
+  score_bp int NOT NULL CHECK (score_bp BETWEEN 0 AND 10000),
+  components jsonb NOT NULL,                       -- {crit_bp, termfit_bp, pathdelta_bp, hist_bp, passrate_bp, workload_bp} + n per komponen
+  reasons text[] NOT NULL CHECK (cardinality(reasons) BETWEEN 1 AND 6),
+  -- Kosakata reasons dibatasi CHECK (bukan string bebas): ini yang dibaca UI sebagai lencana.
+  sks_after int NOT NULL CHECK (sks_after BETWEEN 0 AND 24),
+  est_graduation_term text, degraded text,         -- 'NO_PREREQ_DATA' | 'LOW_SAMPLE' | NULL
+  UNIQUE (run_id, student_id, course_id), UNIQUE (run_id, student_id, rank)
+);
+CREATE INDEX idx_advrec_student ON advisor_recommendations(tenant_id, student_id, period_id, rank);
+
+CREATE TABLE advisor_notes (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  student_id uuid NOT NULL REFERENCES students(id), period_id uuid,
+  advisor_membership_id uuid NOT NULL, body text NOT NULL,
+  visibility text NOT NULL DEFAULT 'ADVISOR_ONLY' CHECK (visibility IN ('ADVISOR_ONLY','STUDENT_VISIBLE')),
+  created_by uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz
+);
+CREATE INDEX idx_advnote_student ON advisor_notes(tenant_id, student_id, created_at DESC);
+```
+
+`advisor_notes.visibility = 'ADVISOR_ONLY'` adalah contoh **hak tingkat field** (BLUEPRINT_ROLE_BY_ROLE §0.3): keduanya terbaca oleh wali yang sama, tetapi proyeksi server tidak pernah mengirim `ADVISOR_ONLY` ke peran `STUDENT`. Bukan disembunyikan di CSS.
+
+### 18.4 ALG-10 · EWS / risiko putus studi — `0039_ews_risk_models.sql`
+
+Dipakai ulang: `study_warnings` (`0016`) — tabel itu **sudah** menjadi objek tindak lanjut, jadi tidak dibuat tabel "kasus" kedua; kolom penutupan ditambahkan lewat ALTER di bawah.
+
+```sql
+CREATE TABLE ews_feature_snapshots (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  student_id uuid NOT NULL REFERENCES students(id), as_of_period_id uuid NOT NULL,
+  features jsonb NOT NULL,                          -- hanya nama fitur yang terdaftar di ml_model_versions.features
+  inputs_digest char(64) NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, student_id, as_of_period_id)
+);
+
+CREATE TABLE ml_model_versions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  task text NOT NULL CHECK (task IN ('DROPOUT_RISK','LATE_GRADUATION_RISK','GPA_FORECAST')),
+  version int NOT NULL CHECK (version > 0),
+  family text NOT NULL CHECK (family IN ('LOGISTIC','TREE_SHALLOW')),   -- v1: dapat dibaca manusia; ONNX = P-11, belum dibuka
+  features jsonb NOT NULL,                         -- [{code, dtype, transform, window}] — denylist atribut DIUJI di sini
+  artifact jsonb NOT NULL,                         -- koefisien | daftar pohon (depth<=3, trees<=60)
+  calibration jsonb NOT NULL,                      -- {kind:'ISOTONIC', points:[…]} — tanpa ini skor bukan probabilitas
+  train_window text NOT NULL, n_train int NOT NULL CHECK (n_train >= 200), n_eval int NOT NULL CHECK (n_eval >= 100),
+  metrics jsonb NOT NULL,                          -- {auc, pr_auc, brier}
+  fairness jsonb NOT NULL,                         -- {by_cohort:[…], by_program:[…]} — selisih ambang antar kelompok, dilaporkan bukan disembunyikan
+  status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','CANDIDATE','ACTIVE','RETIRED')),
+  trained_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz,
+  UNIQUE (tenant_id, task, version),
+  CHECK (status <> 'ACTIVE' OR (approved_by IS NOT NULL AND approved_by <> trained_by)),  -- yang melatih tidak menyetujui sendiri
+  CHECK (status <> 'ACTIVE' OR (metrics->>'auc')::numeric >= 0.70 AND (metrics->>'brier')::numeric <= 0.18)
+);
+
+CREATE TABLE risk_scores (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  run_id uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id), period_id uuid NOT NULL,
+  model_id uuid NOT NULL REFERENCES ml_model_versions(id),
+  score numeric(6,5) NOT NULL CHECK (score BETWEEN 0 AND 1), band text NOT NULL CHECK (band IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+  top_factors jsonb NOT NULL CHECK (cardinality(top_factors) BETWEEN 1 AND 3),   -- [{code, contribution}] — eksak, bukan taksiran
+  hard_triggers text[] NOT NULL DEFAULT '{}',      -- aturan deterministik yang menyala sendiri (kehadiran<75 %, KRS kosong, tunggakan>30 hari)
+  degraded text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, run_id, student_id)
+);
+CREATE INDEX idx_risk_student ON risk_scores(tenant_id, student_id, period_id);
+
+ALTER study_warnings ADD COLUMN owner_membership_id uuid;
+ALTER study_warnings ADD COLUMN due_at timestamptz;
+ALTER study_warnings ADD COLUMN acknowledged_at timestamptz;
+ALTER study_warnings ADD COLUMN resolved_outcome text CHECK (resolved_outcome IN ('CONTACTED','PLAN_ADJUSTED','COUNSELING','FINANCE_PLAN','NO_CONTACT','OTHER'));
+ALTER study_warnings ADD COLUMN risk_score_id uuid;
+```
+
+**Kunci CHECK pada `ml_model_versions.metrics` bukan hiasan.** Tanpa gerbang itu, "model sudah ACTIVE" bisa berarti apa pun dan layar tetap menampilkan angka. Kalau AUC 0,62, **baris tidak dapat menjadi ACTIVE**, dan karena itu tidak dapat menghasilkan skor — fitur turun ke aturan keras saja (ARCHITECTURE §12.5). Ini penegakan di tempat yang benar (DB), bukan di UI.
+
+**Yang sengaja tidak ada:** kolom apa pun yang menyimpan atribut pribadi terlindungi sebagai fitur. Daftar terlarang (agama, suku, kewarganegaraan, jenis kelamin, disabilitas, asal sekolah, jalur masuk, kelompokAbility bayar orang tua sebagai prediktor tunggal) ditegakkan oleh tes CI §18.9 butir 6 terhadap `features`, bukan oleh niat baik.
+
+### 18.5 ALG-11 · Pra-validasi & auto-fix Feeder — `0040_feeder_autofix.sql`
+
+Dipakai ulang: `pddikti_staging_*` + `pddikti_payload_snapshots` (`0031`), **`pddikti_validation_findings` (§5, sudah ada — temuan tidak dibuat dua tabel)**, `reference_items` (§14.2, kamus wilayah/gelar/jenis), `feeder_jobs` + `feeder_identities` (`0028`), view `pddikti_validation_runs` (§16.4.4 — **tetap view, tidak diubah jadi tabel**).
+
+```sql
+CREATE TYPE feeder_autofix_kind AS ENUM ('FORMAT','ENRICH','IDENTITY','SEMANTIC','BLOCKING');
+
+CREATE TABLE feeder_autofix_rules (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  rule_code text NOT NULL, kind feeder_autofix_kind NOT NULL,
+  domain pddikti_domain NOT NULL,                  -- enum §16.4.4: tujuh domain kirim
+  applies_to jsonb NOT NULL,                       -- {column:'nisn'} | {columns:[…]}
+  check_expr jsonb NOT NULL,                       -- pohon kondisi JSONB yang sama dengan RETE (§17.6) — satu interpreter, bukan dua
+  fix_expr jsonb,                                  -- HANYA untuk FORMAT/ENRICH; SEMANTIC/BLOCKING wajib NULL
+  threshold jsonb,                                 -- {metric:'JW', auto:0.95, review:0.80, min_margin:0.10}
+  version int NOT NULL DEFAULT 1, status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','ACTIVE','RETIRED')),
+  source_ref text NOT NULL,                        -- 'Permendikbudristek 53/2023 ps. X' | 'Kamus Neo Feeder v…' — aturan tanpa sumber tidak boleh ACTIVE
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, rule_code, version),
+  CHECK ((kind IN ('SEMANTIC','BLOCKING','IDENTITY') AND fix_expr IS NULL) OR (kind IN ('FORMAT','ENRICH') AND fix_expr IS NOT NULL)),
+  CHECK (status <> 'ACTIVE' OR (approved_by IS NOT NULL AND approved_by <> requested_by))
+);
+
+CREATE TABLE feeder_autofix_suggestions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  run_id uuid NOT NULL REFERENCES pddikti_sync_runs(id), rule_id uuid NOT NULL REFERENCES feeder_autofix_rules(id),
+  staging_table text NOT NULL, staging_id uuid NOT NULL, record_key text NOT NULL,
+  column_name text NOT NULL, before_value text, after_value text,
+  metric text, score numeric(6,5), runner_up_score numeric(6,5), margin numeric(6,5),
+  verdict text NOT NULL CHECK (verdict IN ('AUTO','REVIEW','NO_MATCH','REJECT')),
+  applied_by uuid, applied_at timestamptz, reverted_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (run_id, staging_table, staging_id, column_name, rule_id),   -- run ulang tidak menggandakan perbaikan (idempoten)
+  CHECK (verdict <> 'AUTO' OR (applied_by IS NOT NULL AND applied_at IS NOT NULL))
+);
+
+CREATE TABLE feeder_identity_matches (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  entity_type text NOT NULL, local_id uuid NOT NULL, candidate_feeder_id text NOT NULL,
+  metric text NOT NULL CHECK (metric IN ('JW','LEVENSHTEIN','DICE3','TFIDF')), score numeric(6,5) NOT NULL,
+  margin numeric(6,5), blocked_by text NOT NULL,                     -- kunci blocking yang dipakai (audit biaya O(n·k))
+  verdict text NOT NULL CHECK (verdict IN ('AUTO','REVIEW','NO_MATCH')),
+  confirmed_by uuid, confirmed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, entity_type, local_id, candidate_feeder_id)
+);
+-- INVARANCE I-14: TIDAK ada kolom feeder_id di tabel ini. Pasangan kemiripan apa pun tidak memberi hak menulis id pusat;
+-- id pusat hanya masuk lewat feeder_identities dari respons bridge (`0028`). Bentuk skema ini adalah penegakannya.
+
+CREATE TABLE feeder_sync_watermarks (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  domain pddikti_domain NOT NULL, entity text NOT NULL,
+  last_committed_at timestamptz, last_run_id uuid REFERENCES pddikti_sync_runs(id),
+  row_count int NOT NULL DEFAULT 0 CHECK (row_count >= 0), digest char(64),
+  forced_full_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, domain, entity)
+);
+```
+
+**Kenapa airmen tidak pernah ikut `run` gagal.** Aturan servis (ARCHITECTURE §12.10): hanya baris `SUCCEEDED` yang boleh menggeser `last_committed_at`. Bila satu run menggeser airmen untuk seluruh barisnya, kegagalan sebagian membuat baris yang belum pernah diterima pusat **tidak pernah terkirim lagi** — kehilangan data yang senyap, jenis cacat paling berbahaya di jalur Feeder.
+
+### 18.6 ALG-12 · Presensi anti-pemalsuan — `0041_attendance_antifraud.sql`
+
+Dipakai ulang: `attendances` (§5) dan kolom perluasan yang **sudah direncanakan** di §11.4 (`status`, `meeting_seq`, `method`, `latitude`, `longitude`, `accuracy_m`, `is_mock_location`, `device_id` — penutup G-07). Sesi presensi menunjuk `class_sessions` (§5); **tidak ada** tabel sesi terpisah, dan tidak dibuat.
+
+```sql
+ALTER rooms ADD COLUMN longitude numeric(9,6);
+ALTER rooms ADD COLUMN latitude numeric(9,6);
+ALTER rooms ADD COLUMN allowed_radius_m smallint NOT NULL DEFAULT 75 CHECK (allowed_radius_m BETWEEN 10 AND 500);
+ALTER rooms ADD COLUMN max_accuracy_m smallint NOT NULL DEFAULT 50 CHECK (max_accuracy_m BETWEEN 5 AND 200);
+ALTER rooms ADD CHECK ((longitude IS NULL AND latitude IS NULL) OR (longitude IS NOT NULL AND latitude IS NOT NULL));
+
+ALTER class_sessions ADD COLUMN qr_rotate_seconds smallint NOT NULL DEFAULT 5 CHECK (qr_rotate_seconds IN (5,10,15));
+ALTER class_sessions ADD COLUMN qr_window smallint NOT NULL DEFAULT 1 CHECK (qr_window BETWEEN 0 AND 2);
+ALTER class_sessions ADD COLUMN fence_override_m smallint CHECK (fence_override_m BETWEEN 10 AND 500);
+ALTER class_sessions ADD COLUMN challenge_required boolean NOT NULL DEFAULT true;
+
+CREATE TABLE attendance_token_uses (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  session_id uuid NOT NULL REFERENCES class_sessions(id),
+  counter bigint NOT NULL CHECK (counter > 0),
+  mac9 char(9) NOT NULL,                            -- HANYA 9 digit tampilan; secret TIDAK pernah disimpan
+  student_id uuid NOT NULL REFERENCES students(id),
+  result text NOT NULL CHECK (result IN ('ACCEPTED','REJECTED_REPLAY','OUT_OF_FENCE','GPS_LOW_ACCURACY','NO_LOCATION','REJECTED_FRAUD_SUSPECT','CHALLENGED_FAILED')),
+  distance_m numeric(8,2), accuracy_m numeric(6,1), ip inet NOT NULL, device_digest char(64),
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, session_id, counter)           -- sekali-pakai ditegakkan di DB, BUKAN hanya di Redis (fail-closed §10.7)
+);
+CREATE INDEX idx_atu_student ON attendance_token_uses(tenant_id, student_id, occurred_at DESC);
+
+CREATE TABLE attendance_network_allowlists (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  room_id uuid NOT NULL REFERENCES rooms(id),
+  bssid_hash char(64) NOT NULL,                     -- HMAC-SHA256 tenant-keyed; BSSID plaintext tidak disimpan (peta Wi-Fi = data lokasi)
+  label text NOT NULL, valid_from date NOT NULL, valid_to date,
+  created_by uuid, created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, room_id, bssid_hash)
+);
+
+CREATE TABLE attendance_device_bindings (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  membership_id uuid NOT NULL, install_digest char(64) NOT NULL,
+  platform text NOT NULL CHECK (platform IN ('ANDROID','IOS','WEB')), first_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now(), share_count int NOT NULL DEFAULT 0 CHECK (share_count >= 0),
+  UNIQUE (tenant_id, membership_id, install_digest)
+);
+
+CREATE TABLE attendance_fraud_findings (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  attendance_id uuid REFERENCES attendances(id), student_id uuid NOT NULL REFERENCES students(id),
+  session_id uuid NOT NULL REFERENCES class_sessions(id),
+  signals jsonb NOT NULL CHECK (signals <> '{}'::jsonb),    -- {bssid_offlist:1, ip_offnet:1, mock_location:1, impossible_travel_m:12000, multi_device:2}
+  fraud_score_bp int NOT NULL CHECK (fraud_score_bp BETWEEN 0 AND 10000),
+  verdict text NOT NULL CHECK (verdict IN ('ACCEPTED','PENDING_REVIEW','REJECTED_FRAUD_SUSPECT')),
+  appeal_id uuid,                                                -- menunjuk attendance_appeals (`0017`) — bukan tabel banding kedua
+  reviewed_by uuid, reviewed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, session_id, student_id)
+);
+```
+
+**Rahasia kunci dan keputusannya.** Tabel ini **tidak** menyimpan `secret` sesi (diturunkan HKDF saat dibutuhkan dari `IK_attendance` tenant) dan **tidak** menyimpan 9 digit penuh untuk upaya gagal. Alasannya: jejak verifikasi yang menyimpan token sah dapat dipakai memalsukan presensi mundur; yang dibutuhkan auditor hanya bukti "counter ini sudah terpakai".
+
+**Penutupan rujukan API_SPEC.** Pergerakan mustahil **tidak** menambah nilai pada kolom `result` di `attendance_token_uses`; ia adalah sinyal `impossible_travel_m` di `attendance_fraud_findings.signals` dengan vonis `REJECTED_FRAUD_SUSPECT` — dua-duanya sudah ada di blok di atas. Karena itu `API_SPEC` baris 102 (`ATTENDANCE_IMPOSSIBLE_TRAVEL`) tidak menuntut perluasan kosakata DB, dan tidak ada "status presensi" kedua yang hidup hanya di kontrak.
+
+### 18.7 ALG-13 · Loop capaian OBE — `0042_obe_attainment_loop.sql`
+
+Dipakai ulang dan **tidak dibuat kembar**: `program_outcomes`, `course_outcomes`, `outcome_sub_components`, `outcome_matrix`, `outcome_attainments`, `assessment_indicators` (`0032`, §16.2), `grade_components` (Item Penilaian).
+
+```sql
+CREATE TABLE assessment_rubric_bands (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  indicator_id uuid NOT NULL REFERENCES assessment_indicators(id),
+  code text NOT NULL,                              -- 'CUKUP','BAIK','SANGAT_BAIK'
+  lower_value numeric(6,3) NOT NULL, upper_value numeric(6,3) NOT NULL,
+  attainment_num numeric(6,5) NOT NULL CHECK (attainment_num BETWEEN 0 AND 1),
+  CHECK (upper_value > lower_value), UNIQUE (tenant_id, indicator_id, code),
+  EXCLUDE USING gist (tenant_id WITH =, indicator_id WITH =, numrange(lower_value, upper_value, '[)') WITH &&)
+);
+
+ALTER outcome_attainments ADD COLUMN n_evaluated int NOT NULL DEFAULT 0 CHECK (n_evaluated >= 0);
+ALTER outcome_attainments ADD COLUMN n_enrolled int NOT NULL DEFAULT 0 CHECK (n_enrolled >= 0);
+ALTER outcome_attainments ADD COLUMN n_missing_evidence int NOT NULL DEFAULT 0 CHECK (n_missing_evidence >= 0);
+ALTER outcome_attainments ADD COLUMN coverage numeric(4,3) CHECK (coverage BETWEEN 0 AND 1);
+ALTER outcome_attainments ADD COLUMN attainment_by_sks numeric(6,5);
+ALTER outcome_attainments ADD COLUMN rollup_method text NOT NULL DEFAULT 'SKS_WEIGHTED'
+  CHECK (rollup_method IN ('SKS_WEIGHTED','STUDENT_MEAN','CLASS_MEAN'));
+
+CREATE TABLE cpl_targets (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  curriculum_id uuid NOT NULL, outcome_id uuid NOT NULL, entry_year smallint NOT NULL,
+  target_attainment numeric(6,5) NOT NULL CHECK (target_attainment BETWEEN 0 AND 1),
+  min_coverage numeric(4,3) NOT NULL DEFAULT 0.800 CHECK (min_coverage BETWEEN 0 AND 1),
+  approved_by uuid NOT NULL, effective_from date NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz,
+  UNIQUE (tenant_id, curriculum_id, outcome_id, entry_year)
+);
+
+CREATE TABLE obe_closing_actions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  attainment_id uuid NOT NULL REFERENCES outcome_attainments(id),
+  gap_bp int NOT NULL CHECK (gap_bp > 0),                     -- selisih target − capaian, basis poin: tidak ada "sedikit di bawah" tanpa angka
+  root_cause text NOT NULL,                                   -- menunjuk indikator/penyebab terukur, bukan kalimat umum
+  planned_action text NOT NULL CHECK (planned_action IN ('ADDITIONAL_TASK','METHOD_CHANGE','ASSESSMENT_CHANGE','CONTENT_CHANGE','STUDENT_SUPPORT')),
+  owner_membership_id uuid NOT NULL, due_date date NOT NULL,
+  status text NOT NULL DEFAULT 'PROPOSED' CHECK (status IN ('PROPOSED','APPROVED','DONE','DROPPED')),
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  next_cycle_attainment_id uuid,                              -- bukti loop tertutup: tindakan → capaian siklus berikutnya
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz,
+  UNIQUE (tenant_id, attainment_id, planned_action),
+  CHECK (status <> 'APPROVED' OR (approved_by IS NOT NULL AND approved_by <> requested_by))
+);
+```
+
+`coverage` **selalu** tampil berdampingan dengan capaian di layar mana pun (UI_UX §12.6). Angka capaian 0,85 dengan `coverage` 0,40 adalah temuan mutu, bukan keberhasilan — dan `n_missing_evidence` adalah kolom yang membuktikannya.
+
+### 18.8 ALG-14 · Jangkar & verifier rantai audit (M-05) — `0043_audit_chain_anchors.sql`
+
+Dipakai ulang: `audit_logs` + `audit_chain_head` (§4; ALTER kunci majemuk berversi `stream` **sudah** dinormakan di §16.3.3), `grade_change_logs` + `system_audit_trails` (§16.3, sudah punya `seq`, `prev_hash`, `hash`). Nama yang diminta di percakapan, `grade_audit_logs`, **KALAH** — pendaftarnnya ada di §14.8.
+
+```sql
+CREATE TABLE audit_chain_anchors (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  stream text NOT NULL, partition_start date NOT NULL,
+  leaf_from bigint NOT NULL, leaf_to bigint NOT NULL, leaf_count int NOT NULL CHECK (leaf_count > 0),
+  root_hash bytea NOT NULL CHECK (octet_length(root_hash) = 32),
+  sealed_at timestamptz NOT NULL DEFAULT now(), sealed_by uuid,
+  storage_key text,                                       -- ekspor WORM di object storage milik sendiri (S3 Object Lock), bukan layanan TSA pihak ketiga
+  prev_anchor_root bytea,                                 -- rantai antar-akar: akar hari ini menunjuk akar kemarin
+  UNIQUE (tenant_id, stream, partition_start, leaf_from)
+);
+
+CREATE TABLE audit_verification_runs (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  stream text NOT NULL, partition_start date NOT NULL,
+  mode text NOT NULL CHECK (mode IN ('INCREMENTAL','PARTITION_SCAN','ANCHOR_PROOF')),
+  rows_checked bigint NOT NULL CHECK (rows_checked >= 0),
+  findings jsonb NOT NULL DEFAULT '[]'::jsonb,            -- [{kind:'CHAIN_GAP'|'CHAIN_BRANCH'|'HASH_MISMATCH', seq, expected, actual}]
+  verdict text NOT NULL CHECK (verdict IN ('VERIFIED','COMPROMISED')),
+  started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz,
+  triggered_by uuid NOT NULL,                             -- 'auto' = user sistem khusus; tidak pernah NULL (siapa yang menyuruh verifikasi?)
+  compromised_at timestamptz, investigation_ref text
+);
+```
+
+**Tidak ada kolom `repair` di sini, dan itu disengaja.** Membenarkan rantai dengan menghitung ulang hash adalah bentuk pemalsuan yang sedang dideteksi. Verifikasi yang gagal → bekukan partisi + `COMPROMISED` + alarm (ARCHITECTURE §12.9).
+
+### 18.9 Query verifikasi CI §18 (bukan dokumentasi — dieksekusi)
+
+```sql
+-- 1. Setiap assignment draf tidak mungkin bentrok ruang/pengampu (sudah di EXCLUDE, ini penjaga ganda saat migration replay):
+SELECT a.id FROM timetabling_assignments a JOIN timetabling_requests r ON r.id = a.request_id
+WHERE a.soft_cost_bp < 0;                                              -- wajib 0 baris
+
+-- 2. Draf tidak pernah menaruh peserta melebihi kapasitas ruang:
+SELECT a.id FROM timetabling_assignments a
+  JOIN timetabling_requests r ON r.id = a.request_id
+  JOIN rooms ro ON ro.id = a.room_id
+ WHERE r.participants > ro.capacity;                                   -- wajib 0 baris
+
+-- 3. Rekomendasi tidak pernah menawarkan matakuliah yang prasyaratnya belum terpenuhi:
+SELECT x.id FROM advisor_recommendations x
+  JOIN course_prerequisites p ON p.course_id = x.course_id AND p.tenant_id = x.tenant_id
+ WHERE NOT EXISTS (SELECT 1 FROM grades g WHERE g.tenant_id = x.tenant_id AND g.student_id = x.student_id
+                    AND g.course_id = p.prerequisite_course_id AND g.status = 'EFFECTIVE');  -- wajib 0 baris
+
+-- 4. Tidak ada model ACTIVE tanpa persetujuan orang kedua atau di bawah ambang mutu:
+SELECT id FROM ml_model_versions
+ WHERE status = 'ACTIVE' AND (approved_by IS NULL OR approved_by = trained_by
+        OR (metrics->>'auc')::numeric < 0.70);                          -- wajib 0 baris
+
+-- 5. Tidak ada token presensi yang dipakai dua kali (penolakan replay harus mungkin secara bentuk skema):
+SELECT session_id, counter, count(*) FROM attendance_token_uses
+ GROUP BY session_id, counter HAVING count(*) > 1;                      -- wajib 0 baris
+
+-- 6. Denylist atribut terlarang tidak pernah masuk fitur model:
+SELECT m.id FROM ml_model_versions m, jsonb_array_elements_text(m.features) f
+ WHERE f IN ('agama','suku','kewarganegaraan','jenis_kelamin','disabilitas','asal_sekolah','jalur_masuk');  -- wajib 0 baris
+
+-- 7. Auto-fix tidak pernah menyentuh kolom sumber akademik (kolom staging saja):
+SELECT s.id FROM feeder_autofix_suggestions s
+  JOIN feeder_autofix_rules r ON r.id = s.rule_id
+ WHERE r.kind IN ('SEMANTIC','BLOCKING') AND s.applied_at IS NOT NULL;  -- wajib 0 baris
+
+-- 8. Capaian tanpa bukti tidak dihitung nol diam-diam:
+SELECT id FROM outcome_attainments WHERE n_missing_evidence > 0 AND coverage IS NULL;   -- wajib 0 baris
+
+-- 9. Tidak ada baris audit ber-urut berlubang dalam satu stream:
+SELECT stream, partition_start, count(*) <> (max(leaf_to) - min(leaf_from) + 1)
+  FROM audit_chain_anchors GROUP BY stream, partition_start HAVING count(*) <> (max(leaf_to) - min(leaf_from) + 1);  -- wajib 0 baris
+```
+
+### 18.10 Kepemilikan dokumen lain untuk gugus §18
+
+Bukan milik DATA_MODEL, jangan ditulis di sini: kode izin engine baru (RBAC_MATRIX §4.5), path & skema permintaan endpoint (API_SPEC §6.2 + register kode error §2.3), variabel environment `IK_attendance` dan kunci HMAC per tenant (ENV_CONTRACT §2/§6), nama & isi aturan Feeder per domain (INTEGRATIONS §1.11), mekanika airmen dan retry (ARCHITECTURE §12.10 + §10.4.1), dependensi `or-tools`/ONNX/Tesseract yang semuanya **design-only** (TECH_CONVENTIONS §6), layar `degraded`/`REVIEW`/`coverage` (UI_UX_DESIGN §12), penjadwalan slice (ROADMAP §2.11).
+
+---
+
+## 19. Entitas Multi-Kampus, Jenis Program, Tugas Akhir 53/2023 & Matriks Tarif — 2026-10-20
+
+Empat gugus ini diminta sebagai penyempurnaan bisnis (setara Sevima Enterprise) dan **terukur belum ada di dokumen mana pun** (0 kemunculan nama). Nomor: `0044_institution_sites.sql`, `0045_final_project_kinds.sql`, `0046_tuition_tariff_matrix.sql`.
+
+### 19.1 `campus_sites` — kampus utama & cabang — `0044_institution_sites.sql`
+
+```sql
+CREATE TABLE campus_sites (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  code text NOT NULL, name text NOT NULL, kind text NOT NULL DEFAULT 'MAIN' CHECK (kind IN ('MAIN','BRANCH','SATELLITE','ONLINE_ONLY')),
+  address text NOT NULL, city text NOT NULL, province text NOT NULL, postal_code text,
+  longitude numeric(9,6), latitude numeric(9,6), timezone text NOT NULL DEFAULT 'Asia/Jakarta',
+  contact_phone text, contact_email text,
+  feeder_kode_pt text,                    -- JUJUR: PDDikti mengenal kode PT per prodi, bukan per gedung; kolom ini isinya kode
+                                          -- yang dipakai saat kirim, dan TIDAK boleh berbeda antar site bila pusat tidak mengenal konsep site.
+  academic_authority_membership_id uuid,  -- penanggung jawab site (kepala cabang) — untuk scope RBAC SITE
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), version int NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, code)
+);
+```
+
+Dampak lintas tabel (semuanya ALTER, bukan tabel baru): `rooms.site_id`, `class_sessions.site_id`, `enrollments.site_id`, `study_programs.home_site_id`, `lecturer_availability.site_id` (§18.2), `attendance_network_allowlists` mengikuti `room_id` sehingga tidak perlu berubah. **Scope RBAC `SITE`** ditambahkan ke daftar `scope_kind` (enum §15.2) karena tanpa itu "hak hanya di kampus cabang" tidak dapat dinyatakan — ini permintaan yang harus diputuskan RBAC_MATRIX, bukan diasumsikan di sini.
+
+Batas yang harus ditulis terang: **satu tenant = satu "perguruan tinggi" di mata PDDikti** hari ini. Multi-site **didukung penuh di sisi SICA** (ruang, jadwal, tagihan, presensi, laporan per site), tetapi **pemetaannya ke Feeder belum mempunyai bentuk resmi** (apakah site = prodi di lokasi berbeda, atau kelas paralel dengan `kode_pt` sama). Karena itu: jangan janjikan "sinkron multi-kampus"; kirim sebagai kelas dengan `kode_pt` tunggal, dan laporkan kebutuhan `site` sebagai **temuan BENCH baru** sampai ada kamus resmi.
+
+### 19.2 Jenis program (Reguler / Karyawan / PJJ / Internasional)
+
+**Vonis model: TIDAK ada tabel `program_types`.** Ini kamus nilai nasional + aturan tenant, dan repo ini sudah punya pemilik pola itu: `reference_items` (§14.2) dengan `kind='jenis_program'`, `code`, `name`, `feeder_code`, `attributes jsonb`, `is_active`, versi kamus. Membuat `program_types` berarti membuat kamus kedua untuk hal yang sama — persis pola `RD-32`.
+
+```sql
+ALTER study_programs ADD COLUMN default_program_type text;       -- menunjuk reference_items(kind='jenis_program').code
+ALTER classes       ADD COLUMN program_type text NOT NULL DEFAULT 'REGULER';
+-- Nama kolom DIBETULKAN 2026-10-21 (RD-65): yang dirujuk §21.4, §21.11, INTEGRATIONS §1.16, dan ARCHITECTURE §13 adalah
+-- `classes.learning_modality`, bukan `delivery_mode`. Bentuk di bawah ini adalah yang berlaku; `0075` membawa rename bila
+-- sketsa lama sempat diterapkan di lingkungan mana pun (terukur: belum ada di packages/database/migrations).
+ALTER classes       ADD COLUMN learning_modality text NOT NULL DEFAULT 'ONSITE' CHECK (learning_modality IN ('ONSITE','ONLINE','BLENDED'));
+ALTER enrollments   ADD COLUMN program_type text;                -- disalin dari classes saat DAFTAR, tidak dihitung ulang saat laporan
+ALTER classes ADD CONSTRAINT uq_classes_type UNIQUE (tenant_id, period_id, course_id, group_code, program_type);
+```
+
+Kenapa kolom `text` dan bukan FK ke `reference_items`: nilai ini dipakai di laporan, transkrip, dan tarif selama puluhan tahun; kamus boleh mengubah label, **bukan** makna baris historis (corak yang sama dengan `transcript_lines.course_name_at_issue`, BENCH-117). Kosakata kanonik didaftarkan §15.3 dan `program_type` **tidak boleh** di-infer dari string nama kelas.
+
+Dampak nyata tiga jenis yang sering dianggap hiasan: (a) **PJJ** → `delivery_mode = 'ONLINE'` wajib, geofence presensi **tidak berlaku** (ganti `method='LMS_ACTIVITY'`), dan kuota ruang tidak consumed; (b) **Karyawan** → jendela kelas malam/akhir pekan, tarif berbeda, `meeting_minutes` 150/170; (c) **Internasional** → bahasa pengantar `courses.bahasa_pengantar`, skema nilai berbeda (`grade_scale_bands` per skema), dan **tidak ikut checkpoint Feeder yang sama** (laporkan sebagai batas, bukan fitur).
+
+### 19.3 Tugas Akhir non-skripsi (Permendikbudristek 53/2023) — `0045_final_project_kinds.sql`
+
+`thesis_records` (`0027`) lahir dari bentuk skripsi. Untuk mendukung prototipe, proyek industri, publikasi/HAKI (dan tiga-in-one), jenisnya dibuat **data**, bukan kode:
+
+```sql
+CREATE TABLE final_project_kinds (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  code text NOT NULL, name text NOT NULL,
+  feeder_jenis_ta text,                     -- NULL = belum ada kamus resmi → tidak boleh dikirim (I-14)
+  requires_prototype boolean NOT NULL DEFAULT false,
+  requires_publication boolean NOT NULL DEFAULT false,
+  requires_industry_agreement boolean NOT NULL DEFAULT false,
+  min_pembimbing smallint NOT NULL DEFAULT 1 CHECK (min_pembimbing BETWEEN 1 AND 3),
+  max_penguji smallint NOT NULL DEFAULT 2 CHECK (max_penguji BETWEEN 1 AND 4),
+  sks_teori numeric(4,1) NOT NULL, sks_praktik numeric(4,1) NOT NULL DEFAULT 0,
+  credit_transferable boolean NOT NULL DEFAULT false,   -- prototipe/publikasi boleh diakui lintas matakuliah (pasal 53/2023)
+  is_active boolean NOT NULL DEFAULT true, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz,
+  UNIQUE (tenant_id, code)
+);
+
+ALTER thesis_records ADD COLUMN kind_id uuid REFERENCES final_project_kinds(id);
+ALTER thesis_records ADD COLUMN status text NOT NULL DEFAULT 'DRAFT'
+  CHECK (status IN ('DRAFT','PROPOSED','APPROVED','IN_PROGRESS','EXAM_SCHED','EXAMINED','REVISION','PASSED','PUBLISHED','ABANDONED'));
+
+CREATE TABLE final_project_outputs (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  thesis_record_id uuid NOT NULL REFERENCES thesis_records(id),
+  kind text NOT NULL CHECK (kind IN ('PROTOTYPE','INDUSTRY_PROJECT','PUBLICATION','HAKI','PATENT','PERFORMANCE','OTHER')),
+  title text NOT NULL, description text, occurred_on date NOT NULL,
+  venue text,                              -- jurnal/konferensi/instansi — teks, bukan FK (tidak ada kamusnya)
+  url text, identifier text,               -- DOI / nomor HAKI / nomor paten
+  partner_name text, partner_nib text, partner_agreement_attachment_id uuid,
+  attachment_id uuid NOT NULL,             -- bukti fisik (`attachments`, 0020) — output tanpa bukti tidak dapat masuk yudisium
+  validated_by uuid NOT NULL, validated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, thesis_record_id, kind, identifier)
+);
+```
+
+**Aturan yang membuatnya berarti, bukan kosmetik:** sebuah `final_project_kinds` dengan `requires_publication = true` **menolak** transisi ke `PASSED` selama tidak ada `final_project_outputs` bervalidasi; `validated_by` wajib orang kedua dari `thesis_records.pembimbing` (SoD nilai); dan `feeder_jenis_ta IS NULL` berarti **tidak ikut kirim** (I-14), bukan "dikirim dengan kode asal".
+
+### 19.4 Matriks tarif UKT per jalur masuk & gelombang — `0046_tuition_tariff_matrix.sql`
+
+Permintaan: tarif tidak boleh hardcoded per angkatan. Yang tersedia sebagai kunci: `pmb_paths` (jalur, `0021`), `pmb_waves` (gelombang, `0021`), `program_type` (§19.2), `campus_sites` (§19.1), `entry_year`, kelompok penghasilan (`reference_items`). `fee_tariff_groups` dan `tuition_discounts` **sudah terdaftar** di §14.7 (`0015`) tanpa DDL — gugus ini menuliskannya:
+
+```sql
+CREATE TABLE fee_tariff_groups (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  code text NOT NULL, name text NOT NULL, component text NOT NULL
+    CHECK (component IN ('UKT','SPP_TEORI','SPP_PRAKTIKUM','TPP','SKS_MARQUE','UJIAN','WISUDA','KTM','ASRAMA','LAIN')),
+  billing_basis text NOT NULL DEFAULT 'PER_SEMESTER' CHECK (billing_basis IN ('ONE_TIME','PER_SEMESTER','PER_SKS','PER_MONTH')),
+  payable_to text NOT NULL DEFAULT 'BAUK' CHECK (payable_to IN ('BAUK','FACULTY','PARTNER')),
+  gl_account_code text,                       -- menunjuk accounts (0015): komponen tanpa akun = posting jurnal mustahil
+  feeder_cost_kind text,                      -- 'Biaya Pendidikan' Feeder; NULL = tidak dilaporkan
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz, version int NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, code)
+);
+
+CREATE TABLE tuition_tariff_matrix (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  entry_year smallint NOT NULL, program_type text NOT NULL DEFAULT 'REGULER',
+  site_id uuid REFERENCES campus_sites(id),
+  pmb_path_id uuid REFERENCES pmb_paths(id), pmb_wave_id uuid REFERENCES pmb_waves(id),
+  income_group_code text,                     -- reference_items(kind='penghasilan'); NULL = semua
+  fee_group_id uuid NOT NULL REFERENCES fee_tariff_groups(id),
+  amount_rupiah bigint NOT NULL CHECK (amount_rupiah >= 0),
+  effective_from date NOT NULL, effective_to date,
+  status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','ACTIVE','RETIRED')),
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz, version int NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, program_id, entry_year, program_type, fee_group_id,
+          COALESCE(site_id, '00000000-0000-0000-0000-000000000000'::uuid),
+          COALESCE(pmb_path_id, '00000000-0000-0000-0000-000000000000'::uuid),
+          COALESCE(pmb_wave_id, '00000000-0000-0000-0000-000000000000'::uuid),
+          COALESCE(income_group_code, '')),
+  CHECK (status <> 'ACTIVE' OR (approved_by IS NOT NULL AND approved_by <> requested_by))   -- tarif uang = empat-mata
+);
+```
+
+`UNIQUE` dengan `COALESCE` ada karena **NULL tidak pernah bertabrakan dengan NULL**: tanpa itu dua baris "semua jalur" dapat tersimpan dan generator tagihan memilih salah satu secara nondeterministik. Aturan pemilihan tarif (resolusi terspesifik → ternetral, deterministik, tidak pernah "yang pertama ketemu") ditulis sebagai norma servis di [SECURITY/PRD `FR-KEU-*`] dan diuji oleh §19.5.
+
+### 19.5 Query verifikasi CI §19
+
+```sql
+-- 1. Dua aturan tarif dengan kunci sama tidak boleh mungkin (COALESCE unik sudah mencegah; ini penjaga replay):
+SELECT program_id, entry_year, count(*) FROM tuition_tariff_matrix
+ GROUP BY program_id, entry_year, program_type, fee_group_id HAVING count(*) > 1;      -- wajib 0 baris
+
+-- 2. Tidak ada kelas PJJ yang menuntut geofence (kontradiksi mode):
+SELECT c.id FROM classes c JOIN class_sessions s ON s.class_id = c.id JOIN rooms r ON r.id = s.room_id
+ WHERE c.delivery_mode = 'ONLINE' AND r.longitude IS NOT NULL AND c.program_type = 'PJJ';   -- wajib 0 baris
+
+-- 3. Jenis TA yang mewajibkan publikasi tidak pernah lulus tanpa output tervalidasi:
+SELECT t.id FROM thesis_records t JOIN final_project_kinds k ON k.id = t.kind_id
+ WHERE t.status = 'PASSED' AND k.requires_publication
+   AND NOT EXISTS (SELECT 1 FROM final_project_outputs o WHERE o.thesis_record_id = t.id AND o.validated_at IS NOT NULL);  -- wajib 0 baris
+
+-- 4. Site tanpa prodi induk tidak boleh memegang ruang (pihak tak bertuan):
+SELECT s.id FROM campus_sites s LEFT JOIN rooms r ON r.site_id = s.id WHERE r.id IS NULL AND s.is_active;  -- wajib 0 baris (sengaja keras: temuan, bukan peringatan)
+
+-- 5. Output TA yang menunjuk berkas: berkasnya harus ada dan tidak yatim:
+SELECT o.id FROM final_project_outputs o LEFT JOIN attachments a ON a.id = o.attachment_id WHERE a.id IS NULL;  -- wajib 0 baris
+```
+
+### 19.6 Status cakupan gugus §18–§19
+
+| Gugus | Nomor | DDL di dokumen | Drizzle | Kode | Status |
+|---|---|---|---|---|---|
+| Harness ALG-1…7 (ralat nomor) | `0036` | ✅ §17.2–§17.9 | ❌ | ❌ | 📋 spec |
+| ALG-8 timetabling | `0037` | ✅ §18.2 | ❌ | ❌ | 📋 spec — menahan OW jadwal |
+| ALG-9 advisor | `0038` | ✅ §18.3 | ❌ | ❌ | 📋 spec — butuh `0008` prasyarat |
+| ALG-10 EWS | `0039` | ✅ §18.4 | ❌ | ❌ | 📋 spec — ambang mutu di CHECK |
+| ALG-11 auto-fix | `0040` | ✅ §18.5 | ❌ | ❌ | 📋 spec — butuh `0028`/`0031` |
+| ALG-12 anti-fraud | `0041` | ✅ §18.6 | ❌ | ❌ | 📋 spec — menutup `SEC-03`/CE-6.2 |
+| ALG-13 OBE loop | `0042` | ✅ §18.7 | ❌ | ❌ | 📋 spec — butuh `0032` |
+| ALG-14 jangkar audit | `0043` | ✅ §18.8 | ❌ | ❌ | 📋 spec — butuh `0034` |
+| Multi-kampus | `0044` | ✅ §19.1 | ❌ | ❌ | 📋 spec — pemetaan Feeder BELUM ada bentuk resminya |
+| Jenis program | `0044` (ALTER) | ✅ §19.2 | ❌ | ❌ | 📋 spec — `program_types` **kalah**, `reference_items` menang |
+| TA non-skripsi | `0045` | ✅ §19.3 | ❌ | ❌ | 📋 spec — `feeder_jenis_ta` wajib kamus sebelum kirim |
+| Matriks tarif | `0046` | ✅ §19.4 | ❌ | ❌ | 📋 spec — `0021` (PMB) adalah prasyarat kunci |
+
+Urutan eksekusi yang diizinkan: `0036` → `0037` → … → `0043` → `0044` → `0045` → `0046`, semuanya **expand-only** (MIGRATION_SOP). Tidak satu pun gugus ini boleh dibuka ke pengguna sebelum: (a) migrasinya ada di `packages/database/migrations/`, (b) generator RLS §6.2 sudah menghasilkan policy untuk setiap tabel baru, (c) mode turun punya copy layar yang jujur (ARCHITECTURE §11.10/§12.11).
+
+---
+
+## 20. Data Master Parity Sevima & Mesin Lookup Dinamis (Zero-Hardcoding) — 2026-10-20
+
+Nomor baru siklus ini: `0047_master_lookup_engine.sql`, `0048_custom_attributes.sql`. Keduanya **expand-only** dan tidak menghapus satu kolom pun.
+
+### 20.1 Norma Zero-Hardcoding, dengan batas yang jujur
+
+**Norma.** Setiap daftar pilihan yang dapat **dinamai ulang** atau **ditambah** oleh kampus wajib menjadi **data** di mesin kamus §14.2 (`reference_kinds` + `reference_items`), dibaca melalui `GET /api/v1/master/lookups?group={GROUP_CODE}`, dan dirender oleh Dynamic Form Generator (UI_UX_DESIGN §13). Yang **dilarang** untuk data kelas C/D di bawah: array opsi literal di TypeScript/Dart, `z.enum([...])` di `packages/contracts`, dan `CHECK (col IN ('A','B','C'))` di SQL.
+
+Batas ini tidak boleh dibaca sebagai "tidak boleh ada konstanta sama sekali". Kalau semua hal menjadi data, mesin state, RBAC, dan payload PDDikti kehilangan penjaga — dan itu persis kebalahan Sevima yang kita perbaiki (30 layar master yang bisa diubah sehingga transaksi minggu berikutnya tidak dapat direkonstruksi). Repo ini sudah menegakkan garis dua tingkat di §14.2 butir 4; bagian itu sekarang dijadikan norma dan diberi **empat kelas** yang dapat diuji:
+
+| Kelas | Contoh | Bentuk penyimpanan | Kenapa bentuk itu |
+|---|---|---|---|
+| **A — protokol & mesin state yang dicabangi kode** | `enrollments.status`, `queue_operations.state`, `invoice_status`, `payment_status`, `permission_verb`, `scope_kind`, `pddikti_domain`, `grade_status` | **enum PostgreSQL** + wajib tercatat di register §15.1/§15.2 + padanannya di `packages/contracts` | transisi, guard izin, retry, dan `wire casing` memerlukan kosakata **tertutup**; kalau ini menjadi data, siapa pun dapat menciptakan keadaan baru saat runtime tanpa satu pun uji lolos |
+| **A′ — keadaan objek tapi kampus bebas memberi label** | predikat kelulusan, jenis cuti, kategori dispenser | enum **tetap** + kolom `code` + label di `reference_items` | mesin membaca kode; manusia membaca label |
+| **B — nilai yang ditetapkan negara/laporan resmi** | jenis kelamin, status perkawinan, agama (kode), wilayah (5 level), jenis aktivitas mahasiswa, jenis TA Feeder, jalur masuk Feeder | `reference_dictionary_entries` **global berversi** (`0028`) — kamus yang **tidak dapat** dirawat tenant, hanya dipetakan | yang menentukan PDDikti/Kemendagri, bukan kampus; item `is_system=true` hanya boleh **dinonaktifkan**, tidak dihapus |
+| **C — kamus yang dapat dirawat kampus** | pekerjaan, penghasilan, suku, jenis matakuliah, kelompok matakuliah, kebutuhan khusus, jenis tinggal, transportasi, bahasa, status hadir, jenis pertemuan, slot waktu, konsentrasi, capaian/prestasi, komponen biaya, jenis program, jenis Tugas Akhir, alasan dispensasi, alasan banding, jenis dokumen, kanal pembayaran, ukuran baju (contoh pemilik) | `reference_items` per tenant (RLS `ENABLE`+`FORCE`) — **satu tabel, banyak tab layar**, bukan 30 tabel | inilah ±30 layar master Sevima; SICA menutupnya dengan satu mesin (PRD FR-ADM-07) |
+| **D — field yang tidak ada di model sama sekali** | atribut khas kampus (nomor rekening koperasi, jalur beasiswa lokal, seragam, dll.) | `tenant_custom_attributes` (§20.5) + nilai di `attributes jsonb` | menambah field tidak boleh menuntut rilis kode |
+
+**Penegakan mekanis (bukan imbauan).** Empat gerbang, semuanya dapat dijalankan di CI:
+
+- **(m) scanner kosakata literal** — di `apps/web/src/**` dan `apps/mobile/**`: `z.enum(` pada field kelas C/D, array opsi literal (`options={[`, `const *_OPTIONS`), dan `<option>` hardcoded. Angka target: **0** temuan untuk field yang terdaftar di `reference_kind_usage`.
+- **(n) kebalikan: setiap `kind` yang dibaca UI wajib punya baris `reference_kind_usage`.** Tanpa baris itu, generator tidak tahu sumber data → kegagalan muncul saat runtime di layar pengguna; karena itu digate di CI, bukan saat demo.
+- **(o) allowlist CHECK = register enum.** Sebelum sebuah `CHECK (col IN (…))` diterima, kolomnya harus tercatat di §15.1/§15.2/§15.3 dengan kelas A/B. Yang tidak tercatat = temuan. Ini membuat "nol hardcoding" tetap punya satu daftar hitam-putih yang terukur, bukan perasaan.
+- **(p) tak ada kamus kedua.** `CREATE TABLE` baru dengan bentuk `(... code, name)` yang meniru `reference_items` ditolak oleh scanner nama (pola `RD-32`). §20.2 adalah satu-satunya tempat nama padanan boleh muncul, dan hanya sebagai **view**.
+
+### 20.2 Vonis nama yang diminta → satu fisik, satu view kompatibilitas
+
+Permintaan pemilik memakai nama `master_lookup_groups` / `master_lookup_items` dengan kolom `sorting_order`, `metadata JSONB`. Repo ini **sudah** punya fisik untuk itu sejak §14.2. Membuat tabel baru berarti membuat dua sumber kebenaran untuk kamus yang sama — jadi:
+
+| Diminta | Pemenang fisik | Yang disediakan |
+|---|---|---|
+| `master_lookup_groups(id, code, name, description)` | **`reference_kinds`** (§14.2) | **view** `master_lookup_groups` |
+| `master_lookup_items(id, tenant_id, group_id, code, label, sorting_order, is_active, metadata jsonb)` | **`reference_items`** (§14.2) | **view** `master_lookup_items` |
+| `metadata JSONB` | **`reference_items.extra`** — kolom `metadata` kedua **ditolak** | view memproyeksikan `extra AS metadata` |
+| `sorting_order` | `sort_order` | view memetakan `sort_order AS sorting_order` |
+| `group_id` | `kind` (kunci alamiah) | view menyediakan `kind AS group_code`; `group_id` dipertahankan sebagai kolom generatif `uuid` stabil dari `kind` |
+| `tenant_custom_attributes` | **MENANG sebagai nama tabel baru** (§20.5) | — |
+
+```sql
+CREATE VIEW master_lookup_groups AS
+SELECT kind::text AS code, label AS name, domain, is_system, feeder_code, has_external_dictionary,
+       api_group_code, input_kind, is_required, max_selections, validation_regex, version
+FROM reference_kinds;
+
+CREATE VIEW master_lookup_items AS
+SELECT id, tenant_id, kind AS group_code, code, name AS label, short_code, feeder_code,
+       sort_order AS sorting_order, is_active, is_system, parent_id, extra AS metadata,
+       effective_from, effective_to, merged_into_id, points, requires_document
+FROM reference_items;
+```
+
+Kedua view **wajib** `WITH (security_invoker = true)` — keputusan yang sama sudah diambil untuk `pddikti_validation_runs` (§16.4.4, `0031`): view dengan `security_definer` menembus RLS tenant dan membuat kebocoran isolasi menjadi mungkin. View tidak diberi `UPDATE`: tulis selalu lewat tabel dasar supaya pemicu audit + empat-mata ikut bekerja.
+
+### 20.3 Yang kurang dari `reference_kinds` untuk menjadi mesin (M-02) — `0047_master_lookup_engine.sql`
+
+Hari ini kamus §14.2 bisa menyimpan nilai, tetapi belum memberi tahu aplikasi **cara merender**, **dari mana sumber nasional**, dan **siapa yang memakai**. Tanpa tiga hal itu, "satu layar untuk 30 master" tetap membutuhkan kode per layar — yang berarti norma §20.1 gugur.
+
+```sql
+ALTER reference_kinds ADD COLUMN api_group_code text;                 -- alias stabil untuk ?group= (tidak berubah kalau label berubah)
+ALTER reference_kinds ADD COLUMN input_kind text NOT NULL DEFAULT 'SELECT'
+  CHECK (input_kind IN ('SELECT','MULTI','RADIO','CHECKBOX','TREE','NUMBER','DECIMAL','DATE','TEXT','TEXTAREA','FILE'));
+ALTER reference_kinds ADD COLUMN is_required boolean NOT NULL DEFAULT false;
+ALTER reference_kinds ADD COLUMN max_selections smallint CHECK (max_selections IS NULL OR max_selections BETWEEN 1 AND 50);
+ALTER reference_kinds ADD COLUMN min_selections smallint CHECK (min_selections IS NULL OR min_selections >= 0);
+ALTER reference_kinds ADD COLUMN validation_regex text;               -- pola kode (mis. NIM, kodepos), bukan kosakata
+ALTER reference_kinds ADD COLUMN feeder_dict_path text;               -- 'GetAgama' | NULL = tidak dikirim ke pusat
+ALTER reference_kinds ADD COLUMN entity_type text;                    -- pemilik default: 'student','lecturer','course','room','invoice'
+ALTER reference_kinds ADD COLUMN effective_from date NOT NULL DEFAULT current_date;
+ALTER reference_kinds ADD COLUMN effective_to date;
+ALTER reference_kinds ADD COLUMN version int NOT NULL DEFAULT 1;
+ALTER reference_kinds ADD COLUMN description text;
+ALTER reference_kinds ADD COLUMN approved_by uuid, ADD COLUMN approved_at timestamptz;
+ALTER reference_kinds ADD CONSTRAINT uq_refkinds_api_group UNIQUE (api_group_code);
+ALTER reference_kinds ADD CONSTRAINT ck_refkinds_foureyes
+  CHECK (approved_at IS NULL OR approved_by IS NOT NULL);   -- tidak ada "disahkan" tanpa penyetuju tercatat
+
+ALTER reference_items ADD COLUMN short_code text;
+ALTER reference_items ADD COLUMN feeder_code text;                    -- kode pusat; NULL = tidak ikut kirim (I-14)
+ALTER reference_items ADD COLUMN is_system boolean NOT NULL DEFAULT false;  -- B: label boleh, kode & hapus tidak
+ALTER reference_items ADD COLUMN effective_from date NOT NULL DEFAULT current_date;
+ALTER reference_items ADD COLUMN effective_to date;
+ALTER reference_items ADD COLUMN merged_into_id uuid REFERENCES reference_items(id);
+ALTER reference_items ADD COLUMN points numeric(6,2);                 -- naik dari extra->'points' karena ikut dihitung (SKPI, basis UKT)
+ALTER reference_items ADD COLUMN requires_document boolean NOT NULL DEFAULT false;
+ALTER reference_items ADD COLUMN code_external text;                  -- kode panjang versi nasional (mis. kode wilayah 7 digit)
+ALTER reference_items ADD CONSTRAINT ck_refitems_notself CHECK (merged_into_id IS NULL OR merged_into_id <> id);
+ALTER reference_items ADD CONSTRAINT ck_refitems_window CHECK (effective_to IS NULL OR effective_to > effective_from);
+CREATE INDEX idx_refitems_active_window ON reference_items(tenant_id, kind, is_active, effective_from) WHERE is_active;
+CREATE INDEX idx_refitems_feeder ON reference_items(tenant_id, feeder_code) WHERE feeder_code IS NOT NULL;
+```
+
+```sql
+-- Indeks terbalik: "master ini dipakai di mana?" — mesin impact-analysis (FR-ADM-12) dan target scanner CI (m)/(n).
+CREATE TABLE reference_kind_usage (
+  id uuid PRIMARY KEY,
+  kind text NOT NULL REFERENCES reference_kinds(kind),
+  surface text NOT NULL,                       -- '/admin/master/mahasiswa', '/krs', '/spmb/biodata', 'report:transkrip', 'feeder:Mahasiswa'
+  entity_type text NOT NULL,                   -- 'students' | 'invoices' | …
+  column_name text,                            -- kolom tujuan bila nilai ditulis ke kolom nyata
+  attribute_code text,                         -- atau lewat atribut kustom (§20.5) — salah satu, bukan keduanya
+  required_role text,                          -- peran yang WAJIB mengisi (mis. pengisian berkas PMB)
+  is_deprecated boolean NOT NULL DEFAULT false,
+  note text, created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (kind, surface, entity_type, COALESCE(column_name, attribute_code))
+);
+```
+
+Tiga keputusan yang membuat tabel ini berguna, bukan hiasan: (1) **satu baris = satu pemakaian**, sehingga menghapus/menonaktifkan master dapat dijawab "akan merusak 14 layar dan 2 laporan", persis kegagalan Sevima yang dicatat BENCHMARK §2.5; (2) `COALESCE(column_name, attribute_code)` di `UNIQUE` memaksa tiap pemakaian menunjuk **salah satu** penampung; (3) tabel ini **global** (tanpa `tenant_id`) karena ia mendeskripsikan kode aplikasi — karena itu ia masuk daftar pengecualian RLS §6.2 bersama `reference_kinds` dan `reference_dictionary_entries`, dan hanya boleh ditulis lewat migrasi/review, bukan lewat UI tenant.
+
+**Kontrak pembacaan (dinormakan di API_SPEC §4.14).** Urutan **selalu** `ORDER BY sort_order, code` — tidak pernah `id` (UUIDv7 mengikuti waktu pembuatan, jadi urutan `id` berubah saat tenant menambah item dan layar terlihat "acak" setelah impor). Etiket cache `private, max-age=60`, `ETag`, dan `X-Lookup-Version` yang naik pada setiap tulis; klien menyimpan versi dan mengirim `If-None-Match`. Nilai `is_active=false` **tidak** hilang dari respons historis: endpoint membaca memakai `?at=YYYY-MM-DD` agar layar "lihat data lama" menampilkan label yang benar pada saat itu (kewajiban arsip BR-R12).
+
+### 20.4 Katalog data master enam gugus (parity Sevima, terukur)
+
+Legenda: ✅ tabel/columnya sudah ada dan ber-DDL · ◐ sudah ada sebagai kamus `reference_items`/`reference_dictionary_entries` · ❌ belum ada objeknya (perlu migrasi).
+
+#### 20.4.1 Gugus 1 — Kemahasiswaaan, biodata & PMB
+| Master | Bentuk di SICA | Status | Rujukan |
+|---|---|---|---|
+| Agama, kewarganegaraan, jenis kelamin, status perkawinan, golongan darah | `reference_dictionary_entries` (B) + kolom `students`/`people` | ◐ | §11.2, §14.7 baris A |
+| Pekerjaan & penghasilan orang tua, pendidikan terakhir ortu, tanggungan | `reference_items` (C) + kolom `student_guardians` | ◐ | §11.2 (PII) |
+| Suku, kebutuhan khusus, jenis tinggal, transportasi, bahasa pengantar | `reference_items` (C) | ◐ | §14.2, BENCH-08/16 |
+| Sekolah asal / NPSN / provinsi asal | `pmb_school_origins` + `reference_dictionary_entries(wilayah)` | ❌ tabel | §14.7 baris PMB → `0021` |
+| Jalur masuk & gelombang PMB | `pmb_paths`, `pmb_waves` (tabel, dengan `feeder_jalur_daftar`/`feeder_jenis_daftar`) | ❌ tabel | §14.7 PMB → `0021` |
+| Daya tampung per prodi per gelombang (CP1 Feeder) | `pmb_program_quotas` | ❌ | `0021` |
+| Nomor induk sementara & alokasi NIM | `nim_assignments` + `tenant_settings.nim_format` (regex berversi, bukan kode program) | ❌ / ◐ | `0021`, §14.3 |
+| Status akademik (AKTIF/CUTI/DO/LULUS/STOP) | enum `student_status` + `student_status_history` + alasan kamus | ✅ enum | §15.1, §11.5 |
+| Beasiswa / KIP, golongan pembayaran | `reference_items(kind='beasiswa')` + `tuition_tariff_matrix.income_group_code` | ◐ / ❌ | §19.4 → `0046` |
+| Berkas wajib per jalur & penolakan beralasan | `pmb_documents` | ❌ | `0021` |
+| Consent orang tua (dimensi terpisah) | `student_guardians.consent_*` | ❌ | §14.7 baris G → `0029` |
+| Jenis berkas yang wajib per jalur masuk | kamus `pmb_document_kind` (`reference_items`, C) | baru | §23.2 (`0021`) |
+| Sumber pembiayaan/awal masuk (label dirawat kampus) | kamus `funding_source` (`reference_items`, C) | baru | §23.2 (`0021`) |
+
+#### 20.4.2 Gugus 2 — Akademik, kurikulum & perkuliahan
+| Master | Bentuk | Status | Rujukan |
+|---|---|---|---|
+| Tahun akademik, periode, kalender & tanggal kunci | `academic_years`, `academic_periods`, `academic_calendars` | ✅ | §5 |
+| Jenis program (Reguler/Karyawan/PJJ/Internasional) | `reference_items(kind='jenis_program')` + kolom `classes.program_type`/`enrollments.program_type` | ◐ + kolom ❌ | §19.2 → `0044` |
+| Skema enrolled ("sistem kuliah") | `enrollment_schemes` | ✅ | FR-ADM-08 |
+| Jenis matakuliah, kelompok rumpun, bobot SKS per jenis | `reference_items` (C) + `courses.sks*` | ◐ / ✅ | §11.4 |
+| Kurikulum, CPL/CPMK/Sub-CPMK, mata kuliah & prasyarat, ekivalensi | `curricula`, `program_outcomes`, `course_outcomes`, `outcome_sub_components`, `course_prerequisites`, `course_equivalencies` | ❌ (`0008`) / ✅ OBE (`0032`) | §16.2, ADM-3 |
+| Metode & jenis pertemuan, status hadir | `reference_items(kind='jenis_pertemuan'/'status_hadir')` + `attendance_status` enum | ◐ + ✅ | §15.1 |
+| Slot waktu, hari, jendela operasional | `time_slots` | ❌ | §14.7 A → `0013` |
+| Ruang, gedung, lantai, tipe, fasilitas, kapasitas | `rooms` (+ geofence §18.6) | ✅ + ❌ kolom | §5, `0041` |
+| Alat/lisensi laboratorium | `lab_resource_capabilities` | ❌ | §17.3 → `0036` |
+| Kelas paralel, sebaran (visibility KRS) | `classes`, `class_distributions` | ✅ / ❌ | §5, `0023` |
+| Konsentrasi/peminatan | `reference_items(kind='konsentrasi')` + `concentrations` (usulan) | ◐ | §17.5, `0013` |
+| Jenis Tugas Akhir (53/2023) | `final_project_kinds` | ❌ | §19.3 → `0045` |
+| Kegiatan kemahasiswaan, level prestasi, poin | `activity_kinds` + `achievement_levels` + `reference_items(points)` | ❌ | §14.7 G → `0026` |
+| Aturan akademik (jendela KRS, plafon SKS, band, gerbang, denda) | `academic_rules` + `params jsonb` berversi | ✅ | §5, ADR-17 |
+| Skala nilai & band huruf | `grade_scales`, `grade_scale_bands` (`int4range` NOT OVERLAPS) | ✅ | §5, §17.8 |
+
+#### 20.4.3 Gugus 3 — Kepegawaian & dosen
+| Master | Bentuk | Status | Rujukan |
+|---|---|---|---|
+| Jabatan fungsional, golongan, rumpun ilmu, bidang ilmu | `reference_items` (C) + `lecturers` kolom | ◐ | §11.3, §14.2 |
+| Status kepegawaian (NSHP/Tetap/Tidak Tetap/Bantu), status dosen Feeder | enum + `reference_dictionary_entries` | ◐ | §11.3 |
+| Kualifikasi pendidikan (S2/S3), sertifikasi asesor | `reference_dictionary_entries` (B) | ◐ | §11.3 |
+| BKD: beban minimal, rasio, komponen | `academic_rules` + `bkd_component_kinds` (usulan kamus) | ◐ | BENCH-66/74 |
+| Availability mengajar per hari/jam/mode/site | `lecturer_availability` | ❌ | §18.2 → `0037` |
+| Organisasi, unit kerja, posisi, atasan | `organizations`, `units`, `positions` | ✅ | §3 |
+| Kepegawaian penuh (cuti, mutasi, penilaian pegawai) | modul `hr_bkd` add-on; objek belum ada | ❌ | BENCHMARK §2A |
+| Lisensi/modul mengajar (sertifikasi guru/dosen) | `reference_items(kind='sertifikasi')` | ◐ | §14.2 |
+
+#### 20.4.4 Gugus 4 — Keuangan, penagihan & billing
+| Master | Bentuk | Status | Rujukan |
+|---|---|---|---|
+| Komponen biaya (UKT/SPP/TPP/SKS marquee/ujian/wisuda/KTM/asrama) | `fee_tariff_groups.component` | ❌ | §19.4 → `0046` |
+| Matriks tarif per jalur × gelombang × jenis program × site × angkatan × kelompok penghasilan | `tuition_tariff_matrix` | ❌ | §19.4 → `0046` |
+| Diskon/keringanan/beasiswa internal | `tuition_discounts`, `payment_waivers` | ❌ / ✅ | §14.7 B → `0015` |
+| Cicilan / rencana pembayaran | `payment_plans` + CHECK jumlah termin = nilai induk | ❌ | `0015` |
+| Kanal pembayaran & Virtual Account | `payment_channels`, `virtual_accounts`, `payment_windows` | ❌ | `0015`/`0022` |
+| Alokasi pembayaran → invoice (satu transfer banyak invoice, overpay) | `payment_allocations` | ❌ | `0022` |
+| Rekonsiliasi (suspens, dua orang, idempoten) | `reconciliation_runs` + ledger pembalik | ❌ | `0015`, API_SPEC §4.7.7 |
+| Dispensasi rektorat (buka gerbang, tidak ubah nominal) | `dispensations` + `academic_rules.gates` | ❌ objek / ✅ gerbang | API_SPEC §4.10.1 |
+| Denda & bunga | `academic_rules` (`late_fee_bp`) | ✅ | §5 |
+| Bagan akun & tutup buku | `accounts`, `accounting_periods` (`EXCLUDE daterange`) | ❌ (DDL `RD-07` sudah ditulis) | §14.7 B |
+| Kuitansi bernomor + digest verifikasi | `receipts` | ❌ | `0022` |
+| Jenis tagihan Feeder (`Biaya Pendidikan`) | `reference_dictionary_entries` | ◐ | §14.5 |
+
+#### 20.4.5 Gugus 5 — Kelembagaan & fasilitas
+| Master | Bentuk | Status | Rujukan |
+|---|---|---|---|
+| Perguruan tinggi, fakultas, prodi, akreditasi | `tenants`, `faculties`?, `study_programs` (+`kode_prodi`, `akreditasi`) | ✅ / ◐ | §3, §11.4 |
+| Kampus utama / cabang / satelit / online-only | `campus_sites` | ❌ | §19.1 → `0044` |
+| Gedung, lantai, denah, kapasitas listrik | `rooms.building`/`floor` (text → FK `buildings` usulan) | ◐ | §14.7 A |
+| Fasilitas ruang & kebutuhan alat | `rooms.facilities jsonb` + `lab_resource_capabilities` | ✅ / ❌ | §5, §17.3 |
+| Reservasi ruang non-kuliah | `room_reservations` | ❌ | §14.7 D → `0017` |
+| Unit kerja & otoritas penanggung jawab site | `organizations`/`units` + `campus_sites.academic_authority_membership_id` | ◐ / ❌ | §3, §19.1 |
+| Jenis dokumen & nomor surat | `document_types` (`reference_items`), `document_numbering` | ◐ | §14.3, FR-DOC-02 |
+| Logo & kop (tenant asset) | `attachments(category='logo')` | ❌ | `0020` |
+
+#### 20.4.6 Gugus 6 — Kodifikasi referensi PDDikti
+| Master | Bentuk | Status | Rujukan |
+|---|---|---|---|
+| 11 penolakan Checkpoint 1/2 + kode error pusat | katalog `error_code` di INTEGRATIONS §1.4 (bukan tabel) | ◐ | AC-FDR-2 |
+| Kamus `Get*` (agama, wilayah, jenis aktivitas, jalur, jenis PT, akreditasi, status mahasiswa, golongan, bahasa, negara, pekerjaan, penghasilan,kebutuhan khusus, transportasi, jenis tinggal, jenis evaluations/`SifatEvaluasi`/`StatusMengajar`) | `reference_dictionary_entries` + `reference_dictionary_versions(domain, version, effective_from, source)` + diff → `FEEDER_DICTIONARY_STALE` | ❌ (register `0028`) | §14.7 G, BENCH-127..135 |
+| Peta entitas lokal → kode pusat | `pddikti_mappings` | ✅ | §5 |
+| `id_reg` / `feeder_id` hanya dari respons | `feeder_identities.feeder_id` + CHECK bentuk skema | ❌ (`0028`) | I-14, §18.5 |
+| Kode PT / kode prodi / NPSN / NISN | kolom di `study_programs`, `pmb_school_origins` | ◐ | §11.4, `0021` |
+| Jenis & bentuk TA (untuk kirim) | `final_project_kinds.feeder_jenis_ta` — NULL = tidak dikirim | ❌ | §19.3 |
+| Jenis aktivitas mahasiswa (SKPI) | `activity_kinds.feeder_id_jenis_aktivitas` wajib hasil `GetJenisAktivitasMahasiswa` | ❌ | `0026` |
+| Versi kamus & kapan diambil | `reference_dictionary_versions` + `X-Lookup-Version` | ❌ | `0028`, §20.3 |
+| Kategori berkas lampiran (bukti bayar, skripsi, legalisir, KTM, berkas impor, PDM/SPTJM, logo) | kamus `attachment_category` (`reference_items`, C) — bukan CHECK tertutup | baru | §23.1 (`0020`) |
+| Jenis dokumen terbit (ijazah, transkrip, SKPI, surat keterangan, SK) | kamus `document_type` (`reference_items`, C) + `document_number_sequences` per jenis | baru | §23.1 (`0020`) |
+| Jenis run impor massal (mahasiswa, tagihan, aset, nilai) | kamus `import_kind` (`reference_items`, C) | baru | §23.1 (`0020`) |
+| Program jaminan sosial (JHT/JKK/JKM/JP/PBU kelas) | `reference_dictionary_entries` (B — kode ditetapkan negara) + tarif berversi basis poin | baru | §24.2 (`0079`) |
+
+**Rekap terukur.** Dari ±78 baris katalog di atas: yang **sudah punya DDL** 18 baris, yang **hidup sebagai kamus** (`reference_items`/`reference_dictionary_entries`, jadi cukup satu mesin + seed) 27 baris, yang **belum ada objeknya** 33 baris — dan 33 baris itu semuanya sudah menunjuk nomor migrasi yang terdaftar di §14.7 (`0008`, `0013`–`0028`, `0036`–`0046`), tidak ada yang "nanti kita buat". Parity Sevima tidak dicapai dengan meniru 30 tabelnya, melainkan dengan menutup 33 baris itu **sekali** di tempat pemiliknya masing-masing.
+
+### 20.5 Atribut kustom dinamis (EAV vs JSONB) — M-02 — `0048_custom_attributes.sql`
+
+**Pilihan bentuk, dinilai jujur** (bukan "paling modern"):
+
+| Bentuk | Kelebihan | Kelemahan | Vonis |
+|---|---|---|---|
+| **EAV murni** (satu baris per entity × atribut) | dapat di-query per atribut tanpa tahu skema; mudah riwayat | satu entitas = banyak baris; laporan jadi pivot; integritas tipe lemah; jumlah indeks melonjak; `SELECT` biodata menjadi 40 join | **DITOLAK sebagai penyimpanan utama** |
+| **JSONB di baris induk** (`attributes`) | satu baca, tidak ada rilis kode untuk menambah field, mudah ditiru ke Mobile | tanpa definisi, isinya jadi tempat sampah tak tervalidasi; query per kunci tidak terindeks otomatis | **DIPAKAI** sebagai penyimpan nilai |
+| **Tabel definisi + validasi di service** | tipe/regex/wajib/scope/visibilitas tetap kontrak yang dapat diuji | validasi bukan di DB (hanya DB yang tidak dapat diekspresikan) | **DIPAKAI** |
+| **Riwayat per nilai** | kebutuhan audit & laporan "keadaan pada tanggal X" | biaya tulis berlipat | **HANYA** untuk atribut `is_tracked=true` |
+
+```sql
+CREATE TABLE tenant_custom_attributes (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  entity_type text NOT NULL CHECK (entity_type IN
+    ('student','student_guardian','lecturer','staff','user','course','class','room','invoice','document','activity')),
+  code text NOT NULL,                       -- kunci di dalam `attributes`; stabil, tidak berubah saat label berubah
+  label text NOT NULL, label_en text, help_text text,
+  input_kind text NOT NULL CHECK (input_kind IN ('TEXT','TEXTAREA','NUMBER','DECIMAL','DATE','BOOL','SELECT','MULTI','RADIO','CHECKBOX','URL','EMAIL','PHONE','FILE')),
+  options_kind text REFERENCES reference_kinds(kind),   -- PILIHAN SELALU dari kamus; array literal dilarang (norma §20.1)
+  data_type text NOT NULL CHECK (data_type IN ('STRING','INT','DECIMAL','DATE','BOOL','ENUM','MULTI','URL','EMAIL','PHONE')),
+  is_required boolean NOT NULL DEFAULT false,
+  max_length int CHECK (max_length IS NULL OR max_length BETWEEN 1 AND 4000),
+  validation_regex text, min_value numeric, max_value numeric, decimal_scale smallint, unit text,
+  applies_to jsonb NOT NULL DEFAULT '{}'::jsonb,        -- {programIds:[…], entryYears:[2023,2024], programTypes:['PJJ'], sites:[…]}
+  role_view text[] NOT NULL DEFAULT '{}',               -- peran yang boleh membaca (kosakata RBAC_MATRIX; bukan string bebas)
+  role_edit text[] NOT NULL DEFAULT '{}',
+  student_self_editable boolean NOT NULL DEFAULT false, -- mahasiswa boleh mengisi sendiri?
+  show_in_transcript boolean NOT NULL DEFAULT false,
+  is_searchable boolean NOT NULL DEFAULT false,
+  is_tracked boolean NOT NULL DEFAULT false,            -- simpan riwayat nilai
+  pii_level text NOT NULL DEFAULT 'NONE' CHECK (pii_level IN ('NONE','ORDINARY','SPECIFIC')),
+  feeder_mapping jsonb,                                 -- {domain,column} — NULL berarti TIDAK PERNAH ikut kirim
+  status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','ACTIVE','RETIRED')),
+  sort_order int NOT NULL DEFAULT 100, version int NOT NULL DEFAULT 1,
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, entity_type, code),
+  CHECK (input_kind NOT IN ('SELECT','MULTI','RADIO','CHECKBOX') OR options_kind IS NOT NULL),
+  CHECK (input_kind IN ('SELECT','MULTI','RADIO','CHECKBOX') OR options_kind IS NULL),
+  CHECK (pii_level = 'NONE' OR student_self_editable = false),   -- PII spesifik tidak diisi bebas oleh klien tanpa gerbang
+  CHECK (status <> 'ACTIVE' OR (approved_by IS NOT NULL AND approved_by <> requested_by))
+);
+CREATE INDEX idx_customattr_form ON tenant_custom_attributes(tenant_id, entity_type, status, sort_order) WHERE status = 'ACTIVE';
+
+CREATE TABLE custom_attribute_history (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  entity_type text NOT NULL, entity_id uuid NOT NULL,
+  attribute_code text NOT NULL,
+  old_value jsonb, new_value jsonb NOT NULL,
+  changed_by uuid NOT NULL, changed_at timestamptz NOT NULL DEFAULT now(),
+  source text NOT NULL CHECK (source IN ('UI','IMPORT','API','MOBILE','MIGRATION')),
+  reason text, request_id text,
+  occurred_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_cah_entity ON custom_attribute_history(tenant_id, entity_type, entity_id, attribute_code, occurred_at DESC);
+```
+
+```sql
+-- Penyimpanan nilai: satu kolom di tabel induk, di-index dengan GIN. ALTER (expand-only, tidak menyentuh data lama):
+ALTER students  ADD COLUMN attributes jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER lecturers ADD COLUMN attributes jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER staff     ADD COLUMN attributes jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER rooms     ADD COLUMN attributes jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER courses   ADD COLUMN attributes jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER invoices  ADD COLUMN attributes jsonb NOT NULL DEFAULT '{}'::jsonb;   -- TIDAK untuk nominal; uang tetap kolom bigint
+CREATE INDEX idx_students_attrs ON students  USING gin (attributes jsonb_path_ops);
+CREATE INDEX idx_lecturers_attrs ON lecturers USING gin (attributes jsonb_path_ops);
+CREATE INDEX idx_rooms_attrs     ON rooms     USING gin (attributes jsonb_path_ops);
+```
+
+**Tujuh aturan yang membuat fitur ini aman dipakai, bukan berbahaya:**
+1. **Atribut kustom tidak boleh menciptakan keadaan.** `status`, `state`, `kind` mesin state adalah kelas A — bila kampus minta "status khusus", jawabannya adalah label atas kode yang ada (`A′`), bukan atribut baru. Ini garis yang mencegah `SELECT … WHERE attributes->'status'` menjadi sumber kebenaran kedua.
+2. **Pilihan baca dari kamus.** `options_kind` wajib terisi untuk `SELECT`/`MULTI`/`RADIO`/`CHECKBOX` (ditegakkan CHECK di atas) — tidak ada daftar opsi literal di mana pun, termasuk di JSONB definisi.
+3. **Feeder tidak ikut-ikutan.** `feeder_mapping IS NULL` berarti nilai itu **tidak pernah** masuk payload pusat. Tanpa aturan ini, satu atribut lokal bisa masuk transkrip nasional tanpa kamus.
+4. **PII tunduk §16.3.** `pii_level='SPECIFIC'` menuntut enkripsi amplop + blind index bila diperlukan pencocokan, dan **menolak** `student_self_editable=true`.
+5. **Indeks dibatasi.** `is_searchable=true` hanya boleh untuk **maksimal 40 atribut per entity_type** (dijaga pemicu COUNT) — tanpa batas, GIN per kunci menggerus jalur tulis `students` yang juga dipakai KRS War.
+6. **Hapus = `RETIRED`.** Nilai lama tetap tinggal di `attributes` dan riwayat; laporan periode sebelumnya harus tetap dapat direkonstruksi (BR-R12).
+7. **Empat-mata saat mengaktifkan.** `approved_by <> requested_by` karena satu atribut yang "wajib" dapat memblokir registrasi seluruh angkatan.
+
+**Contoh pemilik (ukuran baju) menjadi dua baris data, nol baris kode:** `reference_kinds(kind='ukuran_baju', api_group_code='UKURAN_BAJU', input_kind='SELECT', is_system=false)` + lima `reference_items` (`S`,`M`,`L`,`XL`,`XXL` — dan `CUSTOM` bila kampus memang butuh isian bebas, dengan `requires_document=false`). Bila ukuran baju hanya dibutuhkan untuk mahasiswa tertentu: `tenant_custom_attributes(entity_type='student', code='ukuran_baju', input_kind='SELECT', options_kind='ukuran_baju', applies_to='{"programTypes":["REGULER"]}')`. Nilai tersimpan di `students.attributes->'ukuran_baju'` = `"L"`, dan cetak-KTM membacanya lewat `/master/lookups?group=UKURAN_BAJU`, bukan dari konstanta.
+
+### 20.6 RLS, pengecualian, dan indeks untuk gugus §20
+
+| Objek | `tenant_id` | RLS | Catatan |
+|---|---|---|---|
+| `reference_kinds` | tidak ada (metadata global) | **pengecualian tercatat** §6.2 (baris 1236 sudah mendaftarinya) | SELECT-only untuk aplikasi; tulis lewat migrasi + layar Admin dengan audit |
+| `reference_kind_usage` | tidak ada (mendeskripsikan kode) | pengecualian tercatat — **wajib ditambahkan ke daftar §6.2** | sama seperti `reference_dictionary_entries` |
+| `reference_items` | ada | `ENABLE`+`FORCE`+`tenant_isolation` | sudah dari §14.2 |
+| view `master_lookup_groups`/`master_lookup_items` | melalui basis | `security_invoker = true` **wajib** | view `security_definer` menembus RLS |
+| `tenant_custom_attributes` | ada | `ENABLE`+`FORCE`+`tenant_isolation` | |
+| `custom_attribute_history` | ada | `ENABLE`+`FORCE` + **insert-only** (`REVOKE UPDATE, DELETE` + pemicu `app.reject_mutation()` §16.3) | ini jejak; tidak boleh dapat disunting |
+| `attributes jsonb` di tabel induk | ikut induk | ikut induk | GIN `jsonb_path_ops` |
+
+### 20.7 Query verifikasi CI §20 (dieksekusi, bukan dokumentasi)
+
+```sql
+-- 1. Setiap kind yang dipakai UI punya baris pemakaian (gerbang n):
+SELECT k.kind FROM reference_kinds k LEFT JOIN reference_kind_usage u ON u.kind = k.kind
+ WHERE k.is_required OR k.api_group_code IS NOT NULL GROUP BY k.kind HAVING count(u.kind) = 0;    -- wajib 0 baris
+
+-- 2. Tidak ada item yang menunjuk kind tidak dikenal, atau menunjuk dirinya sebagai hasil merge:
+SELECT i.id FROM reference_items i LEFT JOIN reference_kinds k ON k.kind = i.kind WHERE k.kind IS NULL;   -- wajib 0 baris
+
+-- 3. Item sistem (kamus nasional) tidak pernah boleh tanpa feeder_code bila kind-nya ber-diksi luar:
+SELECT i.id FROM reference_items i JOIN reference_kinds k ON k.kind = i.kind
+ WHERE k.has_external_dictionary AND i.is_system AND i.feeder_code IS NULL AND i.effective_to IS NULL;    -- wajib 0 baris (kandidat kirim tak berkode)
+
+-- 4. Satu atribut kustom tidak boleh memuat kosakata pilihan sendiri:
+SELECT id FROM tenant_custom_attributes
+ WHERE input_kind IN ('SELECT','MULTI','RADIO','CHECKBOX') AND options_kind IS NULL;    -- mustahil oleh CHECK; penjaga ganda saat replay
+
+-- 5. Plafon indeks atribut ter-cari (anti GIN melonjak di jalur tulis):
+SELECT entity_type, count(*) FROM tenant_custom_attributes
+ WHERE is_searchable AND status = 'ACTIVE' GROUP BY entity_type HAVING count(*) > 40;   -- wajib 0 baris
+
+-- 6. PII spesifik tidak pernah dapat diisi sendiri oleh klien:
+SELECT id FROM tenant_custom_attributes WHERE pii_level = 'SPECIFIC' AND student_self_editable;   -- wajib 0 baris
+
+-- 7. Nilai attributes tidak pernah berisi kunci yang tidak didefinisikan (kamus = satu rumah):
+SELECT s.id FROM students s, jsonb_object_keys(s.attributes) k
+ WHERE NOT EXISTS (SELECT 1 FROM tenant_custom_attributes a
+        WHERE a.tenant_id = s.tenant_id AND a.entity_type = 'student' AND a.code = k);  -- wajib 0 baris (kecuali kunci sistem ber-allowlist)
+
+-- 8. Riwayat atribut bersifat insert-only (REVOKE harus nyata, bukan niat):
+SELECT relname FROM pg_class WHERE relname = 'custom_attribute_history' AND relrowsecurity = false;   -- wajib 0 baris
+```
+
+### 20.8 Batas & risiko yang harus dibaca sebelum kode
+
+- **"Nol hardcoding" ≠ "nol konstanta".** Kelas A/A′ tetap kosakata tertutup; kalau tidak, `permission_verb`, `queue_operations.state`, dan payload PDDikti dapat diubah saat runtime dan seluruh gerbang §15.5 kehilangan arti. Aturan yang benar adalah *hardcoding hanya untuk hal yang memang tidak boleh berubah oleh tenant*.
+- **Validasi lintas kolom tidak dapat dititipkan ke kamus.** Aturan "bila penghasilan ≤ 1 juta maka wajib lampirkan surat" adalah logika L5 di service; kamus hanya menyediakan `requires_document`. Menaruhnya di `extra` akan membuatnya tidak teruji.
+- **33 baris katalog yang belum punya objek tidak boleh dibuka ke UI sebelum migrasinya ada** — termasuk `pmb_*` (`0021`), yang menjadi kunci `tuition_tariff_matrix` (§19.4). Menjalankan Dynamic Form Generator di atas kamus kosong menghasilkan dropdown kosong, dan itu akan disalah-artikan sebagai "fitur belum siap" padahal datanya yang belum ada.
+- **Biaya tersembunyi mesin lookup:** respons `?group=` dipakai di banyak layar; tanpa `ETag`/`X-Lookup-Version` dan cache per-tenant, satu layar biodata dapat mengirim 12 permintaan identik. Itu tugas API_SPEC §4.14, dan diuji sebagai bagian beban 1.000+ pengguna (ARCHITECTURE §10.8).
+- **Kepemilikan dokumen lain:** bentuk respons & error (`LOOKUP_*`, `CUSTOM_*`) milik API_SPEC §2.3; layar Admin "Data Referensi" + generator formulir milik UI_UX_DESIGN §13; izin `master.lookup.*`/`settings.customattr.*` milik RBAC_MATRIX §4.5; seed kamus nasional milik SEED_DATA; variabel & batas ukuran payload milik ENV_CONTRACT.
+
+---
+
+## 21. Mesin Parameter Dinamis & Otorisasi Tingkat Mikro — 2026-10-20
+
+Norma induk: **AGENTS §3.10**. Bagian ini menambahkan mesin yang **belum ada** (parameter operasional kunci-tunggal dengan CRUD penuh) dan **menolak** memindahkan hal yang sudah punya rumah. Nomor baru: `0049_system_parameters.sql`, `0050_menu_parameter_permissions.sql`.
+
+### 21.1 Garis pemisah lima rumah konfigurasi (tanpa ini, "semua harus CRUD" jadi kacau)
+
+Permintaan pemilik: seluruh opsi, variabel, dan aturan operasional harus parameter dinamis dengan CRUD di level Admin IT. Itu benar untuk **sebagian besar**, dan berbahaya bila diterapkan ke semuanya. Repo ini sudah punya lima rumah dengan sifat berbeda; mesin baru **tidak memangsa** rumah lama, ia menambahkan rumah yang memang kosong:
+
+| Rumah | Isi | Siapa yang boleh mengubah | Kenapa tinggal di situ |
+|---|---|---|---|
+| **`master_system_parameters`** (BARU, §21.2) | skalar kunci-tunggal tingkat tenant: ambang, timeout, penentu jendela, flag fitur, pola | Admin IT (kelas `OPS`), Kaprodi/BAUK untuk kelasnya masing-masing, dengan empat-mata untuk `REGULATORY`/`SECURITY` | inilah yang hari ini tersebar sebagai konstanta di kode dan **memang** harus dapat diubah tanpa rilis |
+| `academic_rules` (§5, **sudah ada**) | aturan berversi ber-scope `prodi × periode` yang berisi **logika**: band SKS per IPK, jendela KRS, gerbang tagihan, denda, aturan mengulang | Admin IT/Kaprodi lewat workflow aturan + `approved_by` | memindahkan aturan bersyarat ke tabel key-value akan menghilangkan riwayat transisi dan uji per aturan; **tidak dipindah** |
+| `reference_items` (§14.2/§20, **sudah ada**) | **daftar nilai** dropdown (agama, pekerjaan, penghasilan, transportasi, kebutuhan khusus, jenis keluar, ukuran baju, taksonomi Bloom, jenis predikat, penyebutan semester, jenis kelas, kelompok matakuliah) | Admin IT; sebagian hanya dinonaktifkan | ini kamus, bukan parameter; memindahkannya ke `master_system_parameters` akan menghancurkan hierarki, versi, dan pemetaan Feeder |
+| `tenant_custom_attributes` (§20.5) | **field tambahan per entitas** | Admin IT (definisi), peran sesuai `role_edit` (nilai) | menambah kolom, bukan mengatur sistem |
+| `ENV` / vault (ENV_CONTRACT) | kredensial, kunci kripto, DSN, rahasia tenant | **tidak lewat UI, tidak lewat DB** | `CHECK (is_secret = false)` di §21.2 menegakkan ini: parameter yang "dapat diedit di layar" dan rahasia tidak boleh berada di tabel yang sama |
+
+**Satu kalimat yang harus diingat developer.** Larangan hardcoding menyentuh **daftar nilai domain**, bukan **batas numerik keamanan**. Batas (mis. rotasi token `BETWEEN 5 AND 30`, radius `≤ 500`, `window ≤ 2`) **wajib** tetap `CHECK` rentang: kalau tidak, satu klik Admin IT dapat melemahkan kontrol anti-replay tanpa satu pun uji yang gagal — dan itu temuan keamanan, bukan fleksibilitas.
+
+### 21.2 `master_system_parameters` — `0049_system_parameters.sql` (M-02)
+
+```sql
+CREATE TABLE master_system_parameters (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  module_code text NOT NULL,                       -- 'attendance','krs','grading','feeder','finance','pmb','lms','platform'
+  parameter_key text NOT NULL,                     -- 'attendance.totp_rotate_seconds' — berawalan modul, stabil, tidak pernah diganti label
+  parameter_value text NOT NULL,                   -- disimpan sebagai teks; pembacaan memakai kolom typed di bawah
+  value_num numeric GENERATED ALWAYS AS
+    (CASE WHEN data_type IN ('INT','DECIMAL','PCT','SECONDS','METERS','BP') THEN parameter_value::numeric END) STORED,
+  value_bool boolean GENERATED ALWAYS AS
+    (CASE WHEN data_type = 'BOOL' THEN parameter_value::boolean END) STORED,
+  value_json jsonb GENERATED ALWAYS AS
+    (CASE WHEN data_type = 'JSON' THEN parameter_value::jsonb END) STORED,
+  data_type text NOT NULL CHECK (data_type IN ('STRING','REGEX','INT','DECIMAL','PCT','BP','SECONDS','METERS','BOOL','JSON','DATE','TIME','CRON')),
+  unit text, default_value text NOT NULL, min_value text, max_value text,
+  enum_kind text REFERENCES reference_kinds(kind), -- bila nilai valid hanya salah satu dari kamus: sumbernya DAFTAR, bukan CHECK literal
+  description text NOT NULL,                       -- tampil di layar Admin; wajib menyebut efek bila diubah
+  risk_class text NOT NULL CHECK (risk_class IN ('TECHNICAL','OPS','ACADEMIC','FINANCIAL','REGULATORY','SECURITY')),
+  applies_to jsonb NOT NULL DEFAULT '{}'::jsonb,   -- {programIds:[], sites:[], programTypes:[], periods:[]} — kosong = seluruh tenant
+  is_editable boolean NOT NULL DEFAULT true,
+  is_active boolean NOT NULL DEFAULT true,
+  is_secret boolean NOT NULL DEFAULT false,        -- selalu false; ada CHECK di bawah
+  requires_restart boolean NOT NULL DEFAULT false, -- true = pelanggaran norma hot-reload; harus ada catatan deviasi
+  source_of_truth text NOT NULL DEFAULT 'PARAM' CHECK (source_of_truth IN ('PARAM','academic_rules','reference_items','tenant_custom_attributes','tenant_settings','ENV')),
+  -- ^^^ RALAT 2026-10-23 (`0090`): kosakata bertambah satu nilai, `domain_table`, karena
+  --     `SPE-2` butir (a) menuntut ENAM baris §21.3 menjadi indeks penemuan sedangkan kosakata
+  --     lama hanya dapat menyatakan tiga rumahnya (`academic_rules` ×2, `tenant_settings` ×1).
+  --     Butir 16/17/20 (komponen biaya, skema potongan, kanal pembayaran) tinggal di TABEL
+  --     DOMAIN yang sudah punya versi/`gl_account_code`/empat-mata sendiri. `domain_table`
+  --     adalah **penunjuk**, bukan rumah keenam: barisnya tidak menampung nilai (`parameter_value`
+  --     string kosong) dan nilainya tidak pernah dibaca dari baris itu. `ck_param_not_env` tetap.
+  effective_from date NOT NULL DEFAULT current_date, effective_to date,
+  version int NOT NULL DEFAULT 1 CHECK (version > 0),
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), updated_by uuid,
+  UNIQUE (tenant_id, module_code, parameter_key),
+  CHECK (is_secret = false),                                              -- parameter yang dapat disunting UI tidak pernah memegang rahasia
+  CHECK (source_of_truth <> 'ENV'),                                       -- baris "pointer ke ENV" hanya lewat dokumentasi ENV_CONTRACT, bukan tabel ini
+  CHECK (parameter_value !~ '[[:cntrl:]]' AND length(parameter_value) <= 4000),
+  -- ^^^ RALAT 2026-10-23: bentuk lama `parameter_value ~ '^[^[:cntrl:]]{0,4000}$'` tidak
+  --     dapat dipakai — mesin regex PostgreSQL membatasi pengulangan sampai 255
+  --     (`invalid repetition count(s)`, SQLSTATE 2201B), sehingga CHECK itu menolak
+  --     SETIAP insert, bukan hanya nilai yang menyimpang. Makna tetap sama: tanpa
+  --     karakter kontrol, maksimum 4000 karakter. Dieksekusi oleh `0086`.
+  CHECK (risk_class NOT IN ('REGULATORY','SECURITY') OR (approved_by IS NOT NULL AND approved_by <> requested_by)),
+  CHECK (enum_kind IS NULL OR data_type IN ('STRING','INT')),
+  CHECK (effective_to IS NULL OR effective_to > effective_from)
+);
+CREATE INDEX idx_sysparam_lookup ON master_system_parameters(tenant_id, module_code, is_active, parameter_key);
+CREATE INDEX idx_sysparam_scope ON master_system_parameters USING gin (applies_to jsonb_path_ops);
+
+CREATE TABLE master_system_parameter_history (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  parameter_key text NOT NULL, module_code text NOT NULL,
+  old_value text, new_value text NOT NULL, old_version int, new_version int NOT NULL,
+  changed_by uuid NOT NULL, changed_at timestamptz NOT NULL DEFAULT now(),
+  reason text NOT NULL, ip inet NOT NULL, request_id text,
+  source text NOT NULL CHECK (source IN ('UI','API','IMPORT','MIGRATION','SEED')),
+  approver_id uuid,
+  occurred_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_sysparam_hist ON master_system_parameter_history(tenant_id, parameter_key, occurred_at DESC);
+```
+
+**Kenapa tiap kolom itu ada** (bukan hiasan): `parameter_value text` + tiga kolom *generated typed* membuat pembacaan murah (`value_num`, `value_bool`) tanpa mengorbankan kemampuan menyimpan pola/regex/JSON, dan tanpa `float` (AGENTS §3.4). `risk_class` menentukan jalur persetujuan, bukan sekadar label. `requires_restart` dipaksa `false` secara norma karena parameter yang hanya berlaku setelah deploy adalah konstanta yang menyamar. `source_of_truth` mencegah **dua tempat menyimpan hal sama** — baris yang menunjuk `academic_rules`/`tenant_settings` adalah indeks penemuan, bukan salinan nilai (dan karena itu nilainya tidak dibaca dari baris itu; `CHECK` di §21.7 menegakkan).
+
+**Riwayat wajib ada.** Parameter kelas `REGULATORY` mengubah angka yang dilaporkan ke negara atau keputusan akademik yang sudah terjadi; tanpa `master_system_parameter_history` (insert-only, beralasan, ber-IP, ber-penyetuju) tidak ada yang dapat merekonstruksi "aturan mana yang berlaku saat itu". Ini pasangan dari kewajiban arsip BR-R12.
+
+### 21.2.1 Penahan empat-mata nilai parameter — `0088_parameter_approvals.sql` (M-02) — terbit 2026-10-23
+
+**Celah yang ditutup bagian ini (diukur, bukan diasumsikan).** [API_SPEC §4.16.2](file:///c:/SICA/docs/API_SPEC.md) dan rute §4.16.3 `…/system-parameter-approvals/{id}/approve|reject` menjawab dengan `approvalId`, dan §4.16.2 menegaskan "`PUT` atas kunci `SECURITY`/`REGULATORY` **tidak** menaikkan nilai efektif — ia menyimpan **draf**". Tetapi §21.2 hanya melahirkan **dua** objek (`master_system_parameters` + riwayat), dan `grep -rn "parameter_approval" packages/database/migrations` = **0** berkas sampai siklus ini. Tanpa tabel penampung draf, "nilai tertahan tidak terpakai" (`AC-PG-1`) tidak punya representasi: satu-satunya tempat menyimpan angka yang belum disetujui adalah kolom `parameter_value` baris itu sendiri — yang justru dilarang norma. Ini pola `RD-54` (rute merujuk objek yang tidak dimiliki dokumen mana pun), jadi objeknya dituliskan di sini lebih dulu, dengan nomor migrasi, **sebelum** rutenya dibuat (`AGENTS §3.11`).
+
+```sql
+CREATE TABLE master_system_parameter_approvals (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  parameter_id uuid NOT NULL REFERENCES master_system_parameters(id) ON DELETE CASCADE,
+  parameter_key text NOT NULL,            -- proyeksi saat tulis: riwayat/approval harus tetap terbaca
+  module_code text NOT NULL,              --   walaupun kuncinya di-rename atau tenant dibersihkan
+  state text NOT NULL DEFAULT 'PENDING'
+    CHECK (state IN ('PENDING','APPROVED','REJECTED','CANCELLED')),
+  proposed_value text NOT NULL,
+  previous_value text NOT NULL,           -- nilai baris saat pengajuan — dasar `effectiveValue` di §4.16.2
+  proposed_applies_to jsonb NOT NULL DEFAULT '{}'::jsonb,
+  previous_version int NOT NULL,          -- optimistic lock saat pengajuan; aplikasi menolak bila baris sudah bergerak
+  effective_from date, effective_to date,
+  reason text NOT NULL CHECK (char_length(reason) BETWEEN 10 AND 500),
+  requested_by uuid NOT NULL, requested_at timestamptz NOT NULL DEFAULT now(),
+  approver_id uuid, decided_at timestamptz,
+  decision_reason text,
+  ip inet NOT NULL,
+  source text NOT NULL CHECK (source IN ('UI','API','IMPORT','MIGRATION','SEED')) DEFAULT 'UI',
+  applied_history_id uuid,                -- baris master_system_parameter_history yang dilahirkan APPROVE
+  CHECK (state <> 'APPROVED' OR (approver_id IS NOT NULL AND approver_id <> requested_by)),
+  CHECK (state = 'PENDING' OR decided_at IS NOT NULL),
+  CHECK (state <> 'REJECTED' OR char_length(coalesce(decision_reason,'')) >= 10),
+  CHECK (effective_to IS NULL OR effective_from IS NULL OR effective_to > effective_from)
+);
+CREATE INDEX idx_param_approval_lookup ON master_system_parameter_approvals(tenant_id, state, requested_at DESC);
+CREATE UNIQUE INDEX uq_param_approval_pending ON master_system_parameter_approvals(tenant_id, parameter_id)
+  WHERE state = 'PENDING';
+```
+
+**Empat keputusan yang mengikat, dan alasannya.**
+
+1. **Satu draf per kunci** (`uq_param_approval_pending`, indeks parsial): dua PENDING untuk kunci sama adalah dua angka yang menunggu diterapkan berurutan — yang kedua akan menimpa yang pertama tanpa siapa pun melihat diff-nya. Pola ini sama dengan `uq_acr_pending_scope` (`0082`, §14.3.3) dan dijawab di transport sebagai `409 CONFLICT` (12).
+2. **`approver_id <> requested_by` ditegakkan `CHECK`, bukan oleh service saja** — sama seperti baris `chk_acr_no_self_approval`. Service tetap memeriksa lebih dulu (pesan yang lebih baik), tetapi selundupan lewat `psql` harus gagal di database (`AC-PG-3`).
+3. **Keadaan terminal satu arah.** `APPROVED`/`REJECTED`/`CANCELLED` tidak pernah kembali ke `PENDING`; permintaan baru adalah baris baru. Ini yang membuat `DECISION_ALREADY_MADE` (55) punya makna dan membuat riwayat tetap dapat dibaca apa adanya.
+4. **`parameter_key`/`module_code` diproyeksikan, bukan dikutip lewat JOIN saat baca.** Ini bukan salinan nilai (yang dilarang `RD-32`): yang disalin adalah **identitas kunci pada saat kejadian**, persis seperti `custom_attribute_history.attribute_code`. Nilai efektif **tidak pernah** dibaca dari tabel ini — hanya dari `master_system_parameters`, dan itu yang dijaga `applied_history_id` (terisi hanya bila efek benar-benar sudah mendarat).
+
+**Dua objek lain yang ikut dibenahi di berkas `0088` yang sama** (keduanya temuan pengukuran, bukan perluasan gaya):
+
+- **Riwayat belum hanya-tambah.** Terukur: `has_table_privilege('sica_app','public.master_system_parameter_history','UPDATE'|'DELETE')` = **true** dan tidak ada pemicu apa pun, padahal `SPE-1` butir (c) mensyaratkan `REVOKE UPDATE, DELETE` + pemicu `app.reject_mutation()` dengan uji menghasilkan **`42501`**, bukan "0 rows affected" yang senyap. `0088` membuat fungsi `app.reject_mutation()` sekali dan memasangnya sebagai `BEFORE UPDATE OR DELETE` pada `master_system_parameter_history` **dan** `custom_attribute_history` (yang mengklaim insert-only di header `0048` tetapi pemicunya tidak pernah ada — `0048` tidak boleh disunting karena sudah diterapkan, jadi perbaikannya di berkas baru, sesuai `MIGRATION_SOP §5`).
+- **`module_code` tidak tertutup.** §21.2 menulis delapan nilai pada komentar, tetapi `0049` tidak memberi `CHECK`, sehingga kunci `conference.*`/`analytics.*`/`ai.*` di katalog §21.3 (baris 26–36) tidak punya rumah modul yang tegas — dan pemetaan entitlement di §4.16.5 bergantung padanya. `0088` menutup kosakata itu sebagai **kelas A** (enum tertutup di DB, bukan data yang dapat disunting): `CHECK (module_code IN ('attendance','krs','grading','feeder','finance','pmb','lms','platform','conference','analytics','ai'))`. Tiga nilai terakhir lahir karena katalog §21.3 sudah memakai kunci itu; menambahnya ke CHECK adalah registrasi kosakata, bukan penciptaan modul entitlement.
+- **Plafon keamanan sebagai `CHECK`, bukan hanya validasi transport.** §21.1 penutup mewajibkan `totp_rotate_seconds ∈ (5,10,15)` dan `totp_window_steps ∈ (0,1,2)` "tetap CHECK di DB"; `0049` tidak memilikinya. `0088` menambahkan `ck_param_security_floor` pada kedua kunci itu (himpunan teks, tanpa cast, sehingga tidak bisa dijebol service maupun `psql`) — ini sisi "DAN DB" dari `AC-PG-4`.
+
+**Verifikasi sesudah apply** (dijalankan oleh `pnpm --filter @sica/database db:test:rls`, bukan diklaim):
+
+```sql
+SELECT count(*) FROM pg_class WHERE relname = 'master_system_parameter_approvals';                  -- 1
+SELECT count(*) FROM pg_constraint WHERE conname IN
+  ('ck_param_approval_foureyes','ck_param_approval_terminal','ck_param_approval_reject_reason');    -- 3
+UPDATE master_system_parameter_history SET reason='x' WHERE 1=1;                                    -- 42501
+INSERT INTO master_system_parameter_approvals(... state='APPROVED', approver_id=<requested_by> ...); -- 23514
+INSERT INTO master_system_parameters(... 'attendance.totp_rotate_seconds', parameter_value='7' ...); -- 23514
+SELECT count(*) FROM parameter_permissions WHERE 1=1;                                               -- RLS: 0 baris tenant lain
+```
+
+**Ralat yang lahir dari menjalankan uji, bukan dari menulisnya (2026-10-23).** Harness `db:test:rls` mencetak `LULUS` untuk seluruh penahan di atas lalu **GAGAL di teardown**:
+
+```
+PostgresError: custom_attribute_history is append-only (DELETE not permitted)
+  where: SQL statement "DELETE FROM ONLY public.custom_attribute_history WHERE $1 = tenant_id"
+```
+
+Artinya `ON DELETE CASCADE` dari `tenants` **ikut menjalankan pemicu statement-level** — bertentangan dengan dugaan umum bahwa aksi constraint tidak menyalakan statement trigger. Konsekuensinya nyata dan belum pernah ada sebelumnya: sejak `0088`, tenant yang punya satu baris riwayat apa pun **tidak dapat dihapus** dengan `DELETE FROM tenants`. Tidak ada fitur produk yang menghapus tenant (terukur: nol call site di `apps/**`; `AUDIT_READINESS` mencatat decommission sebagai prosedur ops), jadi ini bukan regresi layar — ini **prosedur baru** yang wajib tercatat:
+
+- Pelepasan tenant dilakukan dalam **satu transaksi** yang `DISABLE TRIGGER` pada kedua tabel riwayat, menyapu `tenants`, lalu `ENABLE TRIGGER` kembali di `finally` (pola yang dipakai teardown harness; keadaan akhir terbukti `tgenabled = 'O'`).
+- Dinding append-only **tidak pernah** dilonggarkan untuk peran aplikasi: `sica_app` tetap `42501`, dan itu yang diuji lebih dulu. Pengecualian hanya untuk principal pemilik objek, di dalam sesi terkelola, dengan jejak audit.
+- Migrasi susulan tidak mengubah ini; bila suatu saat decommission menjadi fitur, ia wajib memiliki rute ops ber-MFA + empat-mata yang membungkus prosedur yang sama — bukan menghapus pemicunya.
+
+### 21.3 Katalog parameter yang diminta pemilik (terpetakan, dengan rumah yang benar)
+
+| # | Parameter permintaan | Bentuk di SICA | Kunci / nilai awal | Batas & penjaga | Kelas risiko |
+|---|---|---|---|---|---|
+| 1 | Ambang presensi minimum 75 % | `master_system_parameters` | `attendance.min_presence_pct` = `75` (`PCT`) | `CHECK value_num BETWEEN 0 AND 100`; gerbang BR-A15 dibacakan oleh service | ACADEMIC |
+| 2 | Kadaluarsa TOTP QR 5 detik | `master_system_parameters` + kolom sesi | `attendance.totp_rotate_seconds` = `5` (`SECONDS`); override per sesi di `class_sessions.qr_rotate_seconds` | rentang **5–30** dan `IN (5,10,15)`; `attendance.totp_window_steps` `0–2` | SECURITY |
+| 3 | Radius geofencing 50 m | `rooms.allowed_radius_m` (per ruang, §18.6) + tenant default | `attendance.geofence_default_radius_m` = `50` (`METERS`) | 10–500; `max_accuracy_m` 5–200; vonis pakai `d − akurasi ≤ radius` | SECURITY |
+| 4 | Batas SKS berdasarkan IPK | **`academic_rules`** (`sks_band_by_ipk`, sudah ada) | — | dibaca lewat resolver aturan, bukan key-value | REGULATORY |
+| 5 | Aturan pembatalan KRS | `academic_rules` (jendela) + `master_system_parameters` untuk ambang non-akademik | `krs.withdraw_window_hours` (bila kampus memisah dari `academic_rules`) | `effective_from` per periode; penolakan lewat `422` | ACADEMIC |
+| 6 | Timeout webhook rekonsiliasi | `master_system_parameters` | `finance.webhook_reconcile_timeout_s` = `30`; `finance.webhook_max_clock_skew_s` = `300` | batas atas 300; retry tetap tunduk `ARCHITECTURE §10.4.1` | TECHNICAL |
+| 7 | Ukuran baju almamater | `reference_items(kind='ukuran_baju')` | `S/M/L/XL/XXL` (+ `CUSTOM` dengan isian) | kelas C; tidak ada array literal | OPS |
+| 8 | Jenis pembiayaan | `reference_items(kind='jenis_pembiayaan')` | mandiri/KIP/biaya kerja sama/beasiswa … | `feeder_code` wajib sebelum ikut kirim | REGULATORY |
+| 9 | Agama, pekerjaan ortu, rentang penghasilan, transportasi, jenis disabilitas, status awal mahasiswa, jenis keluar | `reference_items` + kamus nasional `reference_dictionary_entries` | kelas B/C sesuai daftar | kode nasional tidak dapat diedit tenant, hanya label | REGULATORY |
+| 10 | Tipe & nama semester | `reference_items(kind='semester_penyebutan')` + enum `academic_year_term` (GANJIL/GENAP/ANTAR) **tetap** | label per kampus; kode untuk perhitungan | kode = kelas A-prime; label = kamus | ACADEMIC |
+| 11 | Jenis kelas / paralel | `reference_items(kind='jenis_kelas')` | reguler-paralel/kelas-kecil/praktikum … | dipakai `class_distributions`/`timetabling_requests.group_code` | ACADEMIC |
+| 12 | Kategori matakuliah | `reference_items(kind='kelompok_matakuliah')` (sudah ada §14.2) | wajib/mkpu/pilihan … | ikut perhitungan SKK (`courses.sks*`) | ACADEMIC |
+| 13 | Skala & konversi nilai mutu | **tabel** `grade_scales` + `grade_scale_bands` (`int4range` NOT OVERLAPS) | bukan key-value: struktural | `assessment_rubric_bands` §18.7 untuk capaian | REGULATORY |
+| 14 | Taksonomi Bloom | `reference_items(kind='taksonomi_bloom')` | C1–C6 + turunan; dipakai `assessment_indicators.level` | kamus, bukan enum kode | ACADEMIC |
+| 15 | Jenis predikat kelulusan | `reference_items(kind='predikat_kelulusan')` + band `pred_bands` (BENCH-76) | cum laude/sangat memuaskan/memuas … | kode yang dibaca aturan = kelas A-prime; syarat dihitung RETE (ALG-4) | REGULATORY |
+| 16 | Komponen biaya | **tabel** `fee_tariff_groups` (`0046`) | struktural, punya `gl_account_code` | bukan key-value | FINANCIAL |
+| 17 | Skema potongan / beasiswa | **tabel** `tuition_discounts` + `payment_waivers` (`0015`) | struktural + butuh empat-mata | nominal tidak pernah lewat parameter | FINANCIAL |
+| 18 | Aturan denda keterlambatan | `academic_rules` (`late_fee_basis`, `late_fee_bp`, `grace_days`, plafon) | sudah punya rumah berversi | satu fungsi kalkulasi (BR-K*) | FINANCIAL |
+| 19 | Interval cicilan | **tabel** `payment_plans` + `master_system_parameters` ambang | `finance.installment_max_terms` = `12` (`INT`) | `CHECK Σ termin = nilai induk` tetap di tabel | FINANCIAL |
+| 20 | Kanal pembayaran & Virtual Account | **tabel** `payment_channels`, `virtual_accounts` (`0022`) | kredensial kanal **tidak** di DB (vault/ENV) | `is_secret=false` menegakkan | FINANCIAL |
+| 21 | Pola NIM per tenant | `tenant_settings.nim_format` (sudah ada, kolom nyata) | baris parameter hanya **indeks penemuan** (`source_of_truth='tenant_settings'`) | generator = ALG-18 §12.17 | REGULATORY |
+| 22 | Modus pembelajaran | kosakata kanonik `learning_modality` (§21.4) | `classes.learning_modality` | tiga ejaan lama digabung, bukan ditambah | ACADEMIC |
+| 23 | Ambang kehadiran daring (≥ 75 % durasi join) | `master_system_parameters` | `attendance.online_min_join_ratio` = `0.75` (`DECIMAL`) | 0,50–1,00; sumber bukti = peristiwa LMS internal | ACADEMIC |
+| 24 | Kebijakan rekonsiliasi dua sumber | `master_system_parameters` + `enum_kind` | `attendance.multi_source_policy` = `ONSITE_PRIMARY` (kamus `kebijakan_rekonsiliasi`) | lihat §21.5 | ACADEMIC |
+| 25 | Masa berlaku pegangan kursi KRS (*lease* TTL) | `master_system_parameters` | `krs.war_lease_ttl_s` = `90` (`SECONDS`) | rentang **30–300**; perpanjangan wajib membawa `version`; tidak pernah melewati tutup jendela OW. **Vonis ini menutup tiga angka yang sebelumnya hidup bersamaan** (900 s di §16.1, 30 s di API_SPEC, dan `PX 90000` di ARCHITECTURE §10.3) | TECHNICAL |
+| 26 | Pilihan kanal vicon dan rantai fallback | `master_system_parameters` + `conference_connections` (`0073`) | `conference.default_provider` = `BUILTIN_LMS`; `conference.fallback_chain` = `BUILTIN_LMS,BBB,JITSI` | nilai harus anggota enum §21.10.1; rantai 1–6 token unik; `422 PARAM_VALUE_NOT_ALLOWED` (145) | TECHNICAL — empat-mata + MFA |
+| 27 | Sumber bukti yang menang saat dua kanal mengirim | `master_system_parameters` | `conference.attendance_source_priority` = `INTERNAL_FIRST` | ∈ `INTERNAL_FIRST`, `VENDOR_ONLY`, `DUAL_RECONCILE`; `VENDOR_ONLY` menuntut alasan terekam | ACADEMIC — dua penyetuju + MFA |
+| 28 | Umur bukti kanal yang masih boleh ikut vonis | `master_system_parameters` | `conference.evidence_max_age_hours` = `24` (`HOURS`) | 1–168; di luar umur → bukti tetap tersimpan dengan `degraded`, tidak ikut vonis (148) | TECHNICAL |
+| 29 | Ambang tonton modul asinkron | `master_system_parameters`; override per sesi di `class_sessions.min_watch_pct` | `attendance.async_min_watch_ratio` = `0.80` (`DECIMAL`) | 0,50–1,00; **RD-72**: `DEFAULT 80` dilepas dari kolom karena kunci ini dirujuk `INTEGRATIONS §5.7`/`§6.7` sebelum terdaftar; override kolom hanya menyempitkan, tidak pernah melonggarkan ambang tenant | ACADEMIC — dua penyetuju + MFA |
+| 30 | Peta sebaran sesi boleh dibuka | `master_system_parameters` | `analytics.map.enabled` = `false` (`BOOL`) | mati secara baku; menyala hanya bila `GEOIP_DB_PATH` tersedia (`ENV_CONTRACT §8`); keadaan mati = widget menampilkan sebab, bukan peta kosong | `OPS` |
+| 31 | Jendela sesi dianggap aktif | `master_system_parameters`; store Redis `session:active:{tenant}` | `analytics.session.active_window_s` = `300` (`SEC`) | 60–900; di luar rentang ditolak transport **dan** `CHECK` DB (uji dua lapis, pola `AC-PG-4`) | `OPS` |
+| 32 | Retensi gejala sesi (geografi) | `master_system_parameters` + kolom `session_geo_facts.retention_days` (`0078`) | `analytics.map.ip_retention_days` = `90` (`DAY`) | 7–730; **di bawah 7 hari ditolak CHECK DB** karena menghapus bukti, bukan mengubah preferensi | `REGULATORY` — dua penyetuju + MFA |
+| 33 | Urutan sumber geolokasi saat dua-duanya ada | `master_system_parameters` | `analytics.map.geo_source_priority` = `["CLIENT_GEO","GEOIP_DB","SITE_GEO"]` (`JSON`) | harus permutasi tiga nilai itu tanpa duplikat; label sumber **tetap tampil** di UI apa pun urutannya (`ARCHITECTURE §13.8` vonis 8) | `OPS` |
+| 34 | Porsi titik yang boleh ditandai anomali (contamination) | `master_system_parameters`; bayangan per-domain di `anomaly_domain_settings.contamination_bp` (`0081`) | `ai.anomaly.contamination_bp` = `50` (`BP`, 10–200) | di luar rentang ditolak transport **dan** CHECK DB; parameter yang menang bila keduanya berbeda (§25.2) | `TECHNICAL` |
+| 35 | Ambang skor minimum yang naik ke kartu | `master_system_parameters`; bayangan per-domain di `anomaly_domain_settings.min_score_bp` | `ai.anomaly.min_score_bp` = `7000` (`BP`, 5000–9900) | menurunkan di bawah 5000 = membanjiri pemeriksa; menaikkan di atas 9900 = fitur mati diam-diam — dua-duanya ditolak, dan nilai efektif tampil di layar | `TECHNICAL` |
+| 36 | Domain deteksi yang diizinkan menyala | `master_system_parameters` + `anomaly_domain_settings` | `ai.anomaly.enabled_domains` = `[]` (`JSON`) | anggota `ATTENDANCE`/`FINANCE`/`TRAFFIC`, tanpa duplikat, baku kosong; menyalakan satu domain = empat-mata + MFA karena mengaktifkan pengawasan atas orang | `SECURITY` — dua penyetuju + MFA |
+
+**Ralat penomoran 2026-10-21 (dewan, `RD-72`).** Tabel ini berhenti di 25 selama satu siklus sementara §21.10.3 sudah menyatakan dirinya "baris 26–28" dan `INTEGRATIONS` sudah membaca `attendance.async_min_watch_ratio` yang belum pernah didaftarkan. Baris 26–28 dipromosikan dari §21.10.3 ke katalog ini (rumus namanya tidak berubah; §21.10.3 tetap penjelasan bentuknya), dan baris 29 ditambahkan untuk ambang asinkron. Katalog sekarang **33 baris** (baris 30–33 terbit 2026-10-21 bersama gugus peta sesi, `§24`); alat `gap-47c.mjs` yang mengukur angka ini harus dijalankan ulang, bukan dikoreksi dengan menyalin angka ini ke dokumen lain.
+
+Enam dari 33 butir di atas **ditolak menjadi key-value** (nomor 4, 13, 16, 17, 20, 21) karena struktural dan sudah punya tabel — memindahkannya akan menciptakan dua sumber kebenaran, pola `RD-32`. Menuliskan penolakannya di sini adalah bagian dari pekerjaan, bukan kegagalan melayani permintaan.
+
+
+### 21.4 Arbitrase kosakata modus pembelajaran (tiga ejaan hasil pengukuran)
+
+Terukur hari ini konsep yang sama ditulis tiga cara: `learning_mode` ONSITE/ONLINE/BLENDED (DATA_MODEL §18.2 `lecturer_availability`, §19.2 `classes.delivery_mode`), `teachingMethod` `offline|online|hybrid` (API_SPEC §4.4 lower-case), dan `deliveryType` `ONSITE|SYNC_LIVE|ASYNC_MODULE` (API_SPEC §4.4.1). Keputusan:
+
+- **`learning_modality`** (kelas & sesi): `ONSITE | ONLINE | BLENDED` — kosakata kanonik; disimpan sebagai kolom `text + CHECK` (kelas A-prime) di `classes`, `class_sessions` ikut induk bila beda. Alias lama **dilepas**: `offline`→`ONSITE`, `hybrid`→`BLENDED`, `delivery_mode`→`learning_modality` (kolom lama tetap ada satu rilis sebagai alias yang ditulis dalam migrasi).
+- **`session_kind`** (per pertemuan, jawab "bagaimana pertemuan ini berlangsung"): `REGULAR | SYNC_LIVE | ASYNC_MODULE | PRAKTIKUM | UTS | UAS | SUSULAN` — bukan sinonim modus; satu kelas BLENDED memiliki ketiganya.
+- **`attendance_source`** (sudah ada sebagai enum `QR|GEOFENCE|MANUAL|APP_BULK|FEEDER_SYNC`, §15.1) **ditambah** `LMS_ACTIVITY` dan `WEBHOOK_EVENT` lewat `0049` (`ALTER TYPE … ADD VALUE` pada migrasi tersendiri sesuai aturan §15.2).
+- Pemetaan ke kode PDDikti `F`/`O`/`M` (tatap muka/full online/campuran) **tidak dikarang**: diambil dari kamus resmi lewat `reference_dictionary_entries` + `pddikti_mappings`; selama kamus belum di-*seed*, kolom `feeder_sifat_pembelajaran` bernilai NULL dan barisnya **tidak ikut kirim** (I-14). Penanda `[VERIFIKASI-KAMUS]`.
+
+### 21.5 Rekonsiliasi dua sumber presensi (luring + daring paralel)
+
+Ketika satu sesi menerima bukti dari dua jalur (QR/geofence di ruang, dan peristiwa LMS/webhook untuk `SYNC_LIVE`), aturannya harus eksplisit — kalau tidak, kehadiran ganda atau hilang diam-diam:
+
+| Kebijakan (`kebijakan_rekonsiliasi`) | Perilaku | Kapan dipakai |
+|---|---|---|
+| `ONSITE_PRIMARY` | bukti luring menang; bukti daring tercatat sebagai `evidence` saja | kelas REGULER yang juga punya sesi daring |
+| `ONLINE_PRIMARY` | rasio-join ≥ ambang menang; QR menjadi bukti tambahan | PJJ penuh |
+| `MERGE_ANY` | salah satu bukti cukup, **satu** baris `attendances`, sumber tercatat `QR+LMS` | kampus yang membolehkan hibrida longgar |
+| `REQUIRE_BOTH` | dua bukti wajib; yang hanya punya satu → `PENDING_REVIEW` + banding | kelas dengan risiko titip-absen tinggi |
+| `STRICT_LATEST` | bukti terakhir menang (untuk koreksi dosen) | hanya dengan `VALIDATE` dan alasan |
+
+Invariance: `attendances` **satu baris per (session, student)** (`uq_attendances_session_student`) apa pun kebijakannya; setiap bukti tambahan masuk `attendance_evidence(source, occurred_at, duration_s, ratio, digest, device_digest)` (BARU di `0049`, insert-only), bukan kolom kedua di `attendances`. Rasio durasi dihitung dari **log peristiwa internal** (join/leave, heartbeat 60 detik), bukan dari klaim klien, dan **satu-satunya oracle yang diizinkan untuk kelas online adalah SICA Virtual Campus** (ADR-11); laporan peserta webinar vendor bersifat *pendukung* dengan aturan integritas sendiri (§21.6).
+
+### 21.6 Kredensial vendor webinar vs norma nol-API-key (batas yang harus tegas)
+
+AGENTS §3.9 melarang layanan **kecerdasan/optimasi berbayar** dan melarang **egress data mahasiswa**. Webhook Zoom/Meet/Teams tidak termasuk intelijen, tetapi **termasuk** kredensial vendor dan risiko egress. Putusan yang ditulis agar tidak diperdebatkan lagi:
+
+1. Jalur **utama & otoritatif**: SICA Virtual Campus (BBB/Jitsi yang di-*self-host*, tanpa kunci) → peristiwa join/leave masuk `attendance_evidence` tanpa panggilan keluar. Nol-API-key terpenuhi penuh.
+2. Jalur **opsional**: Zoom/Meet/Teams boleh dipakai bila kampus sudah berlangganan, dengan kredensial di **vault/ENV** (bukan baris DB, bukan parameter UI), verifikasi **signature/HMAC** pada webhook, `timestamp` tunduk `finance.webhook_max_clock_skew_s`, dan **tolak** payload yang membawa PII di luar `{event, user_ref, duration}`.
+3. **Larangan keras**: menjadikan laporan vendor satu-satunya bukti kehadiran; mengirim transkrip/rekaman/nama lengkap ke vendor untuk "analisis"; memakai API kewujudan/wajah berbayar (sudah ditolak §12.7).
+4. Konsekuensi kepatuhan: `attendance_evidence.source='WEBHOOK_EVENT'` membawa `vendor`, `credential_ref`, `event_digest`, dan **tidak pernah** kolom berisi materi pertemuan.
+
+### 21.7 `menu_items`, `menu_permissions`, `parameter_permissions` (M-02) — `0050_menu_parameter_permissions.sql`
+
+Katalog izin (`permissions` + `role_permissions`, §3 baris 301–330) **sudah ada**; yang belum ada adalah dua hal yang diminta: (a) **peta menu → izin** yang dapat dikelola (agar "menu routing dinamis" tidak di-hardcode per layar), dan (b) **peta parameter → izin** agar `PARAM_EDIT` dapat diberi tanpa membuat satu kode izin per parameter.
+
+```sql
+CREATE TABLE menu_items (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, parent_id uuid REFERENCES menu_items(id),
+  label text NOT NULL, label_en text, route_key text,      -- 'admin.master.periode' → path dibangun dari route_key, bukan string bebas
+  layer text NOT NULL DEFAULT 'WEB' CHECK (layer IN ('WEB','MOBILE','BOTH')),
+  module_code text,                                        -- gerbang entitlement (ADR-13)
+  icon text, sort_order int NOT NULL DEFAULT 100,
+  is_visible boolean NOT NULL DEFAULT true,
+  requires_mfa boolean NOT NULL DEFAULT false,             -- menu tulis-admin (FR-IDT-01)
+  effective_from date NOT NULL DEFAULT current_date, effective_to date,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), version int NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, layer, code),
+  CHECK (parent_id IS NULL OR parent_id <> id)             -- anti siklus langsung; siklus panjang dijaga §21.8(3)
+);
+
+CREATE TABLE menu_permissions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  menu_id uuid NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
+  permission_code text NOT NULL,                           -- menunjuk katalog permissions (§3); TIDAK membuat kosakata izin baru
+  effect text NOT NULL DEFAULT 'ALLOW' CHECK (effect IN ('ALLOW','DENY')),
+  scope_kind text NOT NULL DEFAULT '',                -- '' = warisi penugasan peran; atau TENANT/ORG/PROGRAM/CLASS/SITE (§15.2, RBAC §4.6)
+  note text, created_by uuid, created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (menu_id, permission_code, scope_kind),
+  CHECK (scope_kind IN ('', 'TENANT', 'ORG', 'SITE', 'PROGRAM', 'CLASS'))  -- penanda '' dipakai karena NULL tidak pernah bertabrakan dengan NULL di UNIQUE
+);
+
+CREATE TABLE parameter_permissions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  parameter_pattern text NOT NULL,                         -- 'attendance.totp_*', 'finance.*', 'grading.publish_deadline'
+  permission_code text NOT NULL,                           -- mis. settings.param.edit.academic (§4.5)
+  effect text NOT NULL DEFAULT 'ALLOW' CHECK (effect IN ('ALLOW','DENY')),
+  min_scope text NOT NULL DEFAULT 'TENANT' CHECK (min_scope IN ('TENANT','ORG','SITE','PROGRAM')),
+  requires_mfa boolean NOT NULL DEFAULT false,
+  requires_second_approver boolean NOT NULL DEFAULT false, -- wajib true bila risk_class REGULATORY/SECURITY
+  valid_from date NOT NULL DEFAULT current_date, valid_to date,
+  note text NOT NULL,                                      -- pola tanpa keterangan ditolak saat review
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz,
+  UNIQUE (tenant_id, parameter_pattern, permission_code, effect),
+  CHECK (parameter_pattern ~ '^[a-z][a-z0-9_]*(\.[a-z0-9_*$]+)+$'),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+```
+
+**Tiga keputusan desain yang harus dipahami sebelum ada yang menuntut bentuk lain.**
+
+1. **`parameter_permissions` memakai pola, bukan satu baris per (peran × parameter).** Katalog 222 izin + 145 titik aksi akan meledak menjadi ribuan baris bila setiap parameter punya izin sendiri, dan yang lebih buruk: kode izin baru akan terus diciptakan tanpa review. Evaluasinya deterministik: **DENY menang atas ALLOW**, lalu pola paling spesifik menang (jumlah segmen literal terbanyak), lalu `parameter_permissions` kalah dari keputusan servis untuk kelas `SECURITY` (mis. ambang rotasi TOTP tidak dapat dilonggarkan oleh pola apa pun di bawah batas `CHECK`).
+2. **Menu yang tidak tercantum = tidak terlihat, bukan terlihat.** `menu_permissions` bersifat *allowlist* per peran; penyaringan menu **bukan** kontrol akses (AGENTS §3.8) — gerbang servis `L1–L6` tetap wajib di setiap rute, dan rute yang tersesuai modul non-`ACTIVE` tetap `404 MODULE_NOT_AVAILABLE`.
+3. **Tombol = izin, bukan gaya CSS.** Kisi "sub-detail" yang diminta (per modul → sub-modul → menu → sub-menu → parameter) dilayani tiga tabel ini + `FIELD_RULES` untuk tingkat kolom; aksi `LOCK`/`UNLOCK`/`EXPORT`/`PARAM_EDIT` **sudah dipetakan** ke enam verba kanonik di RBAC_MATRIX §4 (tidak ada verba baru): `PARAM_EDIT` = `UPDATE` pada `resource='settings'` dengan pola parameter, `LOCK`/`UNLOCK` = `OTHER` terdaftar, `APPROVE`/`REJECT` = dua hasil dari satu verba `VALIDATE`.
+
+### 21.8 Query verifikasi CI §21
+
+```sql
+-- 1. Tidak ada satu pun baris parameter yang memegang rahasia (norma is_secret=false):
+SELECT id FROM master_system_parameters WHERE is_secret OR source_of_truth = 'ENV';           -- wajib 0 baris
+
+-- 2. Nilai parameter selalu berada di dalam rentang yang didaftarkan (anti pelonggaran kontrol keamanan):
+SELECT parameter_key FROM master_system_parameters
+ WHERE value_num IS NOT NULL
+   AND ((min_value IS NOT NULL AND value_num < min_value::numeric)
+     OR (max_value IS NOT NULL AND value_num > max_value::numeric));                          -- wajib 0 baris
+
+-- 3. Hierarki menu tidak boleh bersiklus (kedalaman maksimum 4):
+WITH RECURSIVE t AS (SELECT id, parent_id, 1 AS depth FROM menu_items WHERE parent_id IS NULL
+                     UNION ALL SELECT m.id, m.parent_id, t.depth + 1 FROM menu_items m JOIN t ON m.parent_id = t.id)
+SELECT id FROM t WHERE depth > 4 GROUP BY id;                                                  -- wajib 0 baris
+
+-- 4. Pola parameter wajib menunjuk kunci yang benar-benar ada (anti rujukan hantu saat review):
+SELECT p.parameter_pattern FROM parameter_permissions p
+ WHERE p.parameter_pattern NOT LIKE '%*' AND NOT EXISTS
+  (SELECT 1 FROM master_system_parameters s WHERE s.parameter_key = p.parameter_pattern);     -- wajib 0 baris
+
+-- 5. Parameter kelas REGULATORY/SECURITY tidak boleh aktif tanpa penyetuju kedua:
+SELECT parameter_key FROM master_system_parameters
+ WHERE risk_class IN ('REGULATORY','SECURITY') AND is_active
+   AND (approved_by IS NULL OR approved_by = requested_by);                                    -- wajib 0 baris
+
+-- 6. Rekonsiliasi dua sumber tidak pernah menghasilkan dua baris presensi untuk satu (sesi, mahasiswa):
+SELECT session_id, student_id, count(*) FROM attendances
+ GROUP BY session_id, student_id HAVING count(*) > 1;                                          -- wajib 0 baris
+
+-- 7. Bukti kehadiran tunggal tidak boleh hilang: tiap evidence menunjuk sumber + digest
+SELECT id FROM attendance_evidence WHERE source IS NULL OR digest IS NULL;                     -- wajib 0 baris
+
+-- 8. Kosakata modus tunggal: nilai lama yang dilepas tidak boleh muncul lagi
+SELECT id FROM classes WHERE learning_modality NOT IN ('ONSITE','ONLINE','BLENDED');          -- wajib 0 baris
+```
+
+### 21.9 Status & prasyarat gugus §21
+
+| Item | Migrasi | Kode | Ditahan oleh |
+|---|---|---|---|
+| `master_system_parameters` + riwayat | `0049` + `0086` + `0088` | **ADA** — service (`system-parameters.service.ts`), resolver (`parameter-resolver.ts`), 12 rute §4.16.3, layar `/admin/pengaturan/parameter` | bukan lagi desain: yang tersisa adalah **konsumen** per modul (baris `DITUNDA` di bawah) dan `parameter_permissions` yang belum punya jalur tulis |
+| Katalog §21.3 — terukur 2026-10-23 | `0049`+`0088` seed | **5 kunci TERPASANG** (`attendance.min_presence_pct`, `attendance.totp_rotate_seconds`, `attendance.totp_window_steps`, `attendance.geofence_default_radius_m`, `attendance.gps_max_accuracy_m`) + **7 baris penemuan** (`source_of_truth <> 'PARAM'`) | **19 kunci DITUNDA dengan alasan tertulis** di `SYSTEM_PARAMETER_DEFERRED` (`packages/contracts/src/parameter-keys.ts`): vonis hadir M-18, rekonsiliasi §21.5, kanal vicon design-only, rute webhook BAUK, `payment_plans`, `session_geo_facts`, engine anomali. Menseed-nya hari ini = layar yang menulis angka tak terbaca (`§4.16.7` butir 2) — ditolak uji `parameter-consumers.test.ts` |
+| `attendance_evidence` + `attendance_source` dua nilai baru | `0049` | belum ada | `ALTER TYPE` dua migrasi (§15.2); LMS peristiwa internal lebih dulu |
+| `menu_items` + `menu_permissions` | `0050` | **ADA** — tabel terpasang, mirror Drizzle `schema/menus.ts`, seed pohon R-1/R-2 (`menu-tree.ts` → 43 baris + 24 grant tenant kampus, 21 + 9 tenant platform), `GET /api/v1/me/menu` (`API_SPEC §4.17.1`) dan `top-nav` membaca server (`MENU-LOCK-1`, `RD-176`) | §4.17.2 (editor pohon & grant) masih `spec-only`: nol rute `/admin/platform/menus/**`; `layer=MOBILE` belum punya baris; `?at=` ditolak; L4 `holdsScoped` baru dipakai penyaring menu, belum di rute tulis (`SEC-11`) |
+| `parameter_permissions` | `0050` + `0088` | tabel ADA + penjaga `ck_paramperm_foureyes`; **jalur tulis belum ada** | `SPE-7`: mengaktifkan pola menuntut penyetuju berbeda dari pemohon, dan rute `approve` khusus pola belum dibangun. Menyalakan tulis sebelum rute itu berarti membuka celah aktivasi-diri |
+| Kode `F`/`O`/`M` PDDikti | `0049` kolom | **DITOLAK sementara** | kamus resmi belum di-*seed* (`[VERIFIKASI-KAMUS]`) → NULL = tidak dikirim |
+
+### 21.10 Kanal vicon dan satu kosakata modus (ralat dewan 2026-10-21 — `RD-65`, `RD-66`) — `0073`–`0075`
+
+Bagian ini lahir dari audit silang, bukan dari penambahan fitur: `node .tools/vocab-audit.mjs` menemukan **tiga kosakata untuk satu konsep provider** dan **empat ejaan untuk konsep modus**, termasuk satu nama kolom kanonik yang tidak punya definisi. Norma yang dilanggar: `AGENTS §3.10` (satu fisik satu view) dan vonis `RD-63` (satu nama satu definisi).
+
+#### 21.10.1 Register `conference_provider` (kelas A, enum tertutup)
+
+| Token | Kanal | Bentuk kredensial | Rumah kredensial | Catatan penegakan |
+|---|---|---|---|---|
+| `BUILTIN_LMS` | ruang virtual di dalam LMS SICA | tidak ada | — | jalur nol-kunci (ADR-11) |
+| `BBB` | BigBlueButton *self-host* kampus | `BBB_API_SECRET` + `BBB_BASE_URL` | ENV/vault, `*_ref` di baris koneksi | protokol terbuka, tanpa kunci vendor |
+| `JITSI` | Jitsi Meet *self-host* kampus | JWT app + `JITSI_BASE_URL` | ENV/vault | sama |
+| `GOOGLE_MEET` | Google Meet (Workspace kampus) | service account OAuth2 | ENV/vault | Graph-style attendance tidak tersedia; pakai Calendar/Reports API bila diaktifkan `[VERIFIKASI-VENDOR]` |
+| `MICROSOFT_TEAMS` | Teams (Microsoft 365 kampus) | Azure AD app: `TEAMS_TENANT_ID`, `TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET` | ENV/vault | langganan perubahan + laporan kehadiran; lihat `INTEGRATIONS §6.8` |
+| `ZOOM` | Zoom (berlangganan) | OAuth2/Server-to-Server | ENV/vault | webhook ber-*signature* |
+
+**Definisi (masuk `0073`).**
+
+```sql
+CREATE TYPE conference_provider AS ENUM
+  ('BUILTIN_LMS','BBB','JITSI','GOOGLE_MEET','MICROSOFT_TEAMS','ZOOM');
+
+-- kelas A: bentuk kredensial, arah webhook, dan aturan rekonsiliasinya berbeda per nilai,
+-- karena itu TIDAK boleh menjadi baris kamus yang dapat disunting saat runtime (§20.1).
+
+CREATE TABLE conference_connections (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  provider conference_provider NOT NULL,
+  enabled boolean NOT NULL DEFAULT false,
+  is_default boolean NOT NULL DEFAULT false,
+  credential_ref text NOT NULL,                    -- vault:/env: … pointer, BUKAN nilai rahasia
+  external_tenant_ref text,                        -- id penyewa di sisi vendor (opaque, boleh di-hash)
+  api_region text,                                 'na'|'eu'|'apac'; nilai dari kamus, bukan array kode'
+  last_probe_at timestamptz, last_probe_state text
+    CHECK (last_probe_state IN ('OK','DEGRADED','FAILED','UNKNOWN')),
+  last_probe_error text, provision_count int NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz, version int NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, provider)
+);
+-- tepat satu default per tenant, dan hanya bila enabled:
+CREATE UNIQUE INDEX conference_one_default ON conference_connections (tenant_id) WHERE is_default = true;
+
+CREATE TABLE conference_meetings (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  class_session_id uuid NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
+  provider conference_provider NOT NULL,
+  external_meeting_id text NOT NULL,
+  join_url text NOT NULL,                           -- ditulis server; tidak pernah diterima dari body klien
+  host_user_ref uuid REFERENCES users(id),
+  state text NOT NULL DEFAULT 'SCHEDULED' CHECK (state IN ('SCHEDULED','LIVE','ENDED','FAILED','CANCELLED')),
+  fallback_of uuid REFERENCES conference_meetings(id),
+  started_at timestamptz, ended_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz, version int NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, provider, external_meeting_id)
+);
+
+CREATE TABLE conference_channel_events (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,   -- insert-only, aliran peristiwa bukan entitas editable
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  meeting_id uuid NOT NULL REFERENCES conference_meetings(id) ON DELETE CASCADE,
+  provider conference_provider NOT NULL,
+  channel_kind text NOT NULL CHECK (channel_kind IN ('INTERNAL','VENDOR')),
+  event_type text NOT NULL CHECK (event_type IN ('JOIN','LEAVE','HEARTBEAT','START','END','PRESENCE','RECORD')),
+  external_event_id text NOT NULL,
+  external_user_ref text,                          -- pseudonim; TIDAK ada email/NIM di kolom ini (BR-VIC-03)
+  occurred_at timestamptz NOT NULL, received_at timestamptz NOT NULL DEFAULT now(),
+  duration_seconds int CHECK (duration_seconds IS NULL OR duration_seconds >= 0),
+  payload_digest text NOT NULL,                    -- SHA-256 muatan mentah; isi mentah tidak pernah disimpan di sini
+  processing_state text NOT NULL DEFAULT 'QUEUED'
+    CHECK (processing_state IN ('QUEUED','APPLIED','DUPLICATE','REJECTED','NEEDS_REVIEW')),
+  reject_reason text,
+  UNIQUE (tenant_id, provider, external_event_id, event_type)
+);
+```
+
+**Rekonsiliasi dua sumber presensi (§21.5) memakai jalur ini, dan `0074` hanya menambah bukti + penanda, bukan status kedua.**
+
+```sql
+CREATE TABLE attendance_channel_evidence (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  attendance_id uuid NOT NULL REFERENCES attendances(id) ON DELETE CASCADE,
+  meeting_id uuid NOT NULL REFERENCES conference_meetings(id),
+  provider conference_provider NOT NULL,
+  source text NOT NULL CHECK (source IN ('INTERNAL_CHANNEL','VENDOR_REPORT','MANUAL_IMPORT')),
+  join_seconds int NOT NULL CHECK (join_seconds >= 0),
+  session_seconds int NOT NULL CHECK (session_seconds > 0),
+  ratio numeric(6,5) GENERATED ALWAYS AS (round(join_seconds::numeric / session_seconds, 5)) STORED,
+  meets_threshold boolean,                          -- diisi service terhadap attendance.online_min_join_ratio (bukan CHECK konstan)
+  degraded boolean NOT NULL DEFAULT false,          -- true bila hanya bukti vendor yang ada (BR-VIC-02)
+  evidence_ref text,                                -- lampiran laporan vendor terenkripsi (§16.3)
+  captured_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, attendance_id, meeting_id, source)
+);
+
+-- 'PENDING_REVIEW' DIKOREKSI (RD-70): bukan nilai attendance_status.
+-- Banding sudah punya rumah: attendance_appeals (0017). Yang ditambahkan hanyalah penanda tayang.
+ALTER attendances ADD COLUMN review_state text NOT NULL DEFAULT 'NONE'
+  CHECK (review_state IN ('NONE','PENDING','GRANTED','REJECTED'));
+```
+
+#### 21.10.2 Register alias kalah — provider dan modus
+
+| Token yang pernah ditulis | Menjadi | Rumah yang berhak | Cara baca lama |
+|---|---|---|---|
+| `TEAMS` | `MICROSOFT_TEAMS` | enum §21.10.1 | `0075` memetakan data lama; kontrak menolak tulis |
+| `BUILTIN` | `BUILTIN_LMS` | enum §21.10.1 | sama |
+| slug webhook `microsoft_teams`, `bbb`, `jitsi`, `google_meet`, `zoom`, `builtin_lms` | token enum huruf kecil | `API_SPEC §4.18.3` | slug = `lower(provider)`, bukan kosakata ketiga |
+| `HYBRID` pada `study_programs.delivery_mode`, `enrollment_schemes.delivery_mode`, `classes` | `BLENDED` | §21.4 (`learning_modality`) | alias dibaca, tidak ditulis; `0075` memigrasi |
+| `OFFLINE` pada kontrak lama | `ONSITE` | §21.4 | sama |
+| `ONLINE_SYNC` / `ONLINE_ASYNC` (dipakai sebagai modus) | `ONLINE` + `session_kind = SYNC_LIVE` / `ASYNC_MODULE` | §21.4 dua sumbu | dua sumbu tidak boleh dilebur satu kolom |
+| `MEET` pada `crm_leads.preferred_channel` | `OFFLINE_MEET` | §22.6 (kanal kontak, bukan kanal kelas) | `0075` rename CHECK; mencegah satu token dua arti |
+
+**Penamaan kolom.** Yang kanonik untuk kelas & sesi adalah **`learning_modality`** (§21.4; dirujuk §21.11, `INTEGRATIONS §1.16`, `ARCHITECTURE §13.4`). `delivery_mode` tetap dipakai untuk **sumbu program/skema** (`study_programs`, `enrollment_schemes`) dengan **nilai yang sama** — bukan sinonim baru, karena yang membedakan adalah entitas yang memilikinya. `career_vacancies.work_mode` juga memakai trio yang sama (`ONSITE|ONLINE|BLENDED`) supaya tidak muncul ejaan keempat (`RD-65`).
+
+#### 21.10.3 Tiga parameter kanal (masuk katalog §21.3 sebagai baris 26–28)
+
+| # | Parameter permintaan | Bentuk di SICA | Kunci / nilai awal | Batas & penjaga | Kelas risiko |
+|---|---|---|---|---|---|
+| 26 | Pilihan kanal vicon dan fallback dinamis | `master_system_parameters` + `conference_connections` | `conference.default_provider` = `BUILTIN_LMS`; `conference.fallback_chain` = `BUILTIN_LMS,BBB,JITSI` | nilai harus anggota enum §21.10.1; rantai 1–6 token unik; `422 PARAM_VALUE_NOT_ALLOWED` | `TECHNICAL` — empat-mata + MFA |
+| 27 | Sumber bukti yang menang saat dua kanal mengirim | `master_system_parameters` | `conference.attendance_source_priority` = `INTERNAL_FIRST` | ∈ `INTERNAL_FIRST`, `VENDOR_ONLY`, `DUAL_RECONCILE`; `VENDOR_ONLY` menuntut alasan terekam | `ACADEMIC` — dua penyetuju + MFA |
+| 28 | Umur bukti kanal yang masih boleh dipakai vonis | `master_system_parameters` | `conference.evidence_max_age_hours` = `24` | 1–168; di luar umur → bukti tetap tersimpan, tidak ikut vonis (`degraded`) | `TECHNICAL` |
+
+**Yang ditolak menjadi parameter:** `conference.teams_tenant_id`, `conference.zoom_account_id`, dan seluruh rahasia — `0049` menutupnya lewat `CHECK (is_secret = false)` dan `source_of_truth <> 'ENV'` (§21.2). Rumahnya `ENV_CONTRACT` + vault pointer `credential_ref` (`RD-67` menutup lubang ENV).
+
+#### 21.10.4 RLS, indeks, dan urutan baca
+
+- Keempat tabel ber-`tenant_id`: `ENABLE` + `FORCE ROW LEVEL SECURITY` + policy `tenant_isolation` (`AGENTS §3.2`). `conference_channel_events` insert-only: `UPDATE`/`DELETE` ditolak policy tertulis, bukan cuma tidak dipakai.
+- Indeks domain selalu berawalan `tenant_id`: `(tenant_id, provider, enabled)`, `(tenant_id, class_session_id)` pada `conference_meetings`, `(tenant_id, meeting_id, occurred_at)` dan `(tenant_id, processing_state, received_at)` pada `conference_channel_events`, `(tenant_id, attendance_id)` pada bukti; dibuat dengan `CREATE INDEX CONCURRENTLY`.
+- Urutan baca deterministik: peristiwa per sesi `ORDER BY occurred_at, id`; koneksi kanal `ORDER BY is_default DESC, provider` (bukan `id`).
+- Read/Write split (§3.7): penulisan peristiwa lewat worker ke **Primary**; proyeksi label kehadiran (`HADIR_ONLINE` §5.15.3 PRD) dibaca dari hasil vonis, tidak pernah dihitung ulang di replica.
+
+#### 21.10.5 Query gerbang CI (dijalankan, bukan didokumentasikan)
+
+```sql
+-- (q) satu kosakata provider: tidak ada nilai di luar enum. wajib 0 baris
+SELECT provider FROM conference_connections WHERE provider::text NOT IN
+  ('BUILTIN_LMS','BBB','JITSI','GOOGLE_MEET','MICROSOFT_TEAMS','ZOOM');
+
+-- (r) tidak ada ejaan modus kedua. wajib 0 baris per tabel
+SELECT id FROM classes            WHERE learning_modality NOT IN ('ONSITE','ONLINE','BLENDED');
+SELECT id FROM study_programs     WHERE delivery_mode      NOT IN ('ONSITE','ONLINE','BLENDED');
+SELECT id FROM enrollment_schemes  WHERE delivery_mode     NOT IN ('ONSITE','ONLINE','BLENDED');
+SELECT id FROM career_vacancies   WHERE work_mode          NOT IN ('ONSITE','ONLINE','BLENDED');
+
+-- (s) rahasia tidak jadi parameter. wajib 0 baris
+SELECT parameter_key FROM master_system_parameters
+  WHERE parameter_key ~ '(secret|token|password|tenant_id|account_id)$' OR is_secret = true;
+
+-- (t) satu vonis per (sesi, mahasiswa) meski banyak kanal. wajib 0 baris
+SELECT class_session_id, student_id FROM attendances GROUP BY 1,2 HAVING count(*) > 1;
+
+-- (u) bukti tanpa sesi tidak boleh ikut vonis. wajib 0 baris
+SELECT e.id FROM attendance_channel_evidence e
+  LEFT JOIN conference_meetings m ON m.id = e.meeting_id WHERE m.id IS NULL;
+```
+
+#### 21.10.6 Status terukur dan yang masih kurang
+
+Terukur 2026-10-21: `grep -c "learning_modality"` atas berkas migrasi = **0** (kolomnya belum pernah ada), `classes.virtual_meeting_provider` belum diterapkan, dan `PRD §5.15` adalah norma pertama untuk kanal Teams. Yang masih terbuka dan tidak bisa ditutup dokumen ini: variabel kredensial kanal di `ENV_CONTRACT` belum terdaftar (`RD-67`), seed kanal + kamus `sifat_pembelajaran` belum ada (`RD-68`), `bbb`/`jitsi`/SDK vendor belum menjadi dependensi nyata (`AGENTS §3.9` design-only), dan peristiwa kanal **belum masuk katalog `ARCHITECTURE §13.1`** (`RD-69`).
+
+
+---
+
+## 22. Skema 47 modul — objek untuk modul NOL & SEBAGIAN (2026-10-20)
+
+Bagian ini menuangkan **21 modul bisnis** yang registri [PRD §5.12.1](file:///c:/SICA/docs/PRD.md) nyatakan `NOL` atau `SEBAGIAN` tanpa objek, ditambah **satu gugus silang** (pihak ketiga) yang ternyata dituntut oleh enam modul sekaligus. Hasilnya adalah **spesifikasi DDL**, bukan skema yang hidup: diukur sebelum bagian ini ditulis, `ls packages/database/migrations/` menghasilkan **7 berkas** — `0001_init_rls_policies.sql`, `0002_academic_core.sql`, `0003_people_biodata.sql`, `0004_entitlement_modules.sql`, `0005_field_data_attendance_courses.sql`, `0006_member_role.sql`, `0011_rbac_scoped.sql`. Angka itu diulang di §22.12 bersama cara mengukurnya.
+
+**Nomor yang diklaim.** Register §14.7 menutup penomoran pada `0050_menu_parameter_permissions.sql` dan menyatakan "nomor `0051` ke atas masih bebas". Sebelum satu nomor pun ditulis di bawah, klaim itu **diukur ulang** dengan `grep -rohE "00(5[1-9]|6[0-9]|7[0-9])_[a-z0-9_]*\.sql" docs/` atas seluruh `docs/` — hasilnya **nol** nama, jadi tidak ada tabrakan. `0013` (institution gaps vs engine harness) dan `0036` (harness vs tidak ada) adalah dua tabrakan yang **sudah pernah terjadi** di repo ini dan tercatat di §14.7 barus "RALAT penomoran harness engine"; §22 tidak mengulanginya. Nomor yang dipakai di sini adalah `0051` sampai `0072` dua puluh dua nomor; registernya §22.9.
+
+**Lima vonis [PRD §5.13](file:///c:/SICA/docs/PRD.md) yang mengikat setiap baris di bawah.**
+
+1. **Vonis 5 dan 6 — uang hanya satu rumah.** Tidak satu pun tabel §22 boleh menyimpan kolom nominal tagihan. Modul yang butuh tagihan menyimpan **foreign key komposit** `(tenant_id, invoice_id) REFERENCES invoices(tenant_id, id)` — sah karena `invoices` sudah punya `UNIQUE (tenant_id, id)` (§5) — dan nominalnya dibaca lewat JOIN; pembayaran hanya dirujuk sebagai `payment_id uuid REFERENCES payments(id)` tunggal, karena `payments` (§5) **belum** punya `UNIQUE (tenant_id, id)` dan FK komposit ke sana adalah pseudo-DDL (§16.6). Gerbangnya §22.11 butir 1 (cacah kolom uang pada tabel penunjuk).
+2. **Vonis 1 dan 14 — vonis bukan milik pemohon.** Yang menyimpan angka. Konversi SKS milik `mbkm_conversions` (M-38, `0033`): M-25 dan M-29 hanya mengirim **usulan** (`conversion_proposals`, `credit_transfer_proposals`) dengan `proposed_sks` dan kolom keputusan yang **tidak pernah** bisa diisi pemohon. Status lulus milik M-30 (`clearances`, `graduation_records`); bebas pustaka, tagihan, dan sanksi kemahasiswaan hanya memancarkan **sinyal**.
+3. **Vonis 3 — sinyal, bukan keadaan.** Tabel pemancar sinyal tidak punya kolom `status_kelulusan`; yang punya hanya `signal_state` (antrean sinyal) dan `emitted_at`.
+4. **Vonis 4 dan 7 — proyeksi tidak menyimpan salinan yang dapat disunting.** M-08 SISTER, M-31/M-32, dan `funnel_scores` M-45 adalah hasil hitung yang dibangkitkan; seluruh kolom angka `*_score_bp` bertanda *rebuildable* dan tidak punya rute tulis.
+5. **Vonis 12 — lead tidak mendaftar.** Konversi M-45 menjadi pendaftaran **hanya** lewat service PMB (`pmb_applications`, `0021`); tidak ada kolom `nim`, tidak ada tabel pendaftar kedua, dan `crm_leads.converted_application_id` adalah foreign key keluar, bukan masuk.
+
+**Aturan turunan yang berlaku tanpa diulang per sub-bagian.** Setiap tabel domain §22 ber-`tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE` dan karena itu **otomatis** diambil generator §6.2 (`ENABLE` + `FORCE` + policy `tenant_isolation` bentuk `AS PERMISSIVE FOR ALL TO public` dengan `USING`/`WITH CHECK` ke `app.tenant_id()`); setiap indeks domain menempatkan `tenant_id` sebagai kolom pertama (§13); uang selalu `bigint` rupiah dan bobot selalu `int` basis-poin — **tidak ada `float` maupun `double precision`** di seluruh §22 (AGENTS §3.4/ADR-5); kolom keadaan kelas A berupa `CREATE TYPE` enum dan didaftarkan di §22.9 untuk dicerminkan ke §15.2; kosakata kelas C tidak pernah ber-`CHECK (col IN (...))` dan nilainya hidup di `reference_items` (§20); nilai parameter operasional tidak pernah jadi konstanta di kolom baru tetapi menunjuk `master_system_parameters` (§21.2); setiap tabel yang menyimpan keputusan kebijakan punya `requested_by`/`approved_by` dengan `CHECK (approved_by IS NULL OR approved_by <> requested_by)`; kolom yang hanya berubah lewat transisi state didaftarkan `SERVER_ONLY` di §14.9 dan tidak pernah diterima dari body. `M-xx` **tidak** menjadi enum di mana pun (`PRD §5.12.3`): modul cukup punya baris `menu_items` (`0050`) yang menunjuk kode entitlement.
+
+**Peta sub-bagian ke nomor.**
+
+| Sub-bagian | Modul | Nomor migrasi | Tabel baru | Objek yang dipakai ulang, tidak dibuat kembar |
+|---|---|---|---|---|
+| 22.1 | M-04 Helpdesk · M-35 PIN dan SIVIL | `0051`, `0052` | 6 + 5 | `attachments` (`0020`), `graduation_records` (§5), `users` (`0001`) |
+| 22.2 | gugus silang pihak ketiga · M-06 HRIS · M-08 SISTER | `0053`, `0054`, `0055` | 2 + 7 + 4 | `lecturers`/`staff` (§11.3), `queue_operations` (`0030`), `feeder_identities` (`0028`) |
+| 22.3 | M-11 Beasiswa · M-47 Endowment | `0056`, `0057` | 6 + 6 | `invoices`/`payments`/`ledger` (§5), `student_bank_accounts` (`0035`) |
+| 22.4 | M-45 CRM · M-28 Career · M-29 Mobilitas | `0058`, `0059`, `0060` | 7 + 4 + 4 | `pmb_applications` (`0021`), `external_organizations` (`0053`), `mbkm_conversions` (`0033`) |
+| 22.5 | M-21 Jurnal · M-22 HKI · M-44 LPPM | `0061`, `0062`, `0063` | 6 + 5 + 6 | `invoices` (§5), `reference_items` (§14.2), `grade_components` (§5) |
+| 22.6 | M-24 Kemahasiswaan · M-43 Event · M-25 KKN/PKL/Magang | `0064`, `0065`, `0066` | 4 + 5 + 6 | `student_activities` (`0026`), `rooms` (`0002`), `campus_sites` (`0044`) |
+| 22.7 | M-39 e-Library · M-40 Aset · M-46 PBJ · M-42 Asrama/Kantin | `0067`, `0068`, `0069`, `0070` | 7 + 4 + 9 + 6 | `clearances` (§5), `helpdesk_tickets` (`0051`), `fee_tariff_groups` (`0046`) |
+| 22.8 | M-41 Klinik · M-36 PPKS | `0071`, `0072` | 5 + 5 | `tenant_encryption_keys` (`0035`), `invoices` (§5), `audit_logs` (§4) |
+
+**Yang sengaja tidak dibuat di §22.** Tidak ada `feeder_id` kedua di tabel modul mana pun (I-14: id pangkalan nasional hanya dari `feeder_identities`, §18.5) — tabel yang perlu mengirim ke PDDikti menunjuk `feeder_identities(entity_type, local_id)` dan tidak pernah memegang kolom id pusat. Tidak ada kolom `nim` atau `status_akademik` kedua: identitas dan status akademik dimiliki `students` (§5, `0003`) dan `student_status_history` (§14.3). Tidak ada tabel tagihan, invoice, atau ledger kedua untuk biaya apa pun (M-21 APC, M-39 denda, M-41 ringkasan klinik, M-42 asrama, M-44 pencairan, M-46 termin kontrak): semuanya foreign key. Tidak ada 47 enum entitlement. Tidak ada `mobile_*` paralel: SuperApp (`APP`) merender tabel yang sama (`PRD §5.12.2`), sehingga tidak satu pun bagian di bawah menambah objek khusus platform.
+
+### 22.1 Layanan internal — M-04 IT Helpdesk dan M-35 PIN/SIVIL
+
+#### 22.1.1 M-04 IT Helpdesk — `0051_helpdesk_ticketing.sql`
+
+Objek yang dipakai ulang dan **tidak** dibuat kembar: `attachments` (`0020_platform_attachments.sql`) untuk seluruh lampiran, `tenant_memberships` (`0001`) untuk siapa pelapor dan siapa penangan, `organizations` (§5) untuk antrean per unit, `reference_items` (§14.2) untuk label yang dapat dirawat kampus. `helpdesk_tickets` adalah **satu-satunya** tiket di repo ini; gugus aset (§22.7.2) tidak membuat tiket pemeliharaan sendiri tetapi menunjuk tabel ini.
+
+```sql
+CREATE TYPE ticket_priority AS ENUM ('LOW','NORMAL','HIGH','URGENT');          -- kelas A′: label kamus `prioritas_tiket`
+CREATE TYPE ticket_state AS ENUM ('OPEN','IN_PROGRESS','PENDING_USER','RESOLVED','CLOSED','CANCELLED');
+CREATE TYPE sla_policy_state AS ENUM ('DRAFT','ACTIVE','RETIRED');
+CREATE TYPE kb_article_state AS ENUM ('DRAFT','REVIEW','PUBLISHED','RETIRED');
+CREATE TYPE kb_visibility AS ENUM ('PUBLIC','STUDENT','STAFF','AGENT');
+
+-- Kategori = KEBIJAKAN, bukan kamus kedua. Label/kode/urutan/nonaktif hidup di
+-- `reference_items(kind='jenis_tiket')` milik M-02 (§14.2); tabel ini hanya memegang
+-- hal yang tidak boleh menjadi key-value: antrean bawaan dan kewajiban menunjuk aset/site.
+CREATE TABLE helpdesk_categories (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `jenis_tiket`
+  default_org_id uuid REFERENCES organizations(id),
+  requires_asset boolean NOT NULL DEFAULT false,     -- true = tiket wajib menunjuk aset (FK ditambahkan `0068`)
+  requires_site boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, kind_item_id)
+);
+
+-- SLA = kebijakan berversi. Angka disalin ke tiket SAAT DIBUKA; mengubah versi hari ini
+-- tidak boleh mengubah janji yang sudah diberikan. Satu versi ACTIVE per kategori.
+CREATE TABLE helpdesk_sla_policies (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  category_id uuid NOT NULL REFERENCES helpdesk_categories(id),
+  version int NOT NULL CHECK (version > 0),
+  state sla_policy_state NOT NULL DEFAULT 'DRAFT',
+  first_response_minutes int NOT NULL CHECK (first_response_minutes BETWEEN 5 AND 43200),
+  resolve_minutes int NOT NULL CHECK (resolve_minutes >= first_response_minutes),
+  work_calendar_item_id uuid REFERENCES reference_items(id),    -- kelas C `hari_kerja`
+  escalation_tier smallint NOT NULL DEFAULT 1 CHECK (escalation_tier BETWEEN 1 AND 5),
+  escalation_after_minutes int NOT NULL CHECK (escalation_after_minutes BETWEEN 1 AND 10080),
+  escalate_to_org_id uuid REFERENCES organizations(id),
+  effective_from date NOT NULL, effective_to date,
+  requested_by_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  approved_by_membership_id uuid REFERENCES tenant_memberships(id), approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, category_id, version),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (state <> 'ACTIVE' OR (approved_by_membership_id IS NOT NULL AND approved_at IS NOT NULL
+         AND approved_by_membership_id <> requested_by_membership_id)),
+  CHECK (state <> 'DRAFT' OR approved_by_membership_id IS NULL)
+);
+CREATE UNIQUE INDEX uq_sla_policy_active ON helpdesk_sla_policies(tenant_id, category_id)
+  WHERE state = 'ACTIVE';
+
+CREATE TABLE helpdesk_tickets (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  number bigint NOT NULL,                            -- nomor urut per tenant dari `document_number_sequences` (`0020`), BUKAN MAX+1 (BENCH-04)
+  title text NOT NULL CHECK (char_length(title) BETWEEN 5 AND 300),
+  description_encrypted bytea,                       -- isi laporan dapat memuat kredensial/PII: amplop §16.3.4, BUKAN kolom text
+  description_bidx char(64),                         -- HMAC purpose='BLIND_INDEX'; hanya untuk deteksi tiket ganda, tidak unik
+  category_id uuid NOT NULL REFERENCES helpdesk_categories(id),
+  impact_item_id uuid REFERENCES reference_items(id),           -- kelas C `tingkat_dampak`; boleh kosong
+  priority ticket_priority NOT NULL DEFAULT 'NORMAL',           -- A′; pemohon tidak boleh menaikkannya sendiri
+  state ticket_state NOT NULL DEFAULT 'OPEN',
+  reporter_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  assignee_membership_id uuid REFERENCES tenant_memberships(id),
+  student_id uuid REFERENCES students(id), lecturer_id uuid REFERENCES lecturers(id),
+  site_id uuid REFERENCES campus_sites(id), room_id uuid REFERENCES rooms(id),
+  period_id uuid REFERENCES academic_periods(id),
+  link_kind text CHECK (link_kind IS NULL OR link_kind IN ('INVOICE_QUERY','BLOCKADE','ATTENDANCE_DISPUTE','ASSET')),
+  link_ref_id uuid,                                  -- penunjuk baca-saja; TIDAK ada kolom nominal apa pun di tabel ini (vonis 5)
+  opened_at timestamptz NOT NULL DEFAULT now(),
+  first_response_at timestamptz, resolved_at timestamptz, closed_at timestamptz,
+  cancelled_at timestamptz, cancel_reason_encrypted bytea,
+  sla_policy_id uuid NOT NULL REFERENCES helpdesk_sla_policies(id),  -- versi yang menjanjikan, bukan "SLA terkini"
+  sla_response_due_at timestamptz NOT NULL,          -- salinan sadar dari kebijakan SAAT DIBUKA: janji tidak berubah ketika versi baru disahkan
+  sla_resolve_due_at timestamptz NOT NULL,
+  escalation_tier smallint NOT NULL DEFAULT 0 CHECK (escalation_tier BETWEEN 0 AND 5),
+  escalated_at timestamptz, escalated_by_membership_id uuid REFERENCES tenant_memberships(id),
+  version int NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, number),
+  UNIQUE (tenant_id, id),                            -- target FK komposit `ticket_events(tenant_id, ticket_id)` dan `ticket_files`
+  CHECK (state <> 'CLOSED' OR (resolved_at IS NOT NULL AND closed_at IS NOT NULL)),
+  CHECK (state <> 'CANCELLED' OR cancelled_at IS NOT NULL),
+  CHECK (resolved_at IS NULL OR state IN ('RESOLVED','CLOSED')),
+  CHECK (cancelled_at IS NULL OR state = 'CANCELLED'),
+  CHECK (escalation_tier = 0 OR escalated_at IS NOT NULL),
+  CHECK ((link_kind IS NULL) = (link_ref_id IS NULL)),
+  CHECK (description_bidx IS NULL OR description_bidx ~ '^[0-9a-f]{64}$')
+);
+CREATE INDEX idx_tickets_queue ON helpdesk_tickets(tenant_id, state, sla_resolve_due_at);
+CREATE INDEX idx_tickets_reporter ON helpdesk_tickets(tenant_id, reporter_membership_id, opened_at DESC);
+CREATE INDEX idx_tickets_assignee ON helpdesk_tickets(tenant_id, assignee_membership_id, state)
+  WHERE assignee_membership_id IS NOT NULL;
+CREATE INDEX idx_tickets_dup ON helpdesk_tickets(tenant_id, category_id, description_bidx)
+  WHERE description_bidx IS NOT NULL;
+
+-- Satu-satunya jejak tiket: komentar, perpindahan keadaan, penugasan, eskalasi, pelanggaran SLA.
+-- `ticket_logs` / `ticket_comments` / `ticket_assignment_history` DITOLAK (§22.10) — ini satu fisik.
+CREATE TABLE ticket_events (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  ticket_id uuid NOT NULL REFERENCES helpdesk_tickets(id) ON DELETE CASCADE,
+  seq int NOT NULL CHECK (seq > 0),
+  kind text NOT NULL CHECK (kind IN ('CREATED','REPLY_PUBLIC','REPLY_INTERNAL','STATUS_CHANGE','ASSIGNED',
+                                     'ESCALATED','PRIORITY_CHANGED','SLA_BREACHED','FILE_ATTACHED',
+                                     'CLOSED','REOPENED','CANCELLED')),
+  actor_membership_id uuid REFERENCES tenant_memberships(id),
+  from_state ticket_state, to_state ticket_state,
+  body_encrypted bytea,                              -- isi balasan ikut terenkripsi; `payload` hanya meta
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  is_from_customer boolean NOT NULL DEFAULT false,   -- arah penulis balasan (pemohon vs agen); bukan state kedua
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, ticket_id, seq),
+  FOREIGN KEY (tenant_id, ticket_id) REFERENCES helpdesk_tickets(tenant_id, id),
+  CHECK (kind <> 'STATUS_CHANGE' OR (from_state IS NOT NULL AND to_state IS NOT NULL))
+);
+CREATE INDEX idx_ticket_events_timeline ON ticket_events(tenant_id, ticket_id, seq);
+REVOKE UPDATE, DELETE ON ticket_events FROM sica_app;   -- insert-only: jejak, ditegakkan lebih dulu lewat peran (§16.3)
+
+-- Lampiran: `attachments` tetap satu-satunya pemilik berkas + sha256 + storage_key (§14.7 baris G platform);
+-- tabel ini hanya penghubung tiket-berkas sehingga tidak ada jalur unggah kedua.
+CREATE TABLE ticket_files (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  ticket_id uuid NOT NULL,
+  attachment_id uuid NOT NULL REFERENCES attachments(id),        -- `0020` tetap pemilik berkas + sha256 + storage_key
+  added_by_event_seq int,                            -- menunjuk `ticket_events.seq` (jejak kapan menempel)
+  added_at timestamptz NOT NULL DEFAULT now(),
+  added_by_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  UNIQUE (tenant_id, ticket_id, attachment_id),
+  FOREIGN KEY (tenant_id, ticket_id) REFERENCES helpdesk_tickets(tenant_id, id)
+);
+
+CREATE TABLE kb_articles (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  slug text NOT NULL,
+  title text NOT NULL, title_en text,                -- FR-HLP-03: dua bahasa wajib saat terbit
+  body_markdown text NOT NULL, body_markdown_en text,
+  state kb_article_state NOT NULL DEFAULT 'DRAFT',
+  visibility kb_visibility NOT NULL DEFAULT 'STAFF', -- audiens menentukan akses: enum kelas A, bukan teks bebas
+  category_id uuid REFERENCES helpdesk_categories(id),
+  version int NOT NULL DEFAULT 1 CHECK (version > 0),
+  view_count int NOT NULL DEFAULT 0 CHECK (view_count >= 0),  -- ditambah server saat artikel dibaca; bukan angka kiriman klien
+  requested_by_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  approved_by_membership_id uuid REFERENCES tenant_memberships(id), approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, slug),
+  CHECK (state <> 'PUBLISHED' OR (approved_by_membership_id IS NOT NULL
+         AND approved_by_membership_id <> requested_by_membership_id
+         AND coalesce(title_en, '') <> '' AND coalesce(body_markdown_en, '') <> '')),
+  CHECK (title <> '' AND length(body_markdown) <= 200000)
+);
+CREATE INDEX idx_kb_articles_browse ON kb_articles(tenant_id, state, visibility, category_id);
+
+CREATE TABLE kb_article_links (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  article_id uuid NOT NULL REFERENCES kb_articles(id) ON DELETE CASCADE,
+  link_kind text NOT NULL CHECK (link_kind IN ('RELATED','SUPERSEDES','TICKET')),
+  target_article_id uuid REFERENCES kb_articles(id),
+  target_ticket_id uuid REFERENCES helpdesk_tickets(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((link_kind = 'TICKET') = (target_ticket_id IS NOT NULL)),
+  CHECK ((link_kind = 'TICKET') OR (target_article_id IS NOT NULL AND target_ticket_id IS NULL)),
+  CHECK (target_article_id IS NULL OR target_article_id <> article_id)
+);
+CREATE INDEX idx_kb_links_article ON kb_article_links(tenant_id, article_id, link_kind);
+```
+
+**Kenapa kolom-kolom ini ada.** `sla_response_due_at` dan `sla_resolve_due_at` disalin ke tiket dari **versi kebijakan yang ACTIVE saat dibuka** (`sla_policy_id` menyimpan versi itu), bukan dihitung ulang dari `helpdesk_sla_policies` setiap kali dibaca — karena Admin IT boleh mengencangkan SLA hari ini tanpa boleh menghapus janji yang sudah diberikan kepada pelapor minggu lalu, dan eskalasi (`escalation_tier`) harus bekerja atas janji itu, bukan atas kebijakan terbaru. `helpdesk_categories` sengaja **tidak** menyimpan `code`/`name`: label adalah milik kamus `reference_items(kind='jenis_tiket')` (M-02), sehingga tidak ada tabel kamus kembar `(code, name)` yang dilarang `AGENTS §3.10`. `description_encrypted` + `description_bidx` melindungi dua hal yang berbeda dengan dua kunci berbeda (§16.3.4): isi tiket sering memuat kata sandi sementara atau nomor rekening yang dibagikan lewat tiket, jadi kolom `text` polos adalah kebocoran; blind index-nya hanya untuk mendeteksi tiket ganda, dan karena itu **tidak pernah** unik (dua laporan sah tentang satu masalah memang harus dapat dibuat). `ticket_events` insert-only karena SLA dan banding "siapa yang tidak mengerjakan" diputus dari urutan peristiwa, dan satu baris yang dapat disunting membuat seluruh angka eskalasi tidak dapat dipertahankan di audit. `kb_articles` menyimpan `title_en` + `body_markdown_en` karena FR-HLP-03 menuntut dua bahasa **pada saat terbit**, bukan terjemahan belakangan yang dapat menggantung; `deflection_count` tidak dibuat sebagai kolom karena turunannya dapat dihitung dari `kb_article_links(kind='TICKET')`, dan kolom yang tidak punya penulis akan menjadi angka mati.
+
+**RLS.** Ketujuh tabel ber-`tenant_id` dan diambil generator §6.2 tanpa pengecualian: `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` + policy `tenant_isolation` (`AS PERMISSIVE FOR ALL TO public`, `USING`/`WITH CHECK` `tenant_id = app.tenant_id()`). `ticket_events` mendapat `REVOKE UPDATE, DELETE` **sebelum** policy, karena untuk jejak RLS saja tidak cukup (peringatan yang sama di §16.3.3). Basis pengetahuan tidak dibuat global lintas tenant: satu artikel yang sama untuk banyak kampus berarti banyak baris, karena artikel global akan menembus batas isolasi data (§6.2) dan tidak punya pemilik.
+
+**Status.** Kelas A (mesin keadaan & akses): `ticket_state` = OPEN, IN_PROGRESS, PENDING_USER, RESOLVED, CLOSED, CANCELLED; `sla_policy_state` = DRAFT, ACTIVE, RETIRED; `kb_article_state` = DRAFT, REVIEW, PUBLISHED, RETIRED; `kb_visibility` = PUBLIC, STUDENT, STAFF, AGENT. Kelas A′: `ticket_priority` = LOW, NORMAL, HIGH, URGENT — dicabangi aturan eskalasi karena itu tertutup, sedangkan labelnya dibaca dari `reference_items(kind='prioritas_tiket')`. Semuanya terdaftar di §22.9 dan wajib dicerminkan ke register §15.2 pada migrasi yang sama, tidak boleh didahului kontrak Zod. Kelas C: `helpdesk_categories.kind_item_id` (`jenis_tiket`), `helpdesk_tickets.impact_item_id` (`tingkat_dampak`), `helpdesk_sla_policies.work_calendar_item_id` (`hari_kerja`) — kampus menambah nilai tanpa rilis kode, dan **tidak ada** `CHECK (col IN (...))` untuk ketiganya. `ticket_events.kind` dan `kb_article_links.link_kind` sengaja `text + CHECK` (§15.3) karena keduanya kosakata jejak yang bertambah, bukan mesin keadaan.
+
+#### 22.1.2 M-35 PIN dan SIVIL — `0052_credential_pin_sivil.sql`
+
+Dipakai ulang dan **tidak** dibuat kembar: `graduation_records` (§5 blok kanonik) tetap pemilik `diploma_number`, `decree_number`, `conferred_on`, dan `pisn_verification_ref` (nilai terakhir); tabel §22 ini hanya menyimpan **kredensial** dan **jejak verifikasi**. `documents` (`0019`) tetap pemilik berkas PDF bertanda tangan; `e_certificates` menyimpan digest-nya, bukan salinan isinya. Tidak ada kolom `nim` di sini — pemegang dibaca lewat JOIN ke `students`.
+
+```sql
+CREATE TYPE pin_status AS ENUM ('RESERVED','ISSUED','DELIVERED','REVOKED','EXPIRED');
+CREATE TYPE certificate_state AS ENUM ('DRAFT','SIGNED','ISSUED','REVOKED','SUPERSEDED');
+
+-- `graduation_records.pin_batch_id` (§5 baris 1141) SUDAH menunjuk tabel yang tidak pernah dilahirkan.
+-- Nama itu dimiliki gugus ini, jadi tabelnya muncul di sini — bukan sebagai kolom PIN baru di §5.
+CREATE TABLE pin_batches (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  sequence_no int NOT NULL CHECK (sequence_no > 0),
+  batch_size int NOT NULL CHECK (batch_size BETWEEN 1 AND 1000),   -- praktik PISN: satu batch tidak lebih dari 1.000
+  status text NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','SEALED','VOID')),
+  opened_by uuid NOT NULL, sealed_at timestamptz, sealed_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, period_id, sequence_no),
+  UNIQUE (tenant_id, id),                            -- target FK komposit `pin_reservations`
+  CHECK (status <> 'SEALED' OR (sealed_at IS NOT NULL AND sealed_by IS NOT NULL))
+);
+
+CREATE TABLE pin_reservations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  graduation_record_id uuid REFERENCES graduation_records(id),   -- penahan M-30: terbit hanya atas baris kelulusan yang sudah VALIDATE
+  batch_id uuid REFERENCES pin_batches(id),                      -- menutup `graduation_records.pin_batch_id` dari sisi anak
+  pin_hash char(64) NOT NULL,                            -- HMAC-SHA-256 atas PIN, kunci purpose='BLIND_INDEX' (§16.3.4); TIDAK ada kolom plaintext maupun terenkripsi-terbaca
+  key_version int NOT NULL CHECK (key_version > 0),      -- ikut `tenant_encryption_keys` supaya rotasi kunci dapat di-re-encrypt batch
+  status pin_status NOT NULL DEFAULT 'RESERVED',
+  reserved_at timestamptz NOT NULL DEFAULT now(), issued_at timestamptz, delivered_at timestamptz,
+  expires_at timestamptz, revoked_at timestamptz, revoked_by uuid, revoke_reason text,
+  channel text CHECK (channel IS NULL OR channel IN ('EMAIL','PORTAL','COLLECT','WA')),
+  CHECK (pin_hash ~ '^[0-9a-f]{64}$'),
+  CHECK (status <> 'REVOKED' OR (revoked_at IS NOT NULL AND revoked_by IS NOT NULL AND revoke_reason IS NOT NULL)),
+  CHECK ((graduation_record_id IS NOT NULL) OR status = 'RESERVED'),  -- tanpa keputusan lulus: hanya reservasi, tidak pernah ISSUED
+  UNIQUE (tenant_id, student_id),
+  UNIQUE (tenant_id, pin_hash),                        -- dua PIN identik = tabrakan; ruang kunci PIN kecil sehingga ini juga penahan serangan kamus
+  UNIQUE (tenant_id, id)                               -- target FK komposit `e_certificates` dan `certificate_verification_logs`
+);
+CREATE INDEX idx_pin_status ON pin_reservations(tenant_id, status, expires_at) WHERE status IN ('ISSUED','DELIVERED');
+CREATE INDEX idx_pin_batch ON pin_reservations(tenant_id, batch_id, status) WHERE batch_id IS NOT NULL;
+
+CREATE TABLE e_certificates (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind_item_id uuid NOT NULL REFERENCES reference_items(id),  -- kelas C: jenis ijazah/SKPI/transkrip/legalisir = kamus, bukan CHECK daftar
+  student_id uuid NOT NULL REFERENCES students(id),
+  graduation_record_id uuid REFERENCES graduation_records(id),
+  serial_number text NOT NULL,                           -- nomor seri **kita**, dari sequence per tenant; bukan `diploma_number` national
+  state certificate_state NOT NULL DEFAULT 'DRAFT',
+  public_token text NOT NULL,                            -- token acak 128-bit dalam URL/QR verifikasi; bukan nomor yang dapat ditebak
+  document_digest_sha256 char(64) NOT NULL,              -- digest berkas `documents`/`attachments`; verifikasi = cocok-tidak-cocok, tanpa membuka isi
+  signed_by uuid, signed_at timestamptz,
+  issued_at timestamptz, revoked_at timestamptz, revoked_by uuid, revoke_reason text,
+  superseded_by_id uuid REFERENCES e_certificates(id),
+  print_run_id uuid,                                     -- penelusuran batch percetakan
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, serial_number), UNIQUE (tenant_id, public_token),
+  UNIQUE (tenant_id, id),                                -- target FK komposit `certificate_verification_logs` dan `sivil_verification_events`
+  CHECK (state <> 'REVOKED' OR (revoked_at IS NOT NULL AND revoked_by IS NOT NULL AND revoke_reason IS NOT NULL)),
+  CHECK (superseded_by_id IS NULL OR superseded_by_id <> id),
+  CHECK (document_digest_sha256 ~ '^[0-9a-f]{64}$')
+);
+CREATE INDEX idx_cert_student ON e_certificates(tenant_id, student_id, state);
+
+-- Log verifikasi PUBLIK: append-only, tanpa PII pemegang, dan tanpa isi sertifikat.
+CREATE TABLE certificate_verification_logs (
+  id bigint PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  certificate_id uuid REFERENCES e_certificates(id),    -- NULL = token tidak dikenal (serangan tebakan tetap tercatat)
+  attempted_token_hash char(64) NOT NULL,               -- HMAC atas token yang dikirim: token utuh tidak pernah masuk log
+  result text NOT NULL CHECK (result IN ('VALID','REVOKED','NOT_FOUND','RATE_LIMITED','SUPERSEDED')),
+  source text NOT NULL CHECK (source IN ('QR','FORM','API','MOBILE')),
+  client_ip_hash bytea NOT NULL,                         -- `bytea`, bukan `text` (kesalahan `sessions.ip_hash`, §16.3)
+  user_agent_digest char(64),
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, certificate_id) REFERENCES e_certificates(tenant_id, id)
+);
+CREATE INDEX idx_certlog_time ON certificate_verification_logs(tenant_id, occurred_at DESC);
+CREATE INDEX idx_certlog_token ON certificate_verification_logs(tenant_id, attempted_token_hash, occurred_at DESC);
+REVOKE UPDATE, DELETE ON certificate_verification_logs FROM sica_app;
+
+-- Jejak pemeriksaan ke SIVIL/PDDikti per sertifikat. Kolom `pisn_verification_ref` milik
+-- `graduation_records` tetap nilai TERAKHIR yang kanonik; tabel ini hanya riwayat percobaan.
+CREATE TABLE sivil_verification_events (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  certificate_id uuid NOT NULL, run_id uuid,
+  environment text NOT NULL CHECK (environment IN ('LOCAL','SANDBOX','PRODUCTION')),  -- satu kosakata dengan §15.3 (`pddikti_payload_snapshots`), bukan kosakata baru
+  result text NOT NULL CHECK (result IN ('MATCH','MISMATCH','NOT_FOUND','TIMEOUT','RETRY_WAIT')),
+  center_response_digest char(64),                       -- respons pusat disimpan sebagai digest; isi respons tidak disalin ke tabel modul (vonis 4)
+  error_code text, checked_at timestamptz NOT NULL DEFAULT now(), checked_by uuid,
+  FOREIGN KEY (tenant_id, certificate_id) REFERENCES e_certificates(tenant_id, id),
+  UNIQUE (tenant_id, certificate_id, run_id)
+);
+CREATE INDEX idx_sivil_events_cert ON sivil_verification_events(tenant_id, certificate_id, checked_at DESC);
+```
+
+**Kenapa kolom-kolom ini ada.** `pin_reservations.pin_hash` disimpan sebagai HMAC dan bukan `bytea` terenkripsi karena verifikasi publik hanya perlu menjawab "cocok atau tidak" tanpa membuka apa pun, dan kolom terenkripsi akan memaksa setiap pengecekan SIVIL membuka DEK tenant — jalur yang justru dilarang §16.3.6; `key_version` tetap ada supaya rotasi kunci memiliki pekerjaan re-hash yang dapat dilanjutkan. `public_token` pada `e_certificates` adalah token acak, sedangkan `serial_number` adalah nomor urut kita: memisahkan keduanya membuat QR yang bocor di dinding tidak menjadi tebakan bernomor untuk sertifikat tetangga, dan `document_digest_sha256` adalah bukti yang dapat ditunjukkan kepada auditor tanpa mengirim berkas keluar. `certificate_verification_logs` tidak menyimpan NIM, nama, maupun token utuh karena ia satu-satunya tabel di gugus ini yang dapat disentuh trafik anonim — satu baris yang memuat PII di sini adalah kebocoran data pribadi melalui fitur yang dirancang untuk terbuka.
+
+**RLS.** Lima tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. Dua tambahan eksplisit: `certificate_verification_logs` dan `sivil_verification_events` diberi policy **SELECT + INSERT saja** (bentuk pecah seperti §16.3.3, bukan `FOR ALL`) karena keduanya jejak; dan `e_certificates.public_token` tidak pernah masuk proyeksi peran mana pun selain pemegangnya sendiri dan petugas BAAK (hak tingkat field, §14.9) — penyaringan menu tidak cukup (`SEC-09`).
+
+**Catatan FK.** `students`, `graduation_records`, `academic_periods`, dan `reference_items` **tidak** punya `UNIQUE (tenant_id, id)` (didaftarkan sebagai Expand tersendiri di §16.6), jadi foreign key ke keempatnya ditulis **tunggal** `REFERENCES x(id)` dan kesamaan tenant dibuktikan service lapis L5; FK komposit di gugus ini hanya dipakai antar objek yang lahir di `0051`/`0052` dan memang diberi `UNIQUE (tenant_id, id)`. Menulis `FOREIGN KEY (tenant_id, student_id) REFERENCES students(tenant_id, id)` di sini akan menjadi pseudo-DDL yang gagal saat migrasi dibaca — cacat `RD-05` bentuk lain.
+
+**Status.** Kelas A: `pin_status` = RESERVED, ISSUED, DELIVERED, REVOKED, EXPIRED; `certificate_state` = DRAFT, SIGNED, ISSUED, REVOKED, SUPERSEDED (didaftarkan §22.9, dicerminkan ke §15.2). Kelas A (reuse, tidak didefinisikan ulang): `environment` memakai tiga nilai §15.3, dan penahan terbit membaca keadaan kelulusan dari `graduation_records`/`clearances` milik M-30 — tabel ini **tidak** punya kolom "lulus". Kelas C: jenis sertifikat lewat `reference_items(kind='jenis_dokumen_akademik')`; `channel`, `result`, `source`, dan `pin_batches.status` adalah `text + CHECK` (§15.3) karena kosakata jejak dan kosakata batch yang bertambah.
+
+### 22.2 Pihak ketiga lintas modul, M-06 HRIS dan M-08 SISTER
+
+#### 22.2.1 Gugus silang pihak ketiga — `0053_external_parties.sql`
+
+Enam modul meminta tabel "mitra" yang sama dengan kacamata berbeda: M-25 butuh lokasi KKN, M-28 butuh pemberi kerja, M-29 butuh institusi tujuan, M-45 butuh sekolah asal, M-46 butuh vendor, M-47 butuh donatur lembaga. Menuruti keenam nama itu berarti membuat enam kartu identitas untuk satu badan hukum — bentuk paling bersih dari `RD-32`. Yang dibuat di sini adalah **satu master identitas** plus **satu tabel peran**; tiap modul hanya menambah tabel *profil* miliknya sendiri (valuation vendor, akreditasi mitra, peringkat pemberi kerja) yang berisi keputusan modul, bukan biodata.
+
+```sql
+CREATE TYPE party_verification_status AS ENUM ('UNVERIFIED','UNDER_REVIEW','VERIFIED','REJECTED','EXPIRED','REVOKED');
+
+CREATE TABLE external_organizations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL,                                  -- kode internal kampus (kelas C: tidak ada CHECK daftar)
+  legal_name text NOT NULL CHECK (legal_name <> ''),
+  display_name text, name_en text,
+  party_kind text NOT NULL DEFAULT 'ORGANIZATION' CHECK (party_kind IN ('ORGANIZATION','GOVERNMENT','COMPANY','SCHOOL','HOUSEHOLD','INDIVIDUAL','NGO','OVERSEAS_INSTITUTION')),
+  country text NOT NULL DEFAULT 'ID',
+  npwp_encrypted bytea, npwp_bidx char(64),            -- kelas PII: amplop + pasangan blind index (§16.3.4); indeks TIDAK unik (satu badan hukum punya anak perusahaan)
+  npsn text,                                           -- hanya untuk sekolah asal (M-45); NULL = bukan sekolah
+  address text, city text, province_code text, postal_code text,
+  latitude numeric(9,6), longitude numeric(9,6),       -- presisi `numeric`, bukan `double precision` (AGENTS §3.4)
+  website text, phone_encrypted bytea, contact_bidx char(64),
+  primary_contact_name text, primary_contact_email citext, primary_contact_phone_encrypted bytea,
+  verification_status party_verification_status NOT NULL DEFAULT 'UNVERIFIED',
+  verified_at timestamptz, verified_by uuid,
+  is_blocked boolean NOT NULL DEFAULT false,           -- diturunkan oleh profil modul (vendor blacklist, mitra bermasalah)
+  blocked_reason text,
+  attributes jsonb NOT NULL DEFAULT '{}'::jsonb,       -- kelas D (§20.5), kunci wajib terdaftar di `tenant_custom_attributes(entity_type='external_organization')`
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (verification_status = 'UNVERIFIED' OR verified_at IS NOT NULL),
+  CHECK (npwp_bidx IS NULL OR npwp_bidx ~ '^[0-9a-f]{64}$'),
+  CHECK ((latitude IS NULL) = (longitude IS NULL)),
+  CHECK (npwp_encrypted IS NULL OR octet_length(npwp_encrypted) >= 31)
+);
+CREATE INDEX idx_extorg_lookup ON external_organizations(tenant_id, verification_status, party_kind, code);
+CREATE INDEX idx_extorg_name ON external_organizations(tenant_id, lower(display_name) text_pattern_ops);
+CREATE INDEX idx_extorg_npsn ON external_organizations(tenant_id, npsn) WHERE npsn IS NOT NULL;
+CREATE INDEX idx_extorg_attrs ON external_organizations USING gin (attributes jsonb_path_ops);
+
+-- Satu badan hukum boleh jadi MITRA_KKN hari ini dan VENDOR tahun depan; peran bukan kolom tunggal
+-- karena menambah peran tidak boleh menuntut migrasi maupun cabang kode.
+CREATE TABLE external_org_roles (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  organization_id uuid NOT NULL,
+  role_code text NOT NULL,                             -- kelas C murni: menunjuk `reference_items(kind='peran_pihak_ketiga')`, TANPA CHECK daftar nilai
+  owner_module_code text NOT NULL,                     -- 'fieldwork','career','crm','procurement','endowment','mobility' — LABEL, bukan enum (§22 preamble)
+  valid_from date NOT NULL DEFAULT current_date, valid_to date,
+  note text, created_by uuid NOT NULL,
+  FOREIGN KEY (tenant_id, organization_id) REFERENCES external_organizations(tenant_id, id),
+  UNIQUE (tenant_id, organization_id, role_code, valid_from),
+  CHECK (valid_to IS NULL OR valid_to > valid_from),
+  CHECK (note IS NULL OR note <> '')
+);
+CREATE INDEX idx_extorg_roles ON external_org_roles(tenant_id, role_code, organization_id);
+```
+
+**Kenapa kolom-kolom ini ada.** `npwp_encrypted` berpasangan dengan `npwp_bidx` karena nomor pokok wajib pajak adalah identitas fiskal yang tidak boleh terbaca polos oleh setiap pemegang akses data mitra, sementara pencarian "sudah pernah daftar badan hukum ini?" tetap harus bisa dilakukan tanpa membuka plaintext (§16.3.4); kedua indeks itu **tidak unik** karena satu grup usaha sah memiliki NPWP yang sama di beberapa peran. `is_blocked` hidup di master dan bukan di profil modul karena "diblokir" harus dipotong lebih dulu di semua jalur (KKN, rekrutmen, tender) — kalau larangan hanya ada di tabel vendor, panitia PBJ yang melihatnya dari layar karier tidak akan pernah tahu. `owner_module_code` pada peran adalah teks, bukan enum empat puluh tujuh nilai: modul adalah label produk (`PRD §5.12.3`), dan peran yang sama boleh diklaim modul lain tanpa menunggu rilis skema.
+
+**RLS.** Keduanya ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. Tidak ada pengecualian global di gugus ini; tetapi `external_organizations.attributes` tunduk plafon empat puluh atribut `is_searchable` per `entity_type` (§20.5) sehingga GIN di atas tidak menggerus jalur tulis.
+
+**Status.** Kelas A: `party_verification_status` = UNVERIFIED, UNDER_REVIEW, VERIFIED, REJECTED, EXPIRED, REVOKED (§22.9). Kelas A′/C: `party_kind` `text + CHECK` (§15.3, kosakata bentuk badan yang jarang berubah tetapi bukan mesin keadaan), `role_code` **kelas C tanpa CHECK** (kampus menambah peran mitra), `is_blocked` boolean (bukan keadaan, jadi tidak ada enum).
+
+#### 22.2.2 M-06 HRIS dan Penggajian — `0054_hris_payroll.sql`
+
+Dipakai ulang dan **tidak** dibuat kembar: `lecturers` dan `staff` (§11.3) tetap satu-satunya biodata pegawai, `users`/`tenant_memberships` (`0001`) tetap identitas login, `attachments` (`0020`) tetap pemilik berkas, `academic_rules` tetap rumah aturan struktural, dan `ledger`/`payments` (§5) tetap pemilik postings. Vonis 7 (`PRD §5.13`) berlaku: M-06 **tidak** menghitung BKD tridharma — ia hanya memegang fakta kontrak kerja yang dibaca M-07.
+
+```sql
+CREATE TYPE employment_status AS ENUM ('PROBATION','ACTIVE','ON_LEAVE','SUSPENDED','RESIGNED','RETIRED','TERMINATED');
+CREATE TYPE approval_status AS ENUM ('PENDING','APPROVED','REJECTED','CANCELLED','EXPIRED');
+CREATE TYPE payroll_run_status AS ENUM ('DRAFT','CALCULATED','REVIEWED','APPROVED','POSTED','PAID','VOID');
+-- Ditambah siklus M-06 (2026-10-22): empat keadaan yang DITUNTUT FR-HRS-02/04/05 tetapi belum bernama.
+-- Kelas A tertutup (mesin state), bukan nilai yang dapat dirawat kampus — didaftarkan di §22.11.
+CREATE TYPE paycomponent_kind AS ENUM ('EARNING','DEDUCTION','REIMBURSEMENT');
+CREATE TYPE payroll_adjustment_state AS ENUM ('PENDING','APPROVED','APPLIED','REJECTED');
+CREATE TYPE kpi_component_state AS ENUM ('DRAFT','ACTIVE','RETIRED');
+CREATE TYPE kpi_result_state AS ENUM ('DRAFT','ASSESSED','APPROVED');
+
+-- Kartu kepegawaian: SATU baris per orang terpekerja. Tabel ini TIDAK punya kolom nama, telepon,
+-- NIP, NIDN, tanggal lahir, atau jenis kelamin — semuanya sudah ada di `staff`/`lecturers`, dan
+-- salinan kedua akan menyimpang pada perubahan pertama (§22.11 butir 4 mengukurnya).
+CREATE TABLE employees (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  person_kind text NOT NULL CHECK (person_kind IN ('LECTURER','STAFF')),
+  person_id uuid NOT NULL,                             -- lecturers.id ATAU staff.id; dibuktikan pemicu service (L5), bukan CHECK lintas tabel
+  org_id uuid REFERENCES organizations(id),
+  position_kind text CHECK (position_kind IS NULL OR position_kind IN ('STRUKTURAL','FUNGSIONAL','TERTENTU')),  -- sejajar `staff.position_type` (§11.3), tidak menambah kosakata baru
+  position_title text, functional_rank text,
+  unit_cost_center text,
+  work_schedule_hours_week smallint NOT NULL DEFAULT 40 CHECK (work_schedule_hours_week BETWEEN 4 AND 60),
+  employment_status employment_status NOT NULL DEFAULT 'PROBATION',
+  start_date date NOT NULL, end_date date,
+  probation_ends_on date,
+  grade_level_item_id uuid REFERENCES reference_items(id),   -- kelas C: golongan/pangkat pegawai = kamus (`kind='golongan_pegawai'`), bukan daftar di kode
+  is_active boolean NOT NULL DEFAULT true,
+  attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, membership_id), UNIQUE (tenant_id, id),
+  CHECK (end_date IS NULL OR end_date > start_date),
+  CHECK (employment_status IN ('RESIGNED','RETIRED','TERMINATED') OR end_date IS NULL),
+  CHECK (employment_status NOT IN ('RESIGNED','RETIRED','TERMINATED') OR (end_date IS NOT NULL AND is_active = false))
+);
+CREATE INDEX idx_employees_org ON employees(tenant_id, org_id, is_active, employment_status);
+
+-- Jenis cuti TIDAK dibuat tabel: kelas A′ (keadaan tetap, label kampus) + kamus §20.
+CREATE TABLE leave_requests (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  employee_id uuid NOT NULL, leave_type_item_id uuid NOT NULL REFERENCES reference_items(id),
+  period_from date NOT NULL, period_to date NOT NULL,
+  half_day_from boolean NOT NULL DEFAULT false, half_day_to boolean NOT NULL DEFAULT false,
+  requested_days numeric(5,2) GENERATED ALWAYS AS (period_to - period_from + 1) STORED,  -- hari kalender; hari kerja dihitung service dari kalender tenant
+  reason text NOT NULL CHECK (length(reason) >= 10),
+  balance_before numeric(5,2),                          -- salinan **bukan** keadaan: dibaca saat diajukan supaya persetujuan tidak berubah oleh cuti lain
+  state approval_status NOT NULL DEFAULT 'PENDING',
+  substitute_employee_id uuid REFERENCES employees(id), -- penerima tugas selama cuti (kewajiban operasional, bukan hiasan)
+  attachment_id uuid,                                   -- surat dokter; pemilik berkas tetap `attachments` (`0020`)
+  requested_at timestamptz NOT NULL DEFAULT now(), decided_at timestamptz,
+  FOREIGN KEY (tenant_id, employee_id) REFERENCES employees(tenant_id, id),
+  UNIQUE (tenant_id, id),                              -- target FK komposit `leave_approvals`
+  CHECK (period_to >= period_from),
+  CHECK (state <> 'APPROVED' OR decided_at IS NOT NULL),
+  EXCLUDE USING gist (tenant_id WITH =, employee_id WITH =, daterange(period_from, period_to, '[]') WITH &&)
+);
+CREATE INDEX idx_leave_state ON leave_requests(tenant_id, state, period_from);
+
+-- Rantai persetujuan banyak-tahap; satu baris = satu keputusan satu orang.
+CREATE TABLE leave_approvals (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  leave_request_id uuid NOT NULL, step_no smallint NOT NULL CHECK (step_no BETWEEN 1 AND 5),
+  approver_employee_id uuid NOT NULL REFERENCES employees(id),
+  decision approval_status NOT NULL, decided_at timestamptz, note text,
+  FOREIGN KEY (tenant_id, leave_request_id) REFERENCES leave_requests(tenant_id, id),
+  UNIQUE (tenant_id, leave_request_id, step_no),
+  CHECK (decision <> 'APPROVED' OR decided_at IS NOT NULL),
+  CHECK (note IS NULL OR length(note) <= 2000)
+);
+CREATE INDEX idx_leave_approvals_req ON leave_approvals(tenant_id, leave_request_id, step_no);
+
+-- Sisa cuti adalah TURUNAN, bukan kolom yang dapat disunting (§22.10): hak dikurangi yang sudah APPROVED.
+CREATE VIEW v_leave_balance WITH (security_invoker = true) AS
+SELECT e.tenant_id, e.id AS employee_id, lr.leave_type_item_id,
+       date_part('year', lr.period_from)::int AS leave_year,
+       count(*) FILTER (WHERE lr.state = 'APPROVED')                     AS approved_requests,
+       sum(GREATEST(0, lr.period_to - lr.period_from + 1))
+         FILTER (WHERE lr.state = 'APPROVED')                            AS used_days
+  FROM employees e JOIN leave_requests lr ON lr.employee_id = e.id AND lr.tenant_id = e.tenant_id
+ GROUP BY e.tenant_id, e.id, lr.leave_type_item_id, date_part('year', lr.period_from)::int;
+
+CREATE TABLE payroll_runs (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  period_id uuid REFERENCES academic_periods(id),
+  pay_period text NOT NULL,                            -- 'YYYY-MM' tagihan gaji; BUKAN enum, BUKAN kolom `amount`
+  scope_org_id uuid REFERENCES organizations(id),
+  status payroll_run_status NOT NULL DEFAULT 'DRAFT',
+  covers_from date NOT NULL, covers_to date NOT NULL,
+  rule_version int NOT NULL CHECK (rule_version > 0),   -- versi `pph21_brackets` yang dipakai; wajib disebut supaya angka dapat direkonstruksi (§3.9 AGENTS: parameter = kewenangan)
+  tax_rule_version int NOT NULL CHECK (tax_rule_version > 0),
+  employee_count int NOT NULL DEFAULT 0 CHECK (employee_count >= 0),   -- hasil hitung, kolom ini **tidak** boleh di-UPDATE dari klien
+  entry_group_id uuid,                                 -- satu-satunya jembatan ke M-10: `ledger.entry_group_id` (append-only, §5); TIDAK ada kolom total di sini
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz, posted_by uuid, posted_at timestamptz,
+  void_reason text, voided_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, id),                              -- target FK komposit `payslip_lines`
+  CHECK (covers_to >= covers_from),
+  CHECK (status NOT IN ('APPROVED','POSTED','PAID') OR (approved_by IS NOT NULL AND approved_by <> requested_by)),
+  CHECK (status <> 'POSTED' OR entry_group_id IS NOT NULL),
+  CHECK (status <> 'VOID' OR (void_reason IS NOT NULL AND voided_by IS NOT NULL))
+);
+-- ⚠ Keunikan periode TIDAK dapat ditulis sebagai `UNIQUE (tenant_id, pay_period, scope_org_id)` di dalam
+--   CREATE TABLE: dua baris dengan NULL tidak pernah bertabrakan dengan NULL di PostgreSQL (pola §19.4),
+--   jadi dua run "seluruh tenant" bisa terbit; dan `UNIQUE (...)` biasa tidak menerima ekspresi.
+--   Pasang sebagai indeks EKSPRESI pada migrasi yang sama:
+CREATE UNIQUE INDEX uq_payroll_period ON payroll_runs
+  (tenant_id, pay_period, COALESCE(scope_org_id, '00000000-0000-0000-0000-000000000000'::uuid));
+
+-- RINCIAN gaji = fakta HRIS. Tidak ada satu pun kolom bertipe uang di `payslips` header, karena header
+-- tidak ada: total adalah view `v_payslip_totals` di atas baris ini (satu fisik, satu view, §20.2).
+CREATE TABLE payslip_lines (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  payroll_run_id uuid NOT NULL, employee_id uuid NOT NULL,
+  component_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='komponen_gaji'`: gaji pokok, tunjangan jabatan, TPP, lembur, iuran, potongan
+  side text NOT NULL CHECK (side IN ('EARNING','DEDUCTION')),
+  amount_rupiah bigint NOT NULL CHECK (amount_rupiah >= 0),
+  quantity numeric(6,2) NOT NULL DEFAULT 1 CHECK (quantity > 0),
+  taxable boolean NOT NULL DEFAULT true,
+  final_taxable boolean NOT NULL DEFAULT false,         -- PPh final/21 dipotong tersendiri (objek `pph21_brackets`)
+  proration_basis text CHECK (proration_basis IS NULL OR proration_basis IN ('FULL','DAYS_PRESENT','HOURS','FIXED')),
+  source_fact jsonb NOT NULL DEFAULT '{}'::jsonb,       -- {attendancesDays, leaveDays, kpiBp}: **rujukan** ke fakta, bukan salinan nilai
+  seq smallint NOT NULL CHECK (seq > 0),
+  FOREIGN KEY (tenant_id, payroll_run_id) REFERENCES payroll_runs(tenant_id, id),
+  FOREIGN KEY (tenant_id, employee_id) REFERENCES employees(tenant_id, id),
+  UNIQUE (tenant_id, payroll_run_id, employee_id, component_item_id, seq)
+);
+CREATE INDEX idx_payslip_run ON payslip_lines(tenant_id, payroll_run_id, employee_id);
+
+CREATE VIEW v_payslip_totals AS
+SELECT tenant_id, payroll_run_id, employee_id,
+       sum(amount_rupiah) FILTER (WHERE side = 'EARNING')  AS gross_earning_rupiah,
+       sum(amount_rupiah) FILTER (WHERE side = 'DEDUCTION') AS gross_deduction_rupiah
+  FROM payslip_lines GROUP BY tenant_id, payroll_run_id, employee_id;
+
+-- Tarif PPh 21 = keputusan NEGARA, bukan kampus: kelas B, GLOBAL, berversi, SELECT-only bagi aplikasi.
+-- Tidak ada satu pun tarif sebagai konstanta TypeScript/Dart (AGENTS §3.10).
+CREATE TABLE pph21_brackets (
+  id uuid PRIMARY KEY,
+  rule_version int NOT NULL CHECK (rule_version > 0),
+  seq smallint NOT NULL CHECK (seq > 0),
+  income_from bigint NOT NULL CHECK (income_from >= 0),      -- batas bawah inklusif, rupiah setahun
+  income_to bigint CHECK (income_to IS NULL OR income_to > income_from),  -- NULL = lapisan tertinggi
+  rate_bp int NOT NULL CHECK (rate_bp BETWEEN 0 AND 10000),  -- basis poin: 15 % = 1500; tanpa `float`
+  basis text NOT NULL CHECK (basis IN ('GROSS_CUMULATIVE','NET_CUMULATIVE','FINAL','TER'))
+    DEFAULT 'GROSS_CUMULATIVE',
+  regulation_ref text NOT NULL,                              -- PMK/PP yang menjadi dasar, wajib disebut
+  effective_from date NOT NULL, effective_to date,
+  is_active boolean NOT NULL DEFAULT true,
+  imported_at timestamptz NOT NULL DEFAULT now(), imported_by uuid NOT NULL,
+  approved_by uuid, approved_at timestamptz,
+  UNIQUE (rule_version, seq),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (approved_by IS NULL OR (approved_at IS NOT NULL AND approved_by <> imported_by)),
+  EXCLUDE USING gist (rule_version WITH =, int8range(income_from, income_to, '[)') WITH &&)
+);
+CREATE INDEX idx_pph21_active ON pph21_brackets(rule_version, is_active, effective_from DESC);
+
+-- Status wajib pajak per orang (PTKP): kode nasional, hanya **peta label** yang boleh diedit tenant.
+CREATE TABLE employee_tax_profiles (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  employee_id uuid NOT NULL, ptkp_code text NOT NULL,       -- kelas B: TK/0, K/1, TB/3 dst. — nilainya ditetapkan negara, tenant hanya memetakan label
+  decided_on date NOT NULL, evidence_attachment_id uuid,
+  valid_from date NOT NULL DEFAULT current_date, valid_to date,
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  FOREIGN KEY (tenant_id, employee_id) REFERENCES employees(tenant_id, id),
+  UNIQUE (tenant_id, employee_id, valid_from),
+  CHECK (ptkp_code ~ '^[A-Z]{2}/[0-3]$'),              -- penjaga BENTUK kode nasional (mis. TK/0, K/2), bukan daftar nilai buatan kita
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (valid_to IS NULL OR valid_to > valid_from)
+);
+
+-- ── Ditambah siklus M-06 (2026-10-22): empat struktur yang DITUNTUT FR-HRS tetapi belum pernah ──
+-- ── punya nama objek. Ini bukan tabel baru yang dikarang: baris 166/167/168/169/170 RBAC dan      ──
+-- ── AC-HRS-3…6 PRD sudah menuntutnya; tanpa nama + nomor migrasi, rutenya akan mengarang kolom.   ──
+
+-- FR-HRS-02: HAK CUTI adalah himpunan pita (jenis × golongan × masa kerja), bukan skalar.
+-- Memindahkan pita ini ke pasangan kunci-nilai akan menghancurkan versi dan jejak (§21.1).
+CREATE TABLE leave_policies (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  leave_kind text NOT NULL,                          -- KAMUS kelas C: reference_items(kind='jenis_cuti'); BUKAN enum baru (§20)
+  staff_group text NOT NULL,                         -- kelas A' — kode stabil, label dirawat lewat kamus `golongan_pegawai`
+  service_years_from int NOT NULL DEFAULT 0 CHECK (service_years_from >= 0),
+  service_years_to int NOT NULL CHECK (service_years_to > service_years_from),
+  entitlement_days numeric(6,2) NOT NULL CHECK (entitlement_days >= 0),  -- bukan hari integer penuh: 12,5 hari cuti melahirkan itu sah
+  carry_over_days numeric(6,2) NOT NULL DEFAULT 0 CHECK (carry_over_days >= 0),
+  requires_evidence boolean NOT NULL DEFAULT false,  -- cuti sakit besar menuntut lampiran (M-09 attachment, bukan URL body)
+  version int NOT NULL DEFAULT 1 CHECK (version >= 1),
+  effective_from date NOT NULL, effective_to date,
+  is_active boolean NOT NULL DEFAULT true,
+  reason text CHECK (reason IS NULL OR length(reason) >= 10),
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  -- Pita yang tumpang tindih untuk (jenis, golongan) yang SAMA dan sama-sama aktif = kebijakan ambigu.
+  EXCLUDE USING gist (tenant_id WITH =, leave_kind WITH =, staff_group WITH =,
+                      int4range(service_years_from, service_years_to, '[)') WITH &&) WHERE (is_active),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (approved_by IS NULL OR (approved_by <> requested_by AND approved_at IS NOT NULL)),
+  CHECK (NOT is_active OR approved_by IS NOT NULL)    -- kebijakan aktif tanpa penyetuju kedua adalah temuan, bukan keadaan
+);
+CREATE INDEX idx_leavepolicy_lookup ON leave_policies(tenant_id, leave_kind, staff_group, effective_from DESC);
+
+-- FR-HRS-04: KOMPONEN GAJI sebagai tabel struktural (punya perkiraan akun & perlakuan pajak), BUKAN key-value.
+CREATE TABLE paycomponents (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL,
+  kind paycomponent_kind NOT NULL,
+  taxable boolean NOT NULL,                          -- menentukan ikut dasar PPh 21 atau tidak (kelas B decides rates, this decides mapping)
+  statutory_ref text,                                -- dari kamus kelas B ('PPH21','BPJS_JK','BPJS_JHT','BPJS_JP'); NULL = murni kampus
+  gl_account_code text,                              -- kosong = posting jurnal mustahil → tidak boleh ACTIVE (pola 121 fee_tariff_groups)
+  amount_rule jsonb,                                 -- AST bertipe (AGENTS §3.9): TIDAK ada string yang di-eval, TIDAK ada `eval()`
+  applies_to text NOT NULL DEFAULT 'ALL' CHECK (applies_to IN ('ALL','LECTURER','STAFF')),
+  version int NOT NULL DEFAULT 1 CHECK (version >= 1),
+  effective_from date NOT NULL, effective_to date,
+  is_active boolean NOT NULL DEFAULT true,
+  reason text CHECK (reason IS NULL OR length(reason) >= 10),
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code, version),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (approved_by IS NULL OR (approved_by <> requested_by AND approved_at IS NOT NULL)),
+  CHECK (NOT is_active OR (approved_by IS NOT NULL AND gl_account_code IS NOT NULL))
+);
+
+-- FR-HRS-05: KOREKSI RETROAKTIF = baris penyesuaian beralasan pada periode berjalan.
+-- Nilai run yang sudah `PAID` TIDAK PERNAH disunting; pembalikan dijalankan oleh `payroll_runs.status = VOID`
+-- plus baris penyesuaian yang menunjuk run asal — bukan `DELETE` (rutenya tidak ada).
+CREATE TABLE payroll_adjustments (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  employee_id uuid NOT NULL,
+  applied_period date NOT NULL,                      -- bulan berjalan saat penyesuaian dihitung
+  component_code text NOT NULL,
+  adjustment_state payroll_adjustment_state NOT NULL DEFAULT 'PENDING',
+  amount_rupiah numeric(18,0) NOT NULL CHECK (amount_rupiah > 0),   -- rupiah penuh, BUKAN float/double (paritas §3.4)
+  direction text NOT NULL CHECK (direction IN ('ADD','SUBTRACT')),
+  reason text NOT NULL CHECK (length(reason) >= 15),
+  source_run_id uuid,                                -- penyesuaian yang lahir dari pembalikan menunjuk run asalnya
+  evidence_attachment_id uuid,
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  applied_run_id uuid,                               -- run yang benar-benar membawanya (diisi saat posting; NULL = belum terpakai)
+  FOREIGN KEY (tenant_id, employee_id) REFERENCES employees(tenant_id, id),
+  CHECK (approved_by IS NULL OR (approved_by <> requested_by AND approved_at IS NOT NULL)),
+  CHECK (applied_run_id IS NULL OR adjustment_state = 'APPLIED'),
+  CHECK (adjustment_state <> 'APPLIED' OR (approved_by IS NOT NULL AND applied_run_id IS NOT NULL))
+);
+CREATE INDEX idx_payroll_adj_open ON payroll_adjustments(tenant_id, employee_id, applied_period) WHERE adjustment_state IN ('APPROVED');
+
+-- FR-HRS-03: KPI pegawai non-dosen. Bobot = kewenangan → berversi + empat-mata + basis-poin (jumlah 10.000 = 100 %).
+CREATE TABLE kpi_components (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  position_code text NOT NULL,                        -- kamus kelas C `jabatan_struktural`; BUKAN jabatan fungsional nasional (kelas B)
+  name text NOT NULL,
+  weight_bp int NOT NULL CHECK (weight_bp BETWEEN 1 AND 10000),
+  target_value numeric(9,3),
+  measurement_basis text NOT NULL,                    -- bagaimana angka dicapai diukur; wajib terbaca manusia
+  evidence_required boolean NOT NULL DEFAULT true,
+  component_state kpi_component_state NOT NULL DEFAULT 'DRAFT',
+  version int NOT NULL DEFAULT 1 CHECK (version >= 1),
+  effective_from date NOT NULL, effective_to date,
+  reason text CHECK (reason IS NULL OR length(reason) >= 10),
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, position_code, name, version), UNIQUE (tenant_id, id),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (approved_by IS NULL OR (approved_by <> requested_by AND approved_at IS NOT NULL)),
+  CHECK (component_state <> 'ACTIVE' OR approved_by IS NOT NULL)
+);
+
+-- Jumlah bobot satu (jabatan, versi) wajib 10.000. Dijaga sebagai inquiry CI, bukan trigger yang mengoreksi diam-diam:
+-- normalisasi senyap atas bobot orang = mengubah kewenangan tanpa persetujuan.
+CREATE VIEW v_kpi_weight_total AS
+  SELECT tenant_id, position_code, version, sum(weight_bp)::int AS total_bp, count(*) AS components
+  FROM kpi_components
+  WHERE component_state = 'ACTIVE'
+  GROUP BY tenant_id, position_code, version
+  HAVING sum(weight_bp) <> 10000;                     -- wajib 0 baris (gerbang §22.12)
+
+CREATE TABLE kpi_results (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  employee_id uuid NOT NULL,
+  component_id uuid NOT NULL,
+  period_start date NOT NULL, period_end date NOT NULL,
+  score numeric(9,3) NOT NULL CHECK (score >= 0),
+  result_state kpi_result_state NOT NULL DEFAULT 'DRAFT',
+  evidence_attachment_id uuid,
+  assessed_by uuid NOT NULL,                          -- penilai = atasan yang tercatat di struktur organisasi (L4 scope ORG)
+  approved_by uuid, approved_at timestamptz,
+  note text CHECK (note IS NULL OR length(note) >= 10),
+  FOREIGN KEY (tenant_id, employee_id) REFERENCES employees(tenant_id, id),
+  FOREIGN KEY (tenant_id, component_id) REFERENCES kpi_components(tenant_id, id),
+  CHECK (period_end > period_start),
+  CHECK (approved_by IS NULL OR (approved_by <> assessed_by AND approved_at IS NOT NULL)),
+  CHECK (result_state <> 'APPROVED' OR approved_by IS NOT NULL)
+);
+```
+
+**Kenapa kolom-kolom ini ada.** `employees` sengaja tidak punya satu kolom identitas pun karena `staff` dan `lecturers` (§11.3) sudah memegang nama, NIP, NIDN, dan telepon; satu salinan lagi berarti satu titik bocor dan satu baris yang tidak pernah sinkron lagi setelah perubahan pertama, sehingga `person_kind` + `person_id` hanyalah **penunjuk** yang kesamaannya dibuktikan service lapis L5 dan diuji CI §22.11 butir 4. `payroll_runs.rule_version`/`tax_rule_version` dan `pph21_brackets` berversi ada karena gaji yang dibayar tahun lalu harus dapat dihitung ulang dengan aturan tahun lalu — menyimpan tarif sebagai konstanta kode membuat rekonstruksi itu mustahil dan melanggar AGENTS §3.10; `EXCLUDE USING gist` atas `int8range` menutup lapisan yang bertumpang tindih di level database, bukan lewat niat baik. Jembatan ke keuangan adalah `entry_group_id` **satu-satunya**: `payroll_runs` tidak punya kolom total, `payslip_lines` tidak punya `invoice_id`, dan posting hanya boleh ditulis service M-10 (`SERVER_ONLY`, §14.9), sehingga tidak ada dua tempat menyatakan berapa uang yang keluar.
+
+**RLS.** Sebelas objek bertenant (`employees`, `leave_requests`, `leave_approvals`, `leave_policies`, `payroll_runs`, `payslip_lines`, `paycomponents`, `payroll_adjustments`, `employee_tax_profiles`, `kpi_components`, `kpi_results`) ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. `pph21_brackets` **tidak punya** `tenant_id` karena kamus nasional: ia SELECT-only bagi `sica_app` dan **wajib** ditambahkan ke daftar `excluded` generator §6.2 (baris yang sama dengan `reference_dictionary_entries`) — §22.11 butir 9 menolak bila registrasi itu belum terjadi. View `v_payslip_totals` **dan** `v_kpi_weight_total` wajib `WITH (security_invoker = true)` (§20.2); view `security_definer` menembus RLS. Kelima objek baru ikut `0054_hris_payroll.sql` — satu gugus satu berkas, bukan migrasi kembar (`RD-20`).
+
+**Vonis dua sumber kebenaran yang ditutup siklus ini (M-06).** Paragraf ini dulu menulis "komponen gaji hidup di `reference_items` (`kind='komponen_gaji'`)". Itu **bertentangan** dengan `FR-HRS-04`, yang menuntut komponen gaji sebagai **tabel struktural** karena ia membawa `taxable`, perkiraan akun GL, perlakuan statutory, versi, dan empat-mata — dan `AGENTS §3.10` melarang memindahkan aturan struktural ke pasangan kunci-nilai just karena namanya dapat diedit. Vonisnya: **`paycomponents` menang sebagai fisik**; kamus `kind='komponen_gaji'` **dibatalkan** (tidak akan pernah di-seed), karena daftar paralel atas fakta yang sama adalah persis kelas `RD-32`. Yang tetap kamus adalah **`jenis_cuti`** (`kind='jenis_cuti'`, kelas C — tidak membawa struktur akuntansi) dan label golongan (`kind='golongan_pegawai'`, kelas A′), sementara **pita hak cuti** tetap tabel (`leave_policies`) karena bentuknya himpunan interval dengan `EXCLUDE USING gist` — butuh `btree_gist` seperti baris `tuition_tariff_matrix` dan `attendance_network_allowlists` (§19/§21).
+
+**Status.** Kelas A: `employment_status` = PROBATION, ACTIVE, ON_LEAVE, SUSPENDED, RESIGNED, RETIRED, TERMINATED; `approval_status` = PENDING, APPROVED, REJECTED, CANCELLED, EXPIRED; `payroll_run_status` = DRAFT, CALCULATED, REVIEWED, APPROVED, POSTED, PAID, VOID (ketiganya di §22.9; `approval_status` **didaftarkan berdampingan** dengan `access_request_status` §15.1 dengan arah penggabungan tercatat di §22.10). Ditambah siklus M-06, juga kelas A dan didaftarkan di §22.11: `paycomponent_kind` = EARNING, DEDUCTION, REIMBURSEMENT; `payroll_adjustment_state` = PENDING, APPROVED, APPLIED, REJECTED; `kpi_component_state` = DRAFT, ACTIVE, RETIRED; `kpi_result_state` = DRAFT, ASSESSED, APPROVED. Kelas A′/C: jenis cuti dan label golongan hidup di `reference_items`; `ptkp_code` kelas B dengan penjaga bentuk. Kolom `employee_count`, `requested_days`, `total_bp`, dan seluruh isi `v_payslip_totals` adalah turunan: `SERVER_ONLY` dan tidak pernah diterima dari body. **Nominal gaji** (`payslip_lines.amount`, `payroll_adjustments.amount_rupiah`, `take_home`) adalah `SERVER_ONLY` sekaligus **terkunci peran**: tidak terbaca oleh peran akademik/layang (SoD BAAK↔BAUK, `AC-HRS-5`), dan hanya berubah lewat transisi (`approve`, `post`, `void`) — bukan lewat `PATCH`.
+
+#### 22.2.3 M-08 SISTER Sync — `0055_sister_sync.sql`
+
+Vonis 7 (`PRD §5.13`): M-08 adalah **transport**, bukan pemilik angka. Karena itu tidak ada satu pun kolom isi portofolio di bawah — hanya penunjuk, digest, dan antrean. Antrean **tidak** diciptakan ulang: `queue_operations` (`0030`, §16.1.4) sudah memegang `opId`, idempotensi, `attempt`, dan DLQ, sehingga `sister_sync_queue` adalah baris pekerjaan domain yang menunjuknya. Airmen delta **boleh** tabel sendiri karena yang dikejar sistem berbeda: `feeder_sync_watermarks` (`0040`) berkunci enum `pddikti_domain` dan menunjuk `pddikti_sync_runs`, sedangkan SISTER punya kursor sendiri per jenis portofolio — satu baris airmen tidak pernah disimpan dua kali untuk fakta yang sama.
+
+```sql
+CREATE TABLE sister_endpoints (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  base_url text NOT NULL,                              -- URL portal milik sendiri/negara; TIDAK ada kredensial di kolom mana pun (§21.2: rahasia tidak pernah jadi baris)
+  credential_ref text NOT NULL,                        -- penunjuk vault/ENV, bukan nilainya (pola `feeder_bridges`, §14.7 baris G platform/feeder)
+  environment text NOT NULL CHECK (environment IN ('LOCAL','SANDBOX','PRODUCTION')),
+  is_production boolean NOT NULL DEFAULT false,       -- CHECK di bawah menolaknya bila environment PRODUCTION tidak cocok
+  auth_mode text NOT NULL DEFAULT 'TOKEN_EXCHANGE' CHECK (auth_mode IN ('TOKEN_EXCHANGE','API_KEY','OAUTH2_PKCE','CERTIFICATE')),
+  rate_limit_per_minute smallint CHECK (rate_limit_per_minute IS NULL OR rate_limit_per_minute BETWEEN 1 AND 600),
+  timeout_ms int NOT NULL DEFAULT 30000 CHECK (timeout_ms BETWEEN 1000 AND 120000),
+  last_seen_at timestamptz, last_error_code text,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code),
+  CHECK (environment = 'PRODUCTION' OR is_production = false)   -- kredensial sandbox tidak pernah menyentuh endpoint produksi (BENCH-135)
+);
+
+CREATE TABLE sister_sync_queue (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  endpoint_id uuid NOT NULL REFERENCES sister_endpoints(id),
+  op_id uuid,                                          -- `queue_operations.id` (`0030`): idempotensi + DLQ tidak diciptakan ulang di sini
+  item_kind text NOT NULL,                             -- kelas C: 'publikasi','paten','pengajaran','pengabdian','penghargaan' — kamus `kind='item_sister'`
+  source_entity text NOT NULL, source_id uuid NOT NULL, -- penunjuk fakta MILIK modul sumber (M-21/M-22/M-19/M-07); salinan isi DILARANG
+  direction text NOT NULL DEFAULT 'OUTBOUND' CHECK (direction IN ('OUTBOUND','INBOUND_RECONCILE')),
+  state queue_operation_state NOT NULL DEFAULT 'QUEUED',   -- **reuse** enum §15.2; tidak ada kosakata keadaan baru
+  attempt smallint NOT NULL DEFAULT 0 CHECK (attempt BETWEEN 0 AND 8),
+  payload_digest char(64) NOT NULL,                    -- SHA-256 muatan yang dikirim; membuktikan apa yang diakui pusat tanpa menyimpan muatannya
+  payload_encrypted bytea,                             -- hanya bila retensi muatan diminta; amplop §16.3.4
+  key_version int, next_retry_at timestamptz,
+  sent_at timestamptz, acknowledged_at timestamptz, dead_letter_at timestamptz,
+  last_error_code text, center_reference text,          -- id dari respons pusat; BUKAN `feeder_id` (I-14: id pusat hanya di `feeder_identities`, §18.5)
+  idempotency_key text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, idempotency_key),
+  CHECK (state <> 'SUCCEEDED' OR acknowledged_at IS NOT NULL),
+  CHECK (state <> 'EXPIRED' OR dead_letter_at IS NOT NULL),
+  CHECK (direction = 'OUTBOUND' OR state <> 'SUCCEEDED' OR acknowledged_at IS NOT NULL),
+  CHECK (payload_encrypted IS NULL OR octet_length(payload_encrypted) >= 31),
+  CHECK (payload_digest ~ '^[0-9a-f]{64}$')
+);
+CREATE INDEX idx_sister_queue_pick ON sister_sync_queue(tenant_id, state, next_retry_at, created_at);
+CREATE INDEX idx_sister_queue_source ON sister_sync_queue(tenant_id, source_entity, source_id, created_at DESC);
+
+CREATE TABLE sister_delta_watermarks (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  endpoint_id uuid NOT NULL REFERENCES sister_endpoints(id),
+  item_kind text NOT NULL,                             -- kunci yang SAMA dengan `sister_sync_queue.item_kind`
+  last_committed_at timestamptz, last_cursor text,
+  row_count int NOT NULL DEFAULT 0 CHECK (row_count >= 0),
+  digest char(64),
+  forced_full_at timestamptz,                          -- sinkron penuh terakhir; sesudah ini airmen lama tidak berlaku
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, endpoint_id, item_kind)
+);
+
+-- Peta item portofolio → fakta sumber, dengan hasil rekonsiliasi. Isi item TIDAK disimpan di sini.
+CREATE TABLE sister_portfolio_items (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  employee_id uuid NOT NULL REFERENCES employees(id),
+  item_kind text NOT NULL, source_entity text NOT NULL, source_id uuid NOT NULL,
+  source_updated_at timestamptz NOT NULL,              -- penentu dirty: bila kolom ini maju, item masuk antrean
+  content_digest char(64) NOT NULL,                    -- digest canonik muatan; perubahan tanpa digest = tidak dikirim
+  sync_state text NOT NULL DEFAULT 'DIRTY' CHECK (sync_state IN ('DIRTY','QUEUED','SENT','ACKNOWLEDGED','CONFLICT','SUPPRESSED')),
+  center_status text,                                  -- apa yang pusat katakan, apa adanya; NULL = belum pernah diakui
+  conflict_detail jsonb NOT NULL DEFAULT '{}'::jsonb,
+  last_queue_id uuid REFERENCES sister_sync_queue(id),
+  pushed_at timestamptz, acknowledged_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, employee_id, source_entity, source_id),
+  CHECK (content_digest ~ '^[0-9a-f]{64}$'),
+  CHECK (sync_state <> 'ACKNOWLEDGED' OR acknowledged_at IS NOT NULL),
+  CHECK (sync_state <> 'SUPPRESSED' OR conflict_detail <> '{}'::jsonb)   -- senyap tidak boleh: penolakan wajib beralasan
+);
+CREATE INDEX idx_sister_items_dirty ON sister_portfolio_items(tenant_id, sync_state, source_updated_at);
+```
+
+**Kenapa kolom-kolom ini ada.** `sister_sync_queue.state` memakai enum `queue_operation_state` yang sudah ada (§15.2) dan `op_id` menunjuk `queue_operations` (`0030`) karena dua mesin antrean dengan keadaan sendiri adalah dua sumber kebenaran tentang "apakah pekerjaan ini sudah selesai" — dan hanya `queue_operations` yang boleh menjadi sumber `202 { opId }`. `source_entity`/`source_id`/`content_digest` adalah seluruh isi yang kami izinkan bagi modul transport: M-08 mencatat **apa** yang dikirim dan **bukti** isinya, bukan menyalin judul publikasi atau angka BKD, karena salinan akan menyimpang pada suntingan pertama di modul sumber (vonis 4 dan 7). `sister_delta_watermarks.last_committed_at` hanya boleh digeser oleh baris `SUCCEEDED` — aturan servis yang sama dengan §18.5 — karena airmen yang maju bersama run gagal membuat perubahan yang belum pernah diterima pusat hilang selamanya, jenis cacat paling berbahaya di jalur sinkronisasi.
+
+**RLS.** Keempat tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. Tambahan keras: `credential_ref` dan `base_url` **tidak pernah** masuk proyeksi mana pun kecuali layar Admin IT dengan `settings` scope (`FIELD_RULES`, §14.9), dan `sister_sync_queue` tidak boleh dibaca oleh peran akademik mana pun karena isi `center_reference` membuka keadaan sistem pusat.
+
+**Status.** Kelas A **tanpa kosakata baru**: `sister_sync_queue.state` memakai `queue_operation_state` (§15.2, `0030`) dan `kind` baru `SISTER_PUSH`/`SISTER_PULL_RECONCILE` ditambahkan ke `queue_operation_kind` lewat `ALTER TYPE … ADD VALUE` pada **dua** migrasi terpisah (§15.2 catatan: tidak boleh dipakai pada transaksi yang sama). Kelas A′: `sister_portfolio_items.sync_state` dan `sister_endpoints.environment` adalah `text + CHECK` (§15.3) — `environment` memakai tiga nilai yang sama dengan §15.3, bukan daftar baru. Kelas C: `item_kind` menunjuk `reference_items(kind='item_sister')` dan **tidak** diberi CHECK, karena pusat menambah jenis portofolio tanpa menunggu rilis kita.
+
+### 22.3 Pembiayaan mahasiswa dan dana abadi — M-11 dan M-47
+
+Vonis 5 (`PRD §5.13`) adalah tulang punggung sub-bagian ini: **M-10 satu-satunya penerbit tagihan dan jurnal**; beasiswa, hibah, dan alokasi dana abadi adalah **sumber dana** yang memotong atau memancarkan pembayaran, bukan invoice kedua. Karena itu satu tabel pencairan dipakai bersama tiga modul (`funding_disbursements`), dan `pph21`/tarif tidak pernah menjadi konstanta.
+
+#### 22.3.1 M-11 KIP-K dan Beasiswa — `0056_scholarship.sql`
+
+Dipakai ulang dan tidak dibuat kembar: `invoices`/`payments`/`payment_waivers`/`ledger` (§5) untuk seluruh angka yang benar-benar ditagih atau dibayarkan, `student_bank_accounts` (`0035`) untuk rekening penerima, `reference_items` (§14.2) untuk skema dan kriteria, `students` (§5) untuk identitas, `academic_rules` untuk ambang kelulusan. Jalur potongan biaya **tidak** dibuat di sini: `payment_waivers` milik M-10, dan `scholarship_applications.waiver_id` hanyalah penunjuk hasil.
+
+```sql
+CREATE TYPE scholarship_application_status AS ENUM
+  ('DRAFT','SUBMITTED','UNDER_REVIEW','ELIGIBLE','NOT_ELIGIBLE','AWARDED','PARTIALLY_AWARDED','REJECTED','WITHDRAWN','LAPSED');
+CREATE TYPE funding_disbursement_status AS ENUM
+  ('REQUESTED','APPROVED','POSTED','PAID','FAILED','REVERSED','CANCELLED');
+
+CREATE TABLE scholarship_programs (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL, name_en text,
+  funding_source_kind text NOT NULL CHECK (funding_source_kind IN ('GOVERNMENT','ENDOWMENT','DONOR','PARTNER','INTERNAL')),
+  external_scheme_code text,                           -- kode skema nasional (KIP-K, Beasiswa Indonesia Maju); kelas B: tenant memetakan label, tidak mengubah kode
+  coverage_mode text NOT NULL CHECK (coverage_mode IN ('FULL_TARIFF','TARIFF_GROUPS','FIXED_AMOUNT','LIVING_ALLOWANCE')),
+  fixed_amount_rupiah bigint CHECK (fixed_amount_rupiah IS NULL OR fixed_amount_rupiah >= 0),
+  ceiling_per_year_rupiah bigint CHECK (ceiling_per_year_rupiah IS NULL OR ceiling_per_year_rupiah >= 0),
+  quota_seats int NOT NULL DEFAULT 0 CHECK (quota_seats >= 0),
+  min_ipk numeric(3,2) CHECK (min_ipk IS NULL OR min_ipk BETWEEN 0 AND 4),
+  min_sks_per_semester smallint CHECK (min_sks_per_semester IS NULL OR min_sks_per_semester BETWEEN 0 AND 24),
+  requires_no_drops boolean NOT NULL DEFAULT false,
+  award_years smallint NOT NULL DEFAULT 1 CHECK (award_years BETWEEN 1 AND 8),
+  allocation_grant_id uuid,                            -- penahan M-47: program yang bersumber dana abadi WAJIB menunjuk payung dana (dibuktikan service, FK ditambahkan setelah `0057`)
+  is_active boolean NOT NULL DEFAULT true,
+  effective_from date NOT NULL DEFAULT current_date, effective_to date,
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (coverage_mode <> 'FIXED_AMOUNT' OR fixed_amount_rupiah IS NOT NULL),
+  CHECK (coverage_mode <> 'LIVING_ALLOWANCE' OR ceiling_per_year_rupiah IS NOT NULL),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+-- Komponen yang dibiayai menunjuk `fee_tariff_groups` (`0046`) — BUKAN nama komponen baru:
+CREATE TABLE scholarship_program_coverage (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL, tariff_group_id uuid NOT NULL REFERENCES fee_tariff_groups(id),
+  share_bp int NOT NULL DEFAULT 10000 CHECK (share_bp BETWEEN 1 AND 10000),   -- basis poin, bukan `float`
+  FOREIGN KEY (tenant_id, program_id) REFERENCES scholarship_programs(tenant_id, id),
+  UNIQUE (tenant_id, program_id, tariff_group_id)
+);
+CREATE INDEX idx_scholarship_coverage ON scholarship_program_coverage(tenant_id, program_id);
+
+CREATE TABLE scholarship_applications (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL, student_id uuid NOT NULL REFERENCES students(id),
+  academic_year_id uuid, period_id uuid REFERENCES academic_periods(id),
+  status scholarship_application_status NOT NULL DEFAULT 'DRAFT',
+  submitted_at timestamptz, decided_at timestamptz,
+  awarded_amount_rupiah bigint CHECK (awarded_amount_rupiah IS NULL OR awarded_amount_rupiah >= 0),
+  awarded_years smallint CHECK (awarded_years IS NULL OR awarded_years BETWEEN 1 AND 8),
+  waiver_id uuid,                                      -- hasil di M-10 (`payment_waivers`): potongan yang benar-benar memotong tagihan
+  ranking int CHECK (ranking IS NULL OR ranking > 0),
+  rank_tiebreak_rule text,                             -- determinisme peringkat (§14.7 baris PMB): tanpa ini, dua pendaftar nilai sama berubah urutan tiap run
+  eligibility_snapshot_digest char(64),                -- digest baris `scholarship_eligibility_facts` yang dipakai; keputusan tidak boleh dihitung dari data yang sudah berubah
+  consent_pii_disclosure boolean NOT NULL DEFAULT false,  -- UU PDP Ps 20: data ekonomi keluarga dibuka ke pemberi dana hanya atas persetujuan tercatat
+  consent_ref text,
+  requested_by uuid NOT NULL, reviewed_by uuid, decided_by uuid,
+  decision_note text, rejection_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, program_id) REFERENCES scholarship_programs(tenant_id, id),
+  UNIQUE (tenant_id, id),
+  CHECK (status <> 'SUBMITTED' OR submitted_at IS NOT NULL),
+  CHECK (status NOT IN ('AWARDED','PARTIALLY_AWARDED','REJECTED','NOT_ELIGIBLE') OR (decided_at IS NOT NULL AND decided_by IS NOT NULL)),
+  CHECK (decided_by IS NULL OR decided_by <> requested_by),          -- SoD: pemohon bukan penentu
+  CHECK (status <> 'AWARDED' OR awarded_amount_rupiah IS NOT NULL),
+  CHECK (eligibility_snapshot_digest IS NULL OR eligibility_snapshot_digest ~ '^[0-9a-f]{64}$')
+);
+-- Satu pendaftar satu lamaran per program per periode. `UNIQUE (..., period_id)` di dalam CREATE TABLE
+-- tidak sah untuk kasus period_id IS NULL (dua lamaran tanpa periode akan lolos), jadi keunikan
+-- dipasang sebagai indeks ekspresi ber-COALESCE (pola §19.4):
+CREATE UNIQUE INDEX uq_scholar_apps_once ON scholarship_applications
+  (tenant_id, program_id, student_id, COALESCE(period_id, '00000000-0000-0000-0000-000000000000'::uuid));
+CREATE INDEX idx_scholar_apps_status ON scholarship_applications(tenant_id, status, period_id);
+CREATE INDEX idx_scholar_apps_student ON scholarship_applications(tenant_id, student_id, submitted_at DESC);
+
+-- Fakta kelayakan berversi: satu baris = satu pengamatan pada satu waktu, dengan sumbernya.
+CREATE TABLE scholarship_eligibility_facts (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_id uuid NOT NULL,
+  fact_code text NOT NULL,                             -- kelas C: `reference_items(kind='fakta_kelayakan')` — penghasilan, tanggungan, region, pvcp, ipk
+  observed_on date NOT NULL,
+  value_numeric numeric(14,2),                         -- HANYA untuk fakta non-PII dan hasil ukur (IPK, SKS, jarak)
+  value_text_encrypted bytea,                          -- fakta ekonomi/keluarga = amplop §16.3.4; tidak pernah `text`
+  value_bidx char(64),                                 -- pasangan blind index untuk pencarian "sama dengan tetangga?" (DTSEN)
+  pii_level text NOT NULL DEFAULT 'GENERAL' CHECK (pii_level IN ('NONE','GENERAL','SPECIFIC')),
+  source_kind text NOT NULL CHECK (source_kind IN ('STUDENT_SELF','DTSEN','GUARDIAN_RECORD','GRADE_RECORD','IMPORT','MANUAL_VERIFIED')),
+  source_ref text,                                     -- rujukan dokumen/sumber, BUKAN salinan isi
+  verified_by uuid, verified_at timestamptz, verify_note text,
+  version int NOT NULL DEFAULT 1 CHECK (version > 0),
+  superseded_at timestamptz,
+  FOREIGN KEY (tenant_id, application_id) REFERENCES scholarship_applications(tenant_id, id),
+  UNIQUE (tenant_id, application_id, fact_code, observed_on, version),
+  CHECK (pii_level <> 'SPECIFIC' OR (value_numeric IS NULL AND value_text_encrypted IS NOT NULL)),
+  CHECK (value_text_encrypted IS NULL OR octet_length(value_text_encrypted) >= 31),
+  CHECK (source_kind = 'STUDENT_SELF' OR verified_at IS NOT NULL),   -- pengakuan sendiri tidak pernah jadi dasar tanpa verifikasi
+  CHECK (verified_by IS NULL OR verified_at IS NOT NULL)             -- penyetuju tanpa tanggal tidak dapat diaudit
+);
+CREATE INDEX idx_scholar_facts_app ON scholarship_eligibility_facts(tenant_id, application_id, fact_code, observed_on DESC);
+
+-- Jadwal pencairan = rencana termin; uang yang benar-benar keluar ada di `funding_disbursements`.
+CREATE TABLE disbursement_schedules (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_id uuid NOT NULL, term_no smallint NOT NULL CHECK (term_no BETWEEN 1 AND 12),
+  planned_on date NOT NULL,
+  planned_amount_rupiah bigint NOT NULL CHECK (planned_amount_rupiah >= 0),
+  requires_ipk numeric(3,2) CHECK (requires_ipk IS NULL OR requires_ipk BETWEEN 0 AND 4),
+  requires_min_sks smallint CHECK (requires_min_sks IS NULL OR requires_min_sks BETWEEN 0 AND 24),
+  state approval_status NOT NULL DEFAULT 'PENDING',
+  gate_checked_at timestamptz, gate_evidence jsonb NOT NULL DEFAULT '{}'::jsonb,  -- bukti IPK/SKS saat gerbang dibuka; tanpa ini pencairan semester 2 tidak dapat direkonstruksi
+  FOREIGN KEY (tenant_id, application_id) REFERENCES scholarship_applications(tenant_id, id),
+  UNIQUE (tenant_id, application_id, term_no)
+);
+
+-- SATU tabel pencairan dana untuk tiga modul (beasiswa M-11, hibah M-44, alokasi M-47).
+-- `scholarship_disbursements`, `grant_disbursements`, `endowment_disbursements` DITOLAK (§22.10).
+CREATE TABLE funding_disbursements (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_kind text NOT NULL CHECK (program_kind IN ('SCHOLARSHIP','GRANT','ENDOWMENT_YIELD','REFERRAL')),
+  program_ref_id uuid NOT NULL,                        -- scholarship_applications / research_grant_contracts / allocation_grants / referral_commissions
+  schedule_id uuid REFERENCES disbursement_schedules(id),
+  payee_kind text NOT NULL CHECK (payee_kind IN ('STUDENT','LECTURER','VENDOR','EXTERNAL_PARTY')),
+  payee_student_id uuid REFERENCES students(id),
+  payee_bank_account_id uuid REFERENCES student_bank_accounts(id),   -- rekening HANYA dibaca dari `0035`; tidak ada nomor rekening di tabel ini
+  amount_rupiah bigint NOT NULL CHECK (amount_rupiah > 0),
+  currency char(3) NOT NULL DEFAULT 'IDR',
+  status funding_disbursement_status NOT NULL DEFAULT 'REQUESTED',
+  purpose text NOT NULL,
+  entry_group_id uuid,                                 -- jembatan M-10: `ledger.entry_group_id` (append-only). Ditulis HANYA oleh service M-10 (SERVER_ONLY)
+  payment_id uuid REFERENCES payments(id),             -- bridge kanal: satu-satunya cara "sudah dibayar" menyatakan diri
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  posted_by uuid, posted_at timestamptz, reversed_by uuid, reversed_at timestamptz, reverse_reason text,
+  idempotency_key text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (status NOT IN ('APPROVED','POSTED','PAID') OR (approved_by IS NOT NULL AND approved_at IS NOT NULL)),
+  CHECK (status <> 'POSTED' OR entry_group_id IS NOT NULL),
+  CHECK (status <> 'PAID' OR payment_id IS NOT NULL),
+  CHECK (status <> 'REVERSED' OR (reversed_by IS NOT NULL AND reverse_reason IS NOT NULL)),
+  CHECK (payee_kind <> 'STUDENT' OR payee_student_id IS NOT NULL),
+  CHECK (payee_kind <> 'STUDENT' OR payee_bank_account_id IS NOT NULL),
+  UNIQUE (tenant_id, idempotency_key), UNIQUE (tenant_id, id)
+);
+CREATE INDEX idx_funding_disb_status ON funding_disbursements(tenant_id, program_kind, status, created_at);
+CREATE INDEX idx_funding_disb_ref ON funding_disbursements(tenant_id, program_ref_id);
+
+-- SoD tiga orang: pemohon pencairan, penyetuju, dan penulis jurnal tidak boleh satu orang.
+-- Ditegakkan pemicu (lintas kolom + lintas tabel), karena `CHECK` tidak dapat membaca `ledger.actor_id`;
+-- baris penyangga aturan itu ada di `audit_logs` (§4) dan diuji §22.11 butir 11.
+```
+
+**Kenapa kolom-kolom ini ada.** `scholarship_eligibility_facts` menyimpan penghasilan dan tanggungan sebagai `value_text_encrypted` dengan pasangan blind index — bukan `text` — karena data ekonomi keluarga adalah PII spesifik (`pii_level='SPECIFIC'`) yang hak bacanya harus bisa dimatikan tanpa mematikan modul beasiswa, dan `CHECK (pii_level <> 'SPECIFIC' OR value_numeric IS NULL)` menutup jalan paling nyata untuk membocorkannya: angka "lucu" yang ternyata penghasilan. `eligibility_snapshot_digest` dan `rank_tiebreak_rule` membuat sebuah keputusan tetap dapat dipertahankan di auditor setelah facts berubah — tanpa digest, seseorang dapat menaikkan IPK hari ini dan membuat SK tahun lalu tampak salah hitung, dan tanpa aturan tie-break peringkat dua pendaftar berubah tiap kali laporan diregenerasi. `funding_disbursements` **tidak** punya nomor rekening, tidak punya kolom tarif, dan status `POSTED`/`PAID` tidak dapat tercapai tanpa `entry_group_id`/`payment_id` yang ditulis service M-10: itulah cara vonis 5 ditegakkan di bentuk skema, bukan di paragraf.
+
+**RLS.** Keenam tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. Satu penajaman: `scholarship_eligibility_facts` dengan `pii_level='SPECIFIC'` tidak pernah masuk proyeksi peran `SCHOLARSHIP_ADMIN` scope `PROGRAM` sebelum `verified_by` terisi, dan `funding_disbursements.payee_bank_account_id` tidak pernah diproyeksikan ke peran selain BAUK (`FIELD_RULES`, §14.9); masking menu bukan kontrol akses (`SEC-09`).
+
+**Status.** Kelas A: `scholarship_application_status` = DRAFT, SUBMITTED, UNDER_REVIEW, ELIGIBLE, NOT_ELIGIBLE, AWARDED, PARTIALLY_AWARDED, REJECTED, WITHDRAWN, LAPSED; `funding_disbursement_status` = REQUESTED, APPROVED, POSTED, PAID, FAILED, REVERSED, CANCELLED; `disbursement_schedules.state` memakai `approval_status` yang lahir di §22.2.2 (satu kosakata persetujuan, tidak menambah yang kedua). Kelas A′/C: `fact_code` menunjuk `reference_items(kind='fakta_kelayakan')` tanpa CHECK daftar; `coverage_mode`, `funding_source_kind`, `payee_kind`, `source_kind`, `pii_level`, `program_kind` adalah `text + CHECK` (§15.3) karena merupakan kosakata bentuk yang boleh bertambah lewat baris dokumen, bukan mesin keadaan.
+
+#### 22.3.2 M-47 Endowment Fund — `0057_endowment_fund.sql`
+
+Vonis 5 membatasi gugus ini keras: donasi yang **diterima** adalah baris `payments` milik M-10, dan alokasi imbal hasil adalah **payung dana** yang dibaca M-11/M-44, bukan invoice kedua. Yang dimiliki M-47 adalah niat (janji), portofolio, penilaian nilai, dan keputusan alokasi.
+
+```sql
+CREATE TABLE endowment_donors (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  donor_kind text NOT NULL CHECK (donor_kind IN ('ORGANIZATION','INDIVIDUAL')),
+  organization_id uuid REFERENCES external_organizations(id),   -- biodata badan hukum TIDAK disalin (§22.2.1 adalah pemiliknya)
+  individual_name text,                              -- hanya bila donor_kind='INDIVIDUAL'
+  individual_contact_encrypted bytea, individual_contact_bidx char(64),
+  preferred_anonymity text NOT NULL DEFAULT 'NAMED' CHECK (preferred_anonymity IN ('NAMED','ORG_ONLY','ANONYMOUS')),
+  relationship_manager_employee_id uuid REFERENCES employees(id),
+  notes text, attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((donor_kind = 'ORGANIZATION') = (organization_id IS NOT NULL)),
+  CHECK ((donor_kind = 'INDIVIDUAL') = (individual_name IS NOT NULL AND individual_name <> '')),
+  CHECK (individual_contact_encrypted IS NULL OR octet_length(individual_contact_encrypted) >= 31),
+  UNIQUE (tenant_id, id)
+);
+CREATE INDEX idx_donors_org ON endowment_donors(tenant_id, organization_id) WHERE organization_id IS NOT NULL;
+
+CREATE TABLE endowment_donations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  donor_id uuid NOT NULL, pledge_number text NOT NULL,
+  instrument text NOT NULL CHECK (instrument IN ('CASH','IN_KIND','ASSET','SECURITIES','LAND','SERVICES')),
+  pledged_value_rupiah bigint NOT NULL CHECK (pledged_value_rupiah >= 0),   -- JANJI, bukan penerimaan: tidak pernah dibaca sebagai uang masuk
+  valuation_basis text CHECK (valuation_basis IS NULL OR valuation_basis IN ('APPRAISAL','MARKET','DONOR_DECLARED','BOARD_APPROVED')),
+  apprausal_ref text,
+  is_restricted boolean NOT NULL DEFAULT false,
+  restriction_purpose text,                          -- beasiswa/prodi/lab spesifik; NULL = tidak terikat
+  fund_portfolio_id uuid,                            -- tujuan penempatan (FK ditambahkan pada blok di bawah setelah tabelnya lahir)
+  received_payment_id uuid REFERENCES payments(id),  -- SATU-SATUNYA bukti uang masuk: baris `payments` milik M-10; NULL = belum diterima
+  received_value_rupiah bigint CHECK (received_value_rupiah IS NULL OR received_value_rupiah >= 0),
+  received_on date, receipt_number text,             -- nomor tanda terima; penomoran dari `document_number_sequences` (`0020`), BUKAN MAX+1
+  is_tax_deductible boolean NOT NULL DEFAULT false, tax_deduction_ref text,
+  status text NOT NULL DEFAULT 'PLEDGED' CHECK (status IN ('PLEDGED','PARTIAL','RECEIVED','CANCELLED','DISPUTED')),
+  acknowledged_at timestamptz, requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, donor_id) REFERENCES endowment_donors(tenant_id, id),
+  UNIQUE (tenant_id, pledge_number), UNIQUE (tenant_id, id),
+  CHECK (status <> 'RECEIVED' OR (received_payment_id IS NOT NULL AND received_on IS NOT NULL)),
+  CHECK (received_payment_id IS NULL OR received_value_rupiah IS NOT NULL),
+  CHECK (is_restricted = false OR restriction_purpose IS NOT NULL),
+  CHECK (instrument <> 'IN_KIND' OR valuation_basis IS NOT NULL),            -- barang tanpa dasar nilai = portofolio fiktif
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+CREATE INDEX idx_donations_status ON endowment_donations(tenant_id, status, received_on DESC);
+
+CREATE TABLE fund_portfolios (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  mandate text NOT NULL,                             -- apa yang dana ini boleh biayai (bahasa board, bukan cabang kode)
+  principal_locked boolean NOT NULL DEFAULT true,    -- dana abadi: pokok tidak boleh dipakai, hanya imbal hasil
+  allowed_instruments jsonb NOT NULL DEFAULT '[]'::jsonb,
+  custodian_ref text,                                -- nama/kode kustodian; rekening dan rahasia tidak pernah jadi kolom (§21.2)
+  valuation_frequency text NOT NULL DEFAULT 'QUARTERLY' CHECK (valuation_frequency IN ('MONTHLY','QUARTERLY','SEMIANNUAL','ANNUAL')),
+  spending_ceiling_bp int NOT NULL DEFAULT 400 CHECK (spending_ceiling_bp BETWEEN 0 AND 10000),  -- ambang konsumsi imbal hasil; basis poin, bisa dibaca `master_system_parameters` bila tenant ingin dinamis
+  is_active boolean NOT NULL DEFAULT true,
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+ALTER TABLE endowment_donations ADD CONSTRAINT fk_donation_portfolio
+  FOREIGN KEY (tenant_id, fund_portfolio_id) REFERENCES fund_portfolios(tenant_id, id);
+
+-- Penilaian nilai wajar berversi: satu angka per (portofolio, tanggal, versi). TIDAK pernah masuk `ledger`.
+CREATE TABLE portfolio_valuations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  portfolio_id uuid NOT NULL, as_of date NOT NULL, version int NOT NULL DEFAULT 1 CHECK (version > 0),
+  market_value_rupiah bigint NOT NULL CHECK (market_value_rupiah >= 0),
+  unrealized_gain_rupiah bigint NOT NULL DEFAULT 0,
+  realized_gain_rupiah bigint NOT NULL DEFAULT 0,
+  method text NOT NULL CHECK (method IN ('MARKET_QUOTE','DISCOUNTED_MODEL','BOOK','APPRAISAL','MIXED')),
+  source text NOT NULL CHECK (source IN ('IMPORT_OWN_FILE','MANUAL','MODEL_INTERNAL')),  -- nol-API-key: tidak ada feed berbayar (§3.9 AGENTS)
+  inputs_digest char(64),
+  note text,
+  prepared_by uuid NOT NULL, reviewed_by uuid, approved_by uuid, approved_at timestamptz,
+  FOREIGN KEY (tenant_id, portfolio_id) REFERENCES fund_portfolios(tenant_id, id),
+  UNIQUE (tenant_id, portfolio_id, as_of, version),
+  CHECK (as_of > date '2000-01-01'),
+  CHECK (approved_by IS NOT NULL AND approved_by <> prepared_by),            -- angka portofolio = keputusan board: wajib empat-mata, tidak ada keadaan tanpa penyetuju
+  CHECK (reviewed_by IS NULL OR (reviewed_by <> prepared_by AND reviewed_by <> approved_by)),
+  CHECK (method = 'MARKET_QUOTE' OR note IS NOT NULL)                         -- metode model wajib dijelaskan, tidak boleh tampil sebagai harga
+);
+CREATE INDEX idx_valuations_series ON portfolio_valuations(tenant_id, portfolio_id, as_of DESC, version DESC);
+
+CREATE TABLE yield_allocations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  portfolio_id uuid NOT NULL, valuation_id uuid NOT NULL,
+  period_from date NOT NULL, period_to date NOT NULL,
+  gross_yield_rupiah bigint NOT NULL CHECK (gross_yield_rupiah >= 0),
+  allocatable_bp int NOT NULL CHECK (allocatable_bp BETWEEN 0 AND 10000),     -- porsi yang BOLEH dipakai; dibatasi `spending_ceiling_bp` oleh service (L5) dan diuji §22.11 butir 6
+  allocated_amount_rupiah bigint NOT NULL CHECK (allocated_amount_rupiah >= 0),
+  principal_locked boolean NOT NULL DEFAULT true,                             -- salinan keras dari portofolio SAAT alokasi: pokok tidak boleh ikut terpakai walau mandate berubah
+  status approval_status NOT NULL DEFAULT 'PENDING',
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  board_ref text,                                                            -- nomor rapat/keputusan
+  FOREIGN KEY (tenant_id, portfolio_id) REFERENCES fund_portfolios(tenant_id, id),
+  FOREIGN KEY (tenant_id, valuation_id) REFERENCES portfolio_valuations(tenant_id, id),
+  UNIQUE (tenant_id, portfolio_id, period_from, period_to), UNIQUE (tenant_id, id),
+  CHECK (period_to > period_from),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (status <> 'APPROVED' OR (approved_at IS NOT NULL AND board_ref IS NOT NULL))
+);
+
+-- Payung dana yang dipakai M-11 (beasiswa) dan M-44 (hibah). Ini objek yang vonis 5 sebut "sumber dana berversi".
+CREATE TABLE allocation_grants (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  yield_allocation_id uuid NOT NULL,
+  target_kind text NOT NULL CHECK (target_kind IN ('SCHOLARSHIP_PROGRAM','GRANT_SCHEME','RESEARCH_UNIT','FACILITY')),
+  target_ref_id uuid NOT NULL,
+  grant_number text NOT NULL,
+  granted_amount_rupiah bigint NOT NULL CHECK (granted_amount_rupiah > 0),
+  spent_amount_rupiah bigint NOT NULL DEFAULT 0 CHECK (spent_amount_rupiah >= 0),   -- agregat DIBELEQAN service saat `funding_disbursements` terbit; tidak dapat ditulis klien
+  valid_from date NOT NULL, valid_to date NOT NULL,
+  status approval_status NOT NULL DEFAULT 'PENDING',
+  clawback_reason text,
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  FOREIGN KEY (tenant_id, yield_allocation_id) REFERENCES yield_allocations(tenant_id, id),
+  UNIQUE (tenant_id, grant_number), UNIQUE (tenant_id, id),
+  CHECK (valid_to > valid_from),
+  CHECK (spent_amount_rupiah <= granted_amount_rupiah),                       -- payung tidak boleh jebol
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (status <> 'APPROVED' OR approved_at IS NOT NULL),
+  CHECK (clawback_reason IS NULL OR length(clawback_reason) >= 10)
+);
+CREATE INDEX idx_alloc_grants_target ON allocation_grants(tenant_id, target_kind, target_ref_id, status);
+```
+
+**Kenapa kolom-kolom ini ada.** `endowment_donations` memisahkan `pledged_value_rupiah` (janji) dari `received_payment_id` (bukti), dan `CHECK (status <> 'RECEIVED' OR received_payment_id IS NOT NULL)` membuat donasi tidak pernah dapat dinyatakan masuk tanpa baris `payments` milik M-10 — itulah satu-satunya bentuk yang membuat vonis 5 nyata, karena tanpa CHECK ini laporan dana abadi akan menggembung oleh janji yang tidak pernah terealisasi. `portfolio_valuations.approved_by` wajib dan berbeda dari `prepared_by` karena angka penilaian adalah keputusan dewan yang mengubah berapa banyak beasiswa yang dapat diberikan tahun depan; `source` juga tidak punya nilai apa pun yang berarti "kirim ke layanan harga berbayar" (§3.9 AGENTS: nol-API-key, nol-egress). `allocation_grants.spent_amount_rupiah` adalah agregat yang hanya boleh dinaikkan service saat `funding_disbursements` terbit, dan `CHECK (spent <= granted)` adalah pagar keras yang membuat M-11/M-44 tidak dapat menghabiskan payung dana lebih dari yang dewan tetapkan.
+
+**RLS.** Keenam tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. Tambahan: `endowment_donors.individual_contact_encrypted` hanya terbaca peran pengelola dana dengan `pii_level` tercatat (`FIELD_RULES`, §14.9), dan `preferred_anonymity='ANONYMOUS'` **wajib** dipatuhi proyeksi laporan publik — nama donatur yang disamarkan tidak boleh muncul di layar mana pun walau izin perannya lengkap.
+
+**Status.** Kelas A′/C (reuse): `endowment_donations.status` = PLEDGED, PARTIAL, RECEIVED, CANCELLED, DISPUTED dan `yield_allocations.status`/`allocation_grants.status` memakai `approval_status` (§22.9, kelas A). `instrument`, `donor_kind`, `method`, `source`, `valuation_basis`, `target_kind` adalah `text + CHECK` (§15.3): kosakata bentuk yang bertambah lewat baris dokumen lebih dulu, bukan lewat cabang kode.
+
+### 22.4 Relasi pasar, karier, dan mobilitas — M-45, M-28, M-29
+
+Tiga modul ini bertemu di objek yang sama: **orang luar** (sekolah, pemberi kerja, institusi tujuan) dan **mahasiswa/alumni**. Karena itu semuanya menunjuk `external_organizations` (`0053`) dan tidak ada yang menyalin biodata pihak luar. Vonis 12 (`PRD §5.13`) menutup bagian paling rawan: lead yang "jadi mahasiswa" **tidak pernah** berupa INSERT ke tabel pendaftaran — ia adalah foreign key keluar ke `pmb_applications` (`0021`) yang diisi service PMB.
+
+#### 22.4.1 M-45 CRM PMB dan Marketing — `0058_crm_marketing.sql`
+
+Dipakai ulang: `pmb_applications` (`0021`) pemilik pendaftaran, `external_organizations` (`0053`) pemilik badan hukum sekolah, `nim_assignments` (`0021`) pemilik NIM, `study_programs` (§5) pemilik prodi, `funding_disbursements` (`0056`) pemilik pencairan komisi.
+
+```sql
+CREATE TYPE lead_status AS ENUM
+  ('NEW','CONTACTED','QUALIFIED','NURTURING','APPLIED','CONVERTED','ENROLLED','LOST','RECYCLED');
+
+CREATE TABLE lead_sources (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  channel text NOT NULL CHECK (channel IN ('ORGANIC','SOCIAL','EVENT','SCHOOL_REFERRAL','PAID_ADS','AGENT','ALUMNI','WHATSAPP_CAMPAIGN','OTHER')),
+  utm_source text, is_digital boolean NOT NULL DEFAULT false,
+  attribution_model text NOT NULL DEFAULT 'LAST_TOUCH' CHECK (attribution_model IN ('FIRST_TOUCH','LAST_TOUCH','LINEAR','POSITION_BASED')),
+  is_active boolean NOT NULL DEFAULT true, sort_order int NOT NULL DEFAULT 100,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (channel <> 'OTHER' OR name IS NOT NULL)
+);
+
+CREATE TABLE crm_campaigns (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  source_id uuid REFERENCES lead_sources(id),
+  period_from date NOT NULL, period_to date NOT NULL,
+  target_program_ids jsonb NOT NULL DEFAULT '[]'::jsonb,      -- daftar id prodi; dibaca untuk filtr, bukan untuk FK (FK per-baris menuntut terlalu banyak baras)
+  budget_plan_rupiah bigint CHECK (budget_plan_rupiah IS NULL OR budget_plan_rupiah >= 0),  -- RENCANA: biaya sesungguhnya hanya ada di M-10 (`ledger`), tidak ada kolom "terpakai" di sini
+  owner_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','ACTIVE','PAUSED','COMPLETED','CANCELLED')),
+  goal_registrations int CHECK (goal_registrations IS NULL OR goal_registrations > 0),
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, source_id) REFERENCES lead_sources(tenant_id, id) ON DELETE SET NULL,
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (period_to > period_from),
+  CHECK (status <> 'ACTIVE' OR (approved_by IS NOT NULL AND approved_by <> requested_by)),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+
+-- Lead = calon, BUKAN pendaftar. Tabel pendaftar kedua DILARANG (vonis 12).
+CREATE TABLE crm_leads (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  lead_number text NOT NULL,                           -- dari `document_number_sequences` (`0020`), BUKAN MAX+1
+  full_name text NOT NULL CHECK (full_name <> ''),
+  preferred_channel text NOT NULL DEFAULT 'WHATSAPP' CHECK (preferred_channel IN ('WHATSAPP','EMAIL','PHONE','SMS','MEET','NONE')),
+  email_encrypted bytea, email_bidx char(64),          -- kelas PII: amplop + blind index (§16.3.4); bidx TIDAK unik (satu keluarga berbagi email)
+  phone_encrypted bytea, phone_bidx char(64),
+  campaign_id uuid REFERENCES crm_campaigns(id),
+  source_id uuid REFERENCES lead_sources(id),
+  school_org_id uuid REFERENCES external_organizations(id),   -- sekolah asal: menunjuk master, tidak pernah menyalin NPSN/alamat
+  intended_program_id uuid REFERENCES study_programs(id),
+  intended_entry_year int CHECK (intended_entry_year IS NULL OR intended_entry_year BETWEEN 2000 AND 2100),
+  status lead_status NOT NULL DEFAULT 'NEW',
+  owner_membership_id uuid REFERENCES tenant_memberships(id),
+  converted_application_id uuid REFERENCES pmb_applications(id),  -- diisi HANYA oleh service PMB saat pendaftaran terbentuk; penunjuk keluar, bukan salinan
+  converted_at timestamptz,
+  lost_reason text, recycled_at timestamptz,
+  consent_marketing boolean NOT NULL DEFAULT false, consent_at timestamptz,  -- UU PDP: tanpa consent tercatat, tidak ada kampanye
+  consent_source text CHECK (consent_source IS NULL OR consent_source IN ('FORM','CALL_SCRIPT','EVENT_BADGE','IMPORT')),
+  dedup_bidx char(64),                                 -- HMAC(email|phone ternormalisasi): pencegahan dua tim mengejar satu orang
+  attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), updated_by uuid,
+  FOREIGN KEY (tenant_id, campaign_id) REFERENCES crm_campaigns(tenant_id, id) ON DELETE SET NULL,
+  UNIQUE (tenant_id, lead_number), UNIQUE (tenant_id, id),
+  CHECK (status NOT IN ('CONVERTED','ENROLLED') OR (converted_application_id IS NOT NULL AND converted_at IS NOT NULL)),
+  CHECK (status <> 'LOST' OR lost_reason IS NOT NULL),
+  CHECK (consent_marketing = false OR consent_at IS NOT NULL),
+  CHECK (email_encrypted IS NULL OR octet_length(email_encrypted) >= 31),
+  CHECK (phone_encrypted IS NULL OR octet_length(phone_encrypted) >= 31),
+  CHECK ((email_encrypted IS NOT NULL) OR (phone_encrypted IS NOT NULL))     -- lead tanpa satu pun kanal kontak = timah kosong
+);
+CREATE INDEX idx_crm_leads_queue ON crm_leads(tenant_id, status, intended_program_id, created_at);
+CREATE INDEX idx_crm_leads_dedup ON crm_leads(tenant_id, dedup_bidx) WHERE dedup_bidx IS NOT NULL;
+CREATE INDEX idx_crm_leads_email_bidx ON crm_leads(tenant_id, email_bidx) WHERE email_bidx IS NOT NULL;
+
+CREATE TABLE school_partners (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  organization_id uuid NOT NULL,                       -- `external_organizations` (`0053`) pemilik nama, alamat, NPSN
+  partnership_kind text NOT NULL DEFAULT 'MOU' CHECK (partnership_kind IN ('MOU','PKS','PPS','VERBAL','PROMOTER')),
+  agreement_number text, agreement_from date, agreement_to date,
+  coordinator_name text, coordinator_contact_encrypted bytea,
+  annual_quota int CHECK (annual_quota IS NULL OR annual_quota >= 0),
+  priority_rank smallint CHECK (priority_rank IS NULL OR priority_rank BETWEEN 1 AND 100),
+  verification_status party_verification_status NOT NULL DEFAULT 'UNVERIFIED',
+  last_visit_at timestamptz, notes text,
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, organization_id) REFERENCES external_organizations(tenant_id, id),
+  UNIQUE (tenant_id, organization_id, agreement_number),
+  CHECK (agreement_to IS NULL OR agreement_to > agreement_from),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+CREATE INDEX idx_school_partners_active ON school_partners(tenant_id, verification_status, agreement_to);
+
+-- Satu sentuhan = satu peristiwa (email, telepon, kunjungan). Angka hasil **tidak** disimpan di sini.
+CREATE TABLE campaign_touches (
+  id bigint PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  lead_id uuid NOT NULL, campaign_id uuid REFERENCES crm_campaigns(id),
+  seq int NOT NULL CHECK (seq > 0),
+  channel text NOT NULL CHECK (channel IN ('EMAIL','WHATSAPP','SMS','CALL','VISIT','EVENT','SOCIAL_DM','FORM')),
+  direction text NOT NULL CHECK (direction IN ('OUTBOUND','INBOUND')),
+  touched_at timestamptz NOT NULL DEFAULT now(),
+  outcome text CHECK (outcome IS NULL OR outcome IN ('DELIVERED','REPLIED','NO_ANSWER','BOUNCED','UNSUBSCRIBED','OPTED_IN','MEETING_SET','DECLINED')),
+  actor_membership_id uuid REFERENCES tenant_memberships(id),
+  content_digest char(64),                             -- isi pesan tidak disimpan di tabel CRM (PII); hanya bukti
+  attribution_weight_bp int NOT NULL DEFAULT 0 CHECK (attribution_weight_bp BETWEEN 0 AND 10000),
+  FOREIGN KEY (tenant_id, lead_id) REFERENCES crm_leads(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, lead_id, seq)
+);
+CREATE INDEX idx_touches_campaign ON campaign_touches(tenant_id, campaign_id, touched_at DESC);
+
+-- Komisi rujukan: aturan dihitung di sini, UANG keluar lewat `funding_disbursements` (`0056`).
+CREATE TABLE referral_commissions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  rule_code text NOT NULL,
+  partner_org_id uuid REFERENCES external_organizations(id),
+  school_partner_id uuid REFERENCES school_partners(id),
+  program_id uuid REFERENCES study_programs(id),
+  rate_bp int NOT NULL CHECK (rate_bp BETWEEN 0 AND 10000),        -- basis poin atas biaya yang benar-benar tertagih; TIDAK menyimpan nominal
+  minimum_rupiah bigint CHECK (minimum_rupiah IS NULL OR minimum_rupiah >= 0),
+  cap_rupiah bigint CHECK (cap_rupiah IS NULL OR cap_rupiah >= 0),
+  basis text NOT NULL DEFAULT 'FIRST_YEAR_TUITION' CHECK (basis IN ('FIRST_YEAR_TUITION','REGISTRATION_FEE','FIXED_PER_STUDENT')),
+  requires_paid_months smallint NOT NULL DEFAULT 0 CHECK (requires_paid_months BETWEEN 0 AND 12),  -- anti komisi atas mahasiswa yang berhenti bulan pertama
+  valid_from date NOT NULL, valid_to date,
+  status approval_status NOT NULL DEFAULT 'PENDING',
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  note text NOT NULL,
+  UNIQUE (tenant_id, rule_code, COALESCE(partner_org_id, '00000000-0000-0000-0000-000000000000'::uuid)),
+  CHECK (cap_rupiah IS NULL OR minimum_rupiah IS NULL OR cap_rupiah >= minimum_rupiah),
+  CHECK (valid_to IS NULL OR valid_to > valid_from),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (note <> '')
+);
+
+-- Read-model proyeksi: tidak punya rute tulis, dan `proposal_only` dipaksa true oleh CHECK (§3.9 AGENTS).
+CREATE TABLE funnel_scores (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  lead_id uuid NOT NULL, model_version_id uuid NOT NULL REFERENCES ml_model_versions(id),
+  scored_at timestamptz NOT NULL DEFAULT now(),
+  score_bp int NOT NULL CHECK (score_bp BETWEEN 0 AND 10000),
+  band text NOT NULL CHECK (band IN ('HOT','WARM','COLD','AT_RISK')),        -- ambang band = `academic_rules`/parameter berversi, bukan konstanta (§18.4 pola `risk_band`)
+  factors jsonb NOT NULL DEFAULT '[]'::jsonb,          -- [{code, bp, why}] = `explain`, bukan kata kunci SQL
+  input_snapshot_hash char(64) NOT NULL,
+  degraded text,                                       -- 'NO_CONSENT' | 'THIN_HISTORY' | NULL; angka degradasi tidak pernah tampil sebagai angka final
+  proposal_only boolean NOT NULL DEFAULT true CHECK (proposal_only),
+  FOREIGN KEY (tenant_id, lead_id) REFERENCES crm_leads(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, lead_id, model_version_id, scored_at)
+);
+CREATE INDEX idx_funnel_scores_lead ON funnel_scores(tenant_id, lead_id, scored_at DESC);
+REVOKE INSERT, UPDATE, DELETE ON funnel_scores FROM sica_app;   -- hanya worker/model yang menulis, via peran khusus
+```
+
+**Kenapa kolom-kolom ini ada.** `crm_leads.email_encrypted`/`phone_encrypted` berpasangan dengan blind index karena calon mahasiswa bukan pasien dan bukan tersangka — nomor mereka tetap harus dapat dicari untuk deduplikasi antar tim, tetapi tidak boleh terbaca polos di layar marketing; `dedup_bidx` atas gabungan kanal membuat dua agen tidak mengejar satu orang dengan dua lead berbeda, cacat yang paling mahal di PMB. `converted_application_id` adalah **penunjuk keluar** dan diisi service PMB, bukan kolom yang boleh dikirim klien: inilah bentuk fisik vonis 12, dan `CHECK (status NOT IN ('CONVERTED','ENROLLED') OR converted_application_id IS NOT NULL)` menolak lead yang menyatakan dirinya sudah mendaftar tanpa satu baris pendaftaran pun. `funnel_scores` tidak punya satu kolom pun yang dapat disunting aplikasi (`REVOKE INSERT, UPDATE, DELETE`) dan `proposal_only` dipaksa `true` oleh CHECK, karena skor corong adalah usulan model yang boleh salah — menjadikannya keadaan lead berarti membiarkan angka probabilistik memutuskan hak seseorang atas bangku kuliah (§3.9 AGENTS: mesin mengusulkan, manusia menyetujui).
+
+**RLS.** Semua tujuh tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2; `campaign_touches` di-partisi per tahun (§7 pola yang sama dengan `audit_logs`) dan policy dipasang pada induk. Penajaman hak tingkat field: `consent_marketing=false` membuat `email_*`/`phone_*` **tidak dapat dibuka** service mana pun untuk jalur kampanye (masking di proyeksi, bukan di UI), dan `referral_commissions.rate_bp` tidak pernah terbaca oleh peran akademik (nominal dan komisi adalah milik BAUK/Marketing, SoD §14.9 butir 5).
+
+**Status.** Kelas A: `lead_status` = NEW, CONTACTED, QUALIFIED, NURTURING, APPLIED, CONVERTED, ENROLLED, LOST, RECYCLED (§22.9). Kelas A reuse: `school_partners.verification_status` = `party_verification_status` (`0053`), `referral_commissions.status` = `approval_status` (`0054`). Kelas A′/C: `channel`, `outcome`, `attribution_model`, `basis`, `preferred_channel`, `consent_source` = `text + CHECK` (§15.3); `crm_campaigns.status` DRAFT, ACTIVE, PAUSED, COMPLETED, CANCELLED; `funnel_scores.band` HOT, WARM, COLD, AT_RISK dengan ambang di parameter, bukan di kode.
+
+#### 22.4.2 M-28 Career Center — `0059_career_center.sql`
+
+Dipakai ulang: `external_organizations` (`0053`) pemilik perusahaan, `students`/`tenant_memberships` pemilik orang (alumni adalah baris `students` dengan `status='GRADUATED'` — tidak ada tabel alumni kedua), `attachments` (`0020`) pemilik CV, `engine_runs` (`0036`) pemilik harness pencocokan, `tracer_*` (`0027`/`0026`) tetap milik M-27: M-28 menyimpan lowongan/lamaran, **bukan** respons survei (vonis 13).
+
+```sql
+CREATE TYPE career_application_status AS ENUM
+  ('DRAFT','SUBMITTED','IN_REVIEW','SHORTLISTED','INTERVIEW','OFFERED','ACCEPTED','DECLINED','WITHDRAWN','REJECTED');
+
+CREATE TABLE career_employers (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  organization_id uuid NOT NULL,                       -- pemilik nama/alamat/NPWP: `external_organizations` (peran 'EMPLOYER')
+  industry_item_id uuid REFERENCES reference_items(id),      -- kelas C `kind='industri_sister'` (rumpun sektor), tanpa CHECK daftar
+  company_size text CHECK (company_size IS NULL OR company_size IN ('MICRO','SMALL','MEDIUM','LARGE','MULTINATIONAL','GOVERNMENT','STARTUP')),
+  hiring_contact_name text, hiring_contact_email_encrypted bytea, hiring_contact_phone_encrypted bytea,
+  verification_status party_verification_status NOT NULL DEFAULT 'UNVERIFIED',
+  can_post_vacancy boolean NOT NULL DEFAULT false,     -- diganukan `VALIDATE` Admin Karir, bukan oleh pendaftaran akun
+  blacklisted boolean NOT NULL DEFAULT false, blacklist_reason text,
+  last_hire_at timestamptz, rating_avg_bp int CHECK (rating_avg_bp IS NULL OR rating_avg_bp BETWEEN 0 AND 10000),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, organization_id) REFERENCES external_organizations(tenant_id, id),
+  UNIQUE (tenant_id, organization_id), UNIQUE (tenant_id, id),
+  CHECK (blacklisted = false OR (blacklist_reason IS NOT NULL AND can_post_vacancy = false)),
+  CHECK (hiring_contact_email_encrypted IS NULL OR octet_length(hiring_contact_email_encrypted) >= 31)
+);
+
+CREATE TABLE career_vacancies (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  employer_id uuid NOT NULL, reference_number text NOT NULL,
+  title text NOT NULL CHECK (length(title) BETWEEN 3 AND 200),
+  vacancy_kind text NOT NULL CHECK (vacancy_kind IN ('FULL_TIME','PART_TIME','INTERNSHIP','GRADUATE_PROGRAM','PROJECT','FELLOWSHIP')),
+  work_mode text NOT NULL CHECK (work_mode IN ('ONSITE','ONLINE','BLENDED')),   -- kelas A′ sejajar `learning_modality` (§21.4); kosakata kerja, bukan kosakata kuliah
+  site_id uuid REFERENCES campus_sites(id),
+  program_ids jsonb NOT NULL DEFAULT '[]'::jsonb,      -- prodi yang disasar; filtr, bukan FK per baris
+  open_from date NOT NULL, open_to date NOT NULL,
+  headcount int NOT NULL DEFAULT 1 CHECK (headcount > 0),
+  min_ipk numeric(3,2) CHECK (min_ipk IS NULL OR min_ipk BETWEEN 0 AND 4),
+  salary_from_rupiah bigint CHECK (salary_from_rupiah IS NULL OR salary_from_rupiah >= 0),
+  salary_to_rupiah bigint CHECK (salary_to_rupiah IS NULL OR salary_to_rupiah >= 0),
+  is_public boolean NOT NULL DEFAULT true,
+  status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','PUBLISHED','PAUSED','CLOSED','EXPIRED')),
+  approved_by uuid, approved_at timestamptz, posted_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, employer_id) REFERENCES career_employers(tenant_id, id),
+  UNIQUE (tenant_id, reference_number), UNIQUE (tenant_id, id),
+  CHECK (open_to > open_from),
+  CHECK (salary_to_rupiah IS NULL OR salary_from_rupiah IS NULL OR salary_to_rupiah >= salary_from_rupiah),
+  CHECK (status <> 'PUBLISHED' OR (approved_by IS NOT NULL AND posted_at IS NOT NULL))
+);
+CREATE INDEX idx_vacancies_browse ON career_vacancies(tenant_id, status, open_to, work_mode);
+
+CREATE TABLE career_applications (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  vacancy_id uuid NOT NULL, student_id uuid NOT NULL REFERENCES students(id),
+  cover_letter text CHECK (cover_letter IS NULL OR length(cover_letter) <= 8000),
+  status career_application_status NOT NULL DEFAULT 'DRAFT',
+  cv_attachment_id uuid REFERENCES attachments(id),    -- berkas tetap milik `attachments` (`0020`); tanpa jalur unggah kedua
+  portfolio_digest char(64),                           -- digest portofolio pada saat melamar (bukti angka akademik tidak berubah setelah lamaran)
+  consent_share_profile boolean NOT NULL DEFAULT false, consent_at timestamptz,  -- data akademik dikirim ke perusahaan hanya atas persetujuan
+  submitted_at timestamptz, decided_at timestamptz,
+  employer_feedback text, interview_at timestamptz, offer_accepted_at timestamptz,
+  match_run_id uuid REFERENCES engine_runs(id),        -- penelusur usulan pencocokan yang membuat lamaran ini muncul
+  FOREIGN KEY (tenant_id, vacancy_id) REFERENCES career_vacancies(tenant_id, id),
+  UNIQUE (tenant_id, vacancy_id, student_id),
+  CHECK (status <> 'SUBMITTED' OR submitted_at IS NOT NULL),
+  CHECK (consent_share_profile = false OR consent_at IS NOT NULL),
+  CHECK (status <> 'ACCEPTED' OR offer_accepted_at IS NOT NULL)
+);
+CREATE INDEX idx_career_apps_student ON career_applications(tenant_id, student_id, submitted_at DESC);
+
+-- Output mesin bipartit/TOPSIS: usulan, bukan keadaan. Tidak punya jalur tulis ke `career_applications`.
+CREATE TABLE career_match_results (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES engine_runs(id) ON DELETE CASCADE,
+  vacancy_id uuid NOT NULL, student_id uuid NOT NULL REFERENCES students(id),
+  rank int NOT NULL CHECK (rank > 0),
+  score_bp int NOT NULL CHECK (score_bp BETWEEN 0 AND 10000),
+  margin_bp int NOT NULL DEFAULT 0 CHECK (margin_bp >= 0),        -- selisih ke kandidat berikutnya: tanpa ini skor 8000 tidak berarti apa pun (§3.9 AGENTS: kejujuran angka)
+  factors jsonb NOT NULL DEFAULT '[]'::jsonb,
+  degraded text,                                                    -- 'THIN_PROFILE' | 'NO_TRACER' | 'NO_PREREQ_DATA' | NULL
+  proposal_only boolean NOT NULL DEFAULT true CHECK (proposal_only),
+  seen_by_membership_id uuid REFERENCES tenant_memberships(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, vacancy_id) REFERENCES career_vacancies(tenant_id, id),
+  UNIQUE (run_id, vacancy_id, student_id), UNIQUE (run_id, vacancy_id, rank)
+);
+CREATE INDEX idx_career_match_lookup ON career_match_results(tenant_id, vacancy_id, score_bp DESC);
+```
+
+**Kenapa kolom-kolom ini ada.** `career_match_results.proposal_only` dipaksa `true` oleh CHECK dan tabelnya tidak punya satu kolom pun yang dapat menuliskan lamaran: mesin bipartit boleh **mengurutkan** kandidat, tetapi yang menyatakan "diterima perusahaan" adalah manusia di `career_applications.status` — ini aturan "mesin mengusulkan, manusia menyetujui" (§3.9) dalam bentuk skema, bukan janji. `margin_bp` dan `degraded` ada karena peringkat tanpa selisih dan tanpa keterangan data tipis adalah angka yang menipu: dua kandidat pada 6001 dan 5999 bukan "jauh lebih baik", dan hasil dari profil kosong harus tampil sebagai hasil terdekgradasi, bukan sebagai rekomendasi. `consent_share_profile` + `consent_at` melindungi nilai, IPK, dan skripsi alumni saat dikirim ke pihak luar (UU PDP), dan `portfolio_digest` membekukan bukti pada saat melamar supaya sengketa "nilainya berbeda dengan yang saya kirim" dapat diputus.
+
+**RLS.** Keempat tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. `career_applications.cv_attachment_id` dan `hiring_contact_*` tidak pernah diproyeksikan lintas employer: satu perusahaan hanya melihat lamaran yang ditujukan kepadanya (scope service L5), dan `career_employers.blacklisted` wajib dipotong sebelum layar lowongan dirender.
+
+**Status.** Kelas A: `career_application_status` = DRAFT, SUBMITTED, IN_REVIEW, SHORTLISTED, INTERVIEW, OFFERED, ACCEPTED, DECLINED, WITHDRAWN, REJECTED (§22.9). Kelas A′: `career_vacancies.status` dan `career_employers.verification_status` (`party_verification_status`, `0053`). Kelas C: industri dan sektor lewat `reference_items(kind='industri_sister')` — **tidak** ada `CHECK (industry IN (...))`; `work_mode`, `company_size`, `vacancy_kind` adalah `text + CHECK` (§15.3).
+
+#### 22.4.3 M-29 KUI dan Mobilitas — `0060_mobility_kui.sql`
+
+Penyetaraan kredit **bukan** milik modul ini: `mbkm_conversions` + `mbkm_conversion_lines` (`0033`, M-38/ALG-16) adalah satu-satunya tempat SKS diakui (vonis 1). Yang dimiliki M-29 adalah program pertukaran, keberangkatan, dan **usulan** penyetaraan beserta dokumen imigrasi yang punya tenggat.
+
+```sql
+CREATE TYPE mobility_status AS ENUM
+  ('NOMINATED','HOST_ACCEPTED','VISA_PENDING','DEPARTED','ON_SITE','COMPLETED','RETURNED','WITHDRAWN','CANCELLED');
+
+CREATE TABLE mobility_programs (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  direction text NOT NULL CHECK (direction IN ('OUTBOUND','INBOUND','BOTH')),
+  partner_org_id uuid NOT NULL,                        -- `external_organizations` (peran 'HOST_INSTITUTION'), bukan tabel institusi tujuan kedua
+  program_kind text NOT NULL DEFAULT 'SEMESTER_EXCHANGE' CHECK (program_kind IN ('SEMESTER_EXCHANGE','SUMMER','RESEARCH','INTERNSHIP','CREDIT_BEARING','NON_CREDIT','STAFF_TEACHING')),
+  language_required text,                              -- kode bahasa (kamus `reference_items(kind='bahasa')` untuk label); tidak ada CHECK daftar
+  quota_seats int NOT NULL DEFAULT 0 CHECK (quota_seats >= 0),
+  credit_load_max numeric(4,1) CHECK (credit_load_max IS NULL OR (credit_load_max >= 0 AND credit_load_max <= 30)),
+  fee_waiver_agreed boolean NOT NULL DEFAULT false,
+  funding_source text CHECK (funding_source IS NULL OR funding_source IN ('SELF','SCHOLARSHIP','PARTNER','UNIVERSITY','ENDOWMENT')),
+  is_active boolean NOT NULL DEFAULT true,
+  effective_from date NOT NULL DEFAULT current_date, effective_to date,
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, partner_org_id) REFERENCES external_organizations(tenant_id, id),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+
+CREATE TABLE mobility_exchanges (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL, student_id uuid NOT NULL REFERENCES students(id),
+  home_period_id uuid REFERENCES academic_periods(id),        -- periode asalnya; status akademik SAMA SEKALI tidak ditulis di sini (milik `students`/`student_status_history`)
+  host_period_label text,                              -- label asing ("Semester 2 / AY 2026") sebagai teks: bukan keadaan mesin kita
+  status mobility_status NOT NULL DEFAULT 'NOMINATED',
+  departs_on date, returns_on date,
+  nominated_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  host_gpa numeric(4,2) CHECK (host_gpa IS NULL OR host_gpa BETWEEN 0 AND 5),   -- skala host disimpan mentah dengan skalanya sendiri; konversi HANYA lewat M-38
+  host_gpa_scale text CHECK (host_gpa_scale IS NULL OR host_gpa_scale IN ('POINT4','POINT4_3','NUMERIC_100','LETTER','ECTS_GRADE'))
+    DEFAULT 'POINT4',
+  ects_earned numeric(5,1) CHECK (ects_earned IS NULL OR ects_earned >= 0),
+  enrollment_id uuid REFERENCES enrollments(id),       -- penahan: cuti/keluar harus sudah diputus BAAK sebelum berangkat
+  note text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, program_id) REFERENCES mobility_programs(tenant_id, id),
+  UNIQUE (tenant_id, program_id, student_id, home_period_id),
+  CHECK (returns_on IS NULL OR departs_on IS NULL OR returns_on > departs_on),
+  CHECK (status NOT IN ('DEPARTED','ON_SITE','COMPLETED','RETURNED') OR departs_on IS NOT NULL),
+  CHECK (status <> 'NOMINATED' OR approved_by IS NULL),
+  CHECK (approved_by IS NULL OR approved_by <> nominated_by)
+);
+CREATE INDEX idx_mobility_status ON mobility_exchanges(tenant_id, status, departs_on);
+
+-- Dokumen imigrasi dengan tenggat. Nomor paspor/visa adalah PII: amplop + blind index, BUKAN text (§16.3.4).
+CREATE TABLE visa_records (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  exchange_id uuid NOT NULL,
+  doc_kind text NOT NULL CHECK (doc_kind IN ('PASSPORT','ITAS','ITAP','VISA_ONSHORE','VISA_OFFSHORE','PERMIT','STAY_ADDRESS_REG')),
+  country text NOT NULL DEFAULT 'ID',
+  number_encrypted bytea NOT NULL, number_bidx char(64) NOT NULL,
+  issued_on date, expires_on date NOT NULL,
+  alert_before_days smallint NOT NULL DEFAULT 60 CHECK (alert_before_days BETWEEN 7 AND 365),
+  alert_state text NOT NULL DEFAULT 'NONE' CHECK (alert_state IN ('NONE','DUE','SENT','ESCALATED','RESOLVED','NOT_APPLICABLE')),
+  next_alert_on date GENERATED ALWAYS AS (expires_on - alert_before_days) STORED,   -- murni aritmetika date: boleh jadi generated column
+  alert_sent_at timestamptz, escalated_at timestamptz, escalation_employee_id uuid REFERENCES employees(id),
+  application_ref text, status_note text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, exchange_id) REFERENCES mobility_exchanges(tenant_id, id) ON DELETE CASCADE,
+  CHECK (octet_length(number_encrypted) >= 31),
+  CHECK (number_bidx ~ '^[0-9a-f]{64}$'),
+  CHECK (issued_on IS NULL OR expires_on > issued_on),
+  CHECK (alert_state NOT IN ('SENT','ESCALATED') OR alert_sent_at IS NOT NULL),
+  CHECK (alert_state <> 'ESCALATED' OR escalated_at IS NOT NULL)
+);
+CREATE INDEX idx_visa_alerts ON visa_records(tenant_id, next_alert_on) WHERE alert_state IN ('NONE','DUE','SENT');
+
+-- USULAN penyetaraan. Yang BOLEH menulis SKS diakui hanyalah `mbkm_conversions` (`0033`, M-38/ALG-16).
+CREATE TABLE credit_transfer_proposals (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  exchange_id uuid NOT NULL,
+  host_course_code text NOT NULL, host_course_title text NOT NULL,
+  host_sks numeric(4,1) NOT NULL CHECK (host_sks > 0),
+  ects numeric(5,1) CHECK (ects IS NULL OR ects >= 0),
+  proposed_home_course_id uuid REFERENCES courses(id),
+  proposed_sks numeric(4,1) CHECK (proposed_sks IS NULL OR (proposed_sks >= 0 AND proposed_sks <= 6)),
+  proposed_grade_letter text,                          -- huruf host apa adanya; bukan huruf SICA (skala host berlainan)
+  syllabus_attachment_id uuid REFERENCES attachments(id),
+  similarity_bp int CHECK (similarity_bp IS NULL OR similarity_bp BETWEEN 0 AND 10000),  -- keluaran ALG-16, disimpan sebagai bukti usulan
+  decision_state text NOT NULL DEFAULT 'DRAFT' CHECK (decision_state IN ('DRAFT','SUBMITTED','NEEDS_EVIDENCE','FORWARDED','RECOGNIZED','PARTIAL','DECLINED')),
+  conversion_id uuid REFERENCES mbkm_conversions(id),  -- SATU-SATUNYA jalur pengakuan: kolom ini diisi oleh service M-38 setelah VALIDATE
+  decided_at timestamptz, note text,
+  requested_by uuid NOT NULL, forwarded_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, exchange_id) REFERENCES mobility_exchanges(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, exchange_id, host_course_code, COALESCE(proposed_home_course_id, '00000000-0000-0000-0000-000000000000'::uuid)),
+  CHECK (decision_state <> 'RECOGNIZED' OR conversion_id IS NOT NULL),        -- pengakuan tanpa baris M-38 mustahil
+  CHECK (decision_state <> 'PARTIAL' OR conversion_id IS NOT NULL),
+  CHECK (forwarded_by IS NULL OR forwarded_by <> requested_by),
+  CHECK (proposed_grade_letter IS NULL OR length(proposed_grade_letter) <= 4)
+);
+```
+
+**Kenapa kolom-kolom ini ada.** `credit_transfer_proposals.conversion_id` adalah satu-satunya jalan masuk nilai yang diakui, dan `CHECK (decision_state <> 'RECOGNIZED' OR conversion_id IS NOT NULL)` membuat usulan tidak dapat menyatakan dirinya sendiri sudah setara — vonis 1 (`PRD §5.13`) hanya punya arti kalau skemanya menolak bentuk "keputusan di dua tempat". `visa_records.number_encrypted` + `number_bidx` ada karena nomor paspor dan ITAS adalah identitas imigrasi (PII spesifik) yang tidak boleh muncul di daftar antrean KUI, sementara `alert_before_days` dengan `next_alert_on` *generated* membuat penagihan tenggat menjadi fungsi deterministik dari data — pekerja terjadwal yang mengirim peringatan pada 08:00 waktu tenant, bukan kolom status yang boleh disunting manusia. `host_gpa` + `host_gpa_scale` disimpan **berpasangan** karena IPK 3,7 dari skala Jerman dan skala 4 adalah dua angka yang sama sekali berbeda; menyimpan satu tanpa yang lain adalah cara paling cepat menghasilkan transkrip yang salah.
+
+**RLS.** Keempat tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. `visa_records` mendapat penajaman peran: nomor hanya terbaca oleh pengelola KUI dengan scope `TENANT` dan **tidak pernah** oleh dosen wali atau peran mahasiswa dalam proyeksi mana pun — yang dilihat mahasiswa hanyalah `alert_state` dan tanggal kedaluwarsa (§14.9 hak tingkat field).
+
+**Status.** Kelas A: `mobility_status` = NOMINATED, HOST_ACCEPTED, VISA_PENDING, DEPARTED, ON_SITE, COMPLETED, RETURNED, WITHDRAWN, CANCELLED (§22.9). Kelas A′: `credit_transfer_proposals.decision_state` dan `visa_records.alert_state` = `text + CHECK` (§15.3) karena keduanya kosakata tahapan dokumen, bukan keadaan baris bisnis; `mobility_programs.funding_source` memakai kosakata sumber dana yang sama dengan `scholarship_programs` (§22.9) supaya tidak lahir daftar kedua. Kelas C: bahasa dan jenis program lewat `reference_items`; **tidak** ada `CHECK (language IN (...))`.
+
+### 22.5 Publikasi, HKI, dan riset — M-21, M-22, M-44
+
+Tiga modul ini adalah **pemilik fakta** tridharma riset; M-07 (BKD) membacanya dan M-08 (SISTER) mengangkutnya (vonis 7). Karena itu tidak satu pun tabel di bawah punya kolom jam BKD, poin tridharma, atau nominal tagihan: `apc_invoices`, `library_fines`, dan `clinic_billing_events` adalah contoh telanjang dari pola itu dan muncul lagi di §22.7.
+
+#### 22.5.1 M-21 Jurnal dan OJS — `0061_publication_journals.sql`
+
+Dipakai ulang: `attachments` (`0020`, polymorphic `owner_entity`/`owner_id` + `category`) untuk naskah dan bukti indexing, `invoices` (§5) untuk APC, `external_organizations` (`0053`) untuk penerbit luar, `reference_items` untuk jenis indeks dan peringkat akreditasi, `staff`/`lecturers` untuk penulis internal.
+
+```sql
+CREATE TYPE article_status AS ENUM
+  ('DRAFT','SUBMITTED','UNDER_REVIEW','REVISION_REQUESTED','ACCEPTED','REJECTED','EDITING','PUBLISHED','WITHDRAWN','RETRACTED');
+CREATE TYPE verification_status AS ENUM
+  ('SUBMITTED','UNDER_VERIFICATION','VERIFIED','REJECTED','REVOKED');
+
+CREATE TABLE journals (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, title text NOT NULL, title_short text,
+  pissn text, eissn text,                              -- ISSN 4 blok; penjaga BENTUK, bukan daftar nilai
+  publisher_kind text NOT NULL DEFAULT 'INTERNAL' CHECK (publisher_kind IN ('INTERNAL','PARTNER','SOCIETY','COMMERCIAL')),
+  publisher_org_id uuid REFERENCES external_organizations(id),
+  owning_unit_org_id uuid REFERENCES organizations(id),
+  homepage text, scopus_source_id text,               -- id dari basis luar: **bukan** `feeder_id` (I-14); hanya rujukan penelusuran
+  accreditation_item_id uuid REFERENCES reference_items(id),   -- kelas B/C: peringkat SINTA/akreditasi = kamus, bukan CHECK di kode
+  accredited_from date, accreditation_expires_on date, accreditation_evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+  review_policy text NOT NULL DEFAULT 'DOUBLE_BLIND' CHECK (review_policy IN ('OPEN','SINGLE_BLIND','DOUBLE_BLIND','POST_REVIEW','EDITORIAL')),
+  is_peer_reviewed boolean NOT NULL DEFAULT true,
+  publication_fee_policy text NOT NULL DEFAULT 'NONE' CHECK (publication_fee_policy IN ('NONE','APC','SUBMISSION_FEE','BOTH','WAIVER_ON_REQUEST')),
+  frequency text CHECK (frequency IS NULL OR frequency IN ('MONTHLY','BIANNUAL','QUARTERLY','ANNUAL','IRREGULAR')),
+  editor_contact_email_encrypted bytea,
+  is_active boolean NOT NULL DEFAULT true,
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK ((pissn IS NULL OR pissn ~ '^[0-9]{4}-[0-9]{3}[0-9X]$') AND (eissn IS NULL OR eissn ~ '^[0-9]{4}-[0-9]{3}[0-9X]$')),
+  CHECK (accreditation_expires_on IS NULL OR accredited_from IS NULL OR accreditation_expires_on > accredited_from),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (is_peer_reviewed OR review_policy = 'EDITORIAL')   -- jurnal tanpa telaah sejawat harus declares kebijakan editorial
+);
+
+CREATE TABLE journal_issues (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  journal_id uuid NOT NULL,
+  volume text NOT NULL, issue_number text NOT NULL,
+  year int NOT NULL CHECK (year BETWEEN 1990 AND 2100), month smallint CHECK (month IS NULL OR month BETWEEN 1 AND 12),
+  published_on date, planned_on date,
+  doi_prefix text CHECK (doi_prefix IS NULL OR doi_prefix ~ '^10\.[0-9]{4,9}$'),
+  cover_attachment_id uuid REFERENCES attachments(id),
+  editorial_note text,
+  status text NOT NULL DEFAULT 'PLANNED' CHECK (status IN ('PLANNED','ASSEMBLING','PUBLISHED','ARCHIVED')),
+  created_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, journal_id) REFERENCES journals(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, journal_id, year, volume, issue_number),
+  CHECK (status <> 'PUBLISHED' OR (published_on IS NOT NULL AND approved_by IS NOT NULL)),
+  CHECK (published_on IS NULL OR planned_on IS NULL OR published_on >= planned_on - 90)
+);
+
+CREATE TABLE articles (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  journal_id uuid NOT NULL REFERENCES journals(id), issue_id uuid REFERENCES journal_issues(id),
+  submission_number text NOT NULL,
+  title text NOT NULL CHECK (length(title) BETWEEN 10 AND 500), title_en text,
+  abstract text NOT NULL CHECK (length(abstract) BETWEEN 100 AND 4000),
+  keywords jsonb NOT NULL DEFAULT '[]'::jsonb,
+  language text NOT NULL DEFAULT 'id',                -- kode bahasa; label di `reference_items(kind='bahasa')` (§20)
+  subject_item_id uuid REFERENCES reference_items(id),        -- rumpun ilmu: kamus `kind='bidang_ilmu'` yang sudah ada (§14.2), bukan daftar baru
+  doi text CHECK (doi IS NULL OR doi ~ '^10\.[0-9]{4,9}/.*$'),
+  status article_status NOT NULL DEFAULT 'DRAFT',
+  submitted_at timestamptz, accepted_at timestamptz, published_on date, retracted_on date,
+  retract_reason text, retract_announcement_attachment_id uuid REFERENCES attachments(id),
+  page_from int CHECK (page_from IS NULL OR page_from > 0), page_to int CHECK (page_to IS NULL OR page_to > 0),
+  content_digest char(64) NOT NULL,                   -- SHA-256 naskah final: bukti yang dikirim ke indeks & SISTER
+  version int NOT NULL DEFAULT 1 CHECK (version > 0),
+  apc_required boolean NOT NULL DEFAULT false,        -- flag saja; tagihannya di `apc_invoices` → `invoices`
+  is_retracted boolean GENERATED ALWAYS AS (status = 'RETRACTED') STORED,
+  FOREIGN KEY (tenant_id, journal_id) REFERENCES journals(tenant_id, id),
+  UNIQUE (tenant_id, submission_number), UNIQUE (tenant_id, doi), UNIQUE (tenant_id, id),
+  CHECK (page_to IS NULL OR page_from IS NULL OR page_to >= page_from),
+  CHECK (status <> 'RETRACTED' OR (retracted_on IS NOT NULL AND retract_reason IS NOT NULL)),
+  CHECK (status <> 'PUBLISHED' OR (published_on IS NOT NULL AND issue_id IS NOT NULL)),
+  CHECK (content_digest ~ '^[0-9a-f]{64}$')
+);
+CREATE INDEX idx_articles_status ON articles(tenant_id, status, journal_id, submitted_at);
+CREATE INDEX idx_articles_browse ON articles(tenant_id, is_retracted, published_on DESC);
+
+-- Penulis = baris, karena satu artikel punya banyak penulis dan urutan itu berarti (indeks & BKD).
+-- `article_authors` (tabel kedua untuk fakta sama) DITOLAK; `full_name` hanya untuk penulis EKSTERNAL.
+CREATE TABLE article_author_lines (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  article_id uuid NOT NULL, seq smallint NOT NULL CHECK (seq BETWEEN 1 AND 40),
+  author_kind text NOT NULL CHECK (author_kind IN ('LECTURER','STAFF','STUDENT','EXTERNAL','STUDENT_EXTERNAL')),
+  lecturer_id uuid REFERENCES lecturers(id), student_id uuid REFERENCES students(id), employee_id uuid REFERENCES employees(id),
+  display_name text,                                  -- HANYA bila author_kind ber-EXTERNAL; tidak pernah untuk internal (hindari salinan nama)
+  affiliation text, country text, orcid text CHECK (orcid IS NULL OR orcid ~ '^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$'),
+  is_corresponding boolean NOT NULL DEFAULT false,
+  contribution text,                                  -- CRediT-style; teks, bukan poin BKD (poin dihitung M-07)
+  consent_published boolean NOT NULL DEFAULT true,
+  FOREIGN KEY (tenant_id, article_id) REFERENCES articles(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (article_id, seq),
+  CHECK ((author_kind IN ('EXTERNAL','STUDENT_EXTERNAL')) = (display_name IS NOT NULL)),
+  CHECK (author_kind <> 'LECTURER' OR lecturer_id IS NOT NULL),
+  CHECK (author_kind <> 'STUDENT' OR student_id IS NOT NULL),
+  CHECK (student_id IS NULL OR lecturer_id IS NULL)
+);
+CREATE UNIQUE INDEX uq_article_corresponding ON article_author_lines(tenant_id, article_id)
+  WHERE is_corresponding;                             -- paling banyak satu penulis korespondensi per artikel
+
+CREATE TABLE article_indexing_events (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  article_id uuid NOT NULL,
+  index_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='indeks_publikasi'` (Scopus, SINTA, Google Scholar, DOAJ): TIDAK ada CHECK daftar
+  event_kind text NOT NULL CHECK (event_kind IN ('SUBMITTED','LISTED','QUARTILE_UPDATED','REMOVED','REJECTED','PENDING')),
+  observed_on date NOT NULL,
+  quartile text CHECK (quartile IS NULL OR quartile IN ('Q1','Q2','Q3','Q4')),
+  cited_by_snapshot int CHECK (cited_by_snapshot IS NULL OR cited_by_snapshot >= 0),   -- snapshot, bukan keadaan: angka luar boleh salah, tidak pernah jadi sumber kebenaran
+  evidence_attachment_id uuid REFERENCES attachments(id),
+  verified_by uuid, verified_at timestamptz, verify_note text,
+  FOREIGN KEY (tenant_id, article_id) REFERENCES articles(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, article_id, index_item_id, event_kind, observed_on),
+  CHECK (event_kind IN ('SUBMITTED','PENDING','REJECTED') OR verified_at IS NOT NULL),  -- klaim terindeks butuh bukti, bukan checkbox
+  CHECK (verified_by IS NULL OR verified_at IS NOT NULL)
+);
+CREATE INDEX idx_indexing_article ON article_indexing_events(tenant_id, article_id, observed_on DESC);
+
+-- JEMBATAN APC: tidak ada satu pun kolom nominal dan tidak ada satu pun kolom status di sini.
+-- Jumlah & status dibaca dari `invoices` (M-10) lewat JOIN — vonis 5, diuji §22.11 butir 1.
+CREATE TABLE apc_invoices (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  article_id uuid NOT NULL, invoice_id uuid NOT NULL,
+  payer_kind text NOT NULL CHECK (payer_kind IN ('CORRESPONDING_AUTHOR','INSTITUTION','SPONSOR','JOURNAL_FUND','PARTNER')),
+  payer_student_id uuid REFERENCES students(id), payer_org_id uuid REFERENCES external_organizations(id),
+  purpose text NOT NULL,                              -- 'APC', 'SUBMISSION_FEE', 'RETRACTION_FEE': label `invoices.kind='OTHER'` + `fee_tariff_groups`
+  linked_by uuid NOT NULL, linked_at timestamptz NOT NULL DEFAULT now(),
+  note text,
+  FOREIGN KEY (tenant_id, article_id) REFERENCES articles(tenant_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, invoice_id) REFERENCES invoices(tenant_id, id),   -- `invoices` sudah punya `UNIQUE (tenant_id, id)` (§5)
+  UNIQUE (tenant_id, invoice_id),                     -- satu invoice tidak boleh mengklaim dua artikel
+  UNIQUE (tenant_id, article_id, purpose),
+  CHECK (payer_kind <> 'INSTITUTION' OR payer_org_id IS NOT NULL),
+  CHECK (payer_kind <> 'CORRESPONDING_AUTHOR' OR payer_student_id IS NOT NULL)
+);
+```
+
+**Kenapa kolom-kolom ini ada.** `apc_invoices` adalah tabel jembatan murni dan karena itu **tidak boleh** punya kolom jumlah maupun status — sekali nominal APC disimpan di sini, ada dua angka untuk satu tagihan dan peran jurnal dapat menyatakan lunas tanpa persetujuan BAUK (`invoices` hanya boleh ditulis service M-10, §14.9 `SERVER_ONLY`); keunikan `(tenant_id, invoice_id)` menutup jalan lain yang lebih licik, yaitu satu invoice dipakai untuk klaim dua artikel. `article_indexing_events` menyimpan status terindeks sebagai **peristiwa bertanggal** dengan `evidence_attachment_id` dan `verified_at`, bukan sebagai boolean `is_scopus` pada artikel, karena klaim Q1 hari ini bisa menjadi "keluar dari daftar" tahun depan dan laporan akreditasi harus dapat menyatakan *pada tanggal berapa* kami mengklaimnya. `article_author_lines` membedakan penulis internal (penunjuk `lecturers`/`students`) dan eksternal (`display_name`) lewat CHECK yang sama: nama penulis internal **tidak pernah** disalin, sehingga perubahan ejaan di biodata tidak menciptakan dua identitas di repositori publikasi.
+
+**RLS.** Keenam tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. `apc_invoices` tidak pernah diproyeksikan dengan jumlah ke editor jurnal: yang mereka lihat adalah boolean "sudah lunas / belum", sedangkan nominalnya untuk BAUK (SoD BAAK↔BAUK, §14.9 butir 5).
+
+**Status.** Kelas A: `article_status` = DRAFT, SUBMITTED, UNDER_REVIEW, REVISION_REQUESTED, ACCEPTED, REJECTED, EDITING, PUBLISHED, WITHDRAWN, RETRACTED; `verification_status` = SUBMITTED, UNDER_VERIFICATION, VERIFIED, REJECTED, REVOKED (dipakai juga oleh M-22, M-24, M-44 — satu kosakata, §22.9). Kelas A′: `journals.*`, `journal_issues.status` = PLANNED, ASSEMBLING, PUBLISHED, ARCHIVED, `article_indexing_events.event_kind` = `text + CHECK` (§15.3). Kelas C: peringkat akreditasi, indeks, rumpun ilmu, bahasa — semuanya `reference_items`; tidak ada `CHECK (index IN (...))`.
+
+#### 22.5.2 M-22 Inkubator dan HKI — `0062_ip_incubator.sql`
+
+Dipakai ulang: `attachments` (`0020`, `category='berkas_hki'`) untuk seluruh dokumen permohonan — **tidak** ada tabel dokumen kedua karena `attachments` sudah polymorphic (`owner_entity`, `owner_id`); `invoices` (§5) untuk biaya permohonan/annuity; `external_organizations` (`0053`) untuk konsultan kekayaan intelektual dan mitra lisensi; `employees` (`0054`) untuk inventor internal.
+
+```sql
+CREATE TYPE ip_application_status AS ENUM
+  ('DRAFT','FILED','FEE_DUE','FORMALITY_EXAM','PUBLISHED_OPPOSITION','SUBSTANTIVE_EXAM','DECISION_ISSUED',
+   'GRANTED','REJECTED','WITHDRAWN','LAPSED','RENEWED','LICENSED');
+
+-- Register keadaan mesin HKI: KODE-nya enum kelas A (tertutup, dicabangi service),
+-- LABEL-nya kamus `reference_items(kind='status_hki')` (kelas A′, §20.1). Tabel ini TIDAK
+-- menyimpan label — menyimpan label di dua tempat adalah pola `RD-03`.
+CREATE TABLE ip_statuses (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code ip_application_status NOT NULL,
+  seq smallint NOT NULL CHECK (seq BETWEEN 1 AND 40),
+  is_terminal boolean NOT NULL DEFAULT false,
+  requires_document boolean NOT NULL DEFAULT false,
+  requires_fee boolean NOT NULL DEFAULT false,         -- bayarnya tagihan M-10; tabel ini hanya menyatakan "harus ada"
+  requires_validation boolean NOT NULL DEFAULT true,   -- perpindahan keadaan ini butuh aksi VALIDATE + MFA (AGENTS §3.8)
+  sla_days smallint CHECK (sla_days IS NULL OR sla_days BETWEEN 1 AND 3650),
+  allowed_next ip_application_status[] NOT NULL DEFAULT '{}',
+  is_active boolean NOT NULL DEFAULT true,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, seq),
+  CHECK (is_terminal = false OR allowed_next = '{}'),   -- keadaan terminal tidak boleh punya jalan lanjut
+  CHECK (sla_days IS NULL OR requires_validation = false OR sla_days > 0),
+  CHECK (code <> 'GRANTED' OR (requires_validation AND requires_document))
+);
+
+CREATE TABLE ip_applications (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_number text NOT NULL,                   -- nomor **kita**; nomor resmi DJKI masuk sebagai `center_reference` (I-14: id pusat tidak dikarang)
+  ip_type_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='jenis_hki'` (Paten, Merek, Hak Cipta, PVT, Desain Industri)
+  title text NOT NULL CHECK (length(title) BETWEEN 3 AND 300),
+  abstract text, country text NOT NULL DEFAULT 'ID',
+  status ip_application_status NOT NULL DEFAULT 'DRAFT',
+  priority_date date, filed_on date, published_on date, decision_on date, granted_on date,
+  granted_number text, expires_on date, annuity_next_due date,
+  center_reference text, center_status_note text,
+  applicant_kind text NOT NULL CHECK (applicant_kind IN ('UNIVERSITY','JOINT','INDIVIDUAL_STUDENT','INDIVIDUAL_LECTURER','PARTNER')),
+  student_id uuid REFERENCES students(id), lecturer_id uuid REFERENCES lecturers(id), employee_id uuid REFERENCES employees(id),
+  org_unit_id uuid REFERENCES organizations(id),
+  is_public boolean NOT NULL DEFAULT true,            -- invensi belum dipublikasikan sebelum filed: rawan hilang hak
+  fee_invoice_id uuid REFERENCES invoices(id),        -- tagihan permohonan = milik M-10; tanpa kolom nominal di sini
+  annuity_invoice_id uuid REFERENCES invoices(id),
+  examiner_opinion text, rejection_reason text,
+  requested_by uuid NOT NULL, validated_by uuid, validated_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, application_number), UNIQUE (tenant_id, id),
+  CHECK (status <> 'DRAFT' OR filed_on IS NULL),
+  CHECK (status NOT IN ('FILED','FORMALITY_EXAM','PUBLISHED_OPPOSITION','SUBSTANTIVE_EXAM','DECISION_ISSUED','GRANTED','RENEWED','LICENSED')
+         OR filed_on IS NOT NULL),
+  CHECK (status <> 'GRANTED' OR (granted_on IS NOT NULL AND granted_number IS NOT NULL AND validated_by IS NOT NULL)),
+  CHECK (status <> 'REJECTED' OR rejection_reason IS NOT NULL),
+  CHECK (validated_by IS NULL OR validated_by <> requested_by),      -- SoD: pemohon bukan penyetuju
+  CHECK (priority_date IS NULL OR filed_on IS NULL OR priority_date <= filed_on),
+  CHECK (annuity_next_due IS NULL OR expires_on IS NULL OR annuity_next_due <= expires_on)
+);
+CREATE INDEX idx_ip_app_status ON ip_applications(tenant_id, status, ip_type_item_id);
+CREATE INDEX idx_ip_app_annuity ON ip_applications(tenant_id, annuity_next_due) WHERE annuity_next_due IS NOT NULL;
+
+CREATE TABLE ip_owner_lines (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_id uuid NOT NULL, seq smallint NOT NULL CHECK (seq BETWEEN 1 AND 20),
+  owner_kind text NOT NULL CHECK (owner_kind IN ('UNIVERSITY','STUDENT','LECTURER','STAFF','PARTNER','JOINT')),
+  student_id uuid REFERENCES students(id), employee_id uuid REFERENCES employees(id),
+  org_id uuid REFERENCES external_organizations(id), unit_org_id uuid REFERENCES organizations(id),
+  share_bp int NOT NULL DEFAULT 0 CHECK (share_bp BETWEEN 0 AND 10000),   -- porsi royalti; basis poin, jumlah 10000 ditegakkan service + §22.11 butir 6
+  is_inventor boolean NOT NULL DEFAULT true,          -- inventor (nama di sertifikat) ≠ pemilik porsi (hak ekonomi)
+  agreed_at timestamptz, agreement_attachment_id uuid REFERENCES attachments(id),
+  FOREIGN KEY (tenant_id, application_id) REFERENCES ip_applications(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, application_id, seq),
+  CHECK ((owner_kind = 'STUDENT') = (student_id IS NOT NULL)),
+  CHECK (agreement_attachment_id IS NOT NULL OR owner_kind = 'UNIVERSITY')  -- porsi di luar otomatis kampus; deviasi butuh surat
+);
+
+CREATE TABLE incubated_startups (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name text NOT NULL, org_id uuid REFERENCES external_organizations(id),  -- begitu berbadan hukum, identitasnya pindah ke master (§22.2.1)
+  cohort text NOT NULL, venture_kind text NOT NULL DEFAULT 'TECH' CHECK (venture_kind IN ('TECH','SOCIAL','CREATIVE','AGRI','SERVICES','MANUFACTURE')),
+  status text NOT NULL DEFAULT 'INCUBATING' CHECK (status IN ('APPLIED','INCUBATING','GRADUATED','ALUMNI','DORMANT','CLOSED')),
+  mentor_employee_id uuid REFERENCES employees(id), supervisor_lecturer_id uuid REFERENCES lecturers(id),
+  incubating_from date NOT NULL, incubating_to date,
+  problem_statement text, business_model_canvas jsonb NOT NULL DEFAULT '{}'::jsonb,
+  student_founder_ids jsonb NOT NULL DEFAULT '[]'::jsonb,   -- id mahasiswa; bukan tabel alumni kedua (vonis 13)
+  ip_application_id uuid REFERENCES ip_applications(id),    -- HKI yang lahir dari rintisan ini
+  agreed_equity_bp int CHECK (agreed_equity_bp IS NULL OR agreed_equity_bp BETWEEN 0 AND 10000),
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, name, cohort), UNIQUE (tenant_id, id),
+  CHECK (incubating_to IS NULL OR incubating_to > incubating_from),
+  CHECK (status <> 'GRADUATED' OR incubating_to IS NOT NULL)
+);
+
+CREATE TABLE startup_milestones (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  startup_id uuid NOT NULL,
+  milestone_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='milestone_rintisan'`
+  seq smallint NOT NULL CHECK (seq > 0),
+  planned_on date, achieved_on date,
+  state verification_status NOT NULL DEFAULT 'SUBMITTED',
+  evidence_attachment_id uuid REFERENCES attachments(id),
+  verified_by uuid, verified_at timestamptz, verify_note text,
+  FOREIGN KEY (tenant_id, startup_id) REFERENCES incubated_startups(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, startup_id, milestone_item_id, seq),
+  CHECK (state <> 'VERIFIED' OR (verified_at IS NOT NULL AND evidence_attachment_id IS NOT NULL)),  -- capaian tanpa bukti tertolak
+  CHECK (verified_by IS NULL OR verified_at IS NOT NULL)
+);
+```
+
+**Kenapa kolom-kolom ini ada.** `ip_statuses` memisahkan **kode** (enum kelas A, tertutup, dipakai mesin transisi) dari **label** (kamus, hak Admin) karena keadaan HKI menentukan gerbang — hanya `GRANTED` yang boleh royalti dihitung, hanya `FILED` yang boleh invensi dipublikasikan — sementara kampus bebas menamai stages lokalnya; kolom `allowed_next ip_application_status[]` membuat transisi yang diizinkan menjadi data yang dapat dibaca pemicu tanpa cabang kode. `ip_owner_lines.share_bp` diikat dengan `agreement_attachment_id` karena porsi royalti adalah perjanjian, bukan preferensi petugas: tanpa surat tersimpan, satu perubahan baris dapat merampas hak inventor mahasiswa, dan jumlah basis poin ditegakkan service + CI §22.11 butir 6 karena CHECK tidak dapat menjumlah baris lain. `incubated_startups` **tidak** punya kolom omzet, valuation, atau penyertaan dalam rupiah — hanya `agreed_equity_bp` sebagai kesepakatan — karena uang rintisan masuk ke M-10 dan M-47, bukan dicatat di layar inkubator.
+
+**RLS.** Kelima tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. `ip_applications` dengan `is_public=false` (sebelum filed) hanya terbaca inventor + pengelola HKI: satu kebocoran judul invensi sebelum permohonan adalah kehilangan hak, bukan sekadar pelanggaran akses, sehingga proyeksi untuk peran lain mengembalikan "tidak ada", bukan baris kosong.
+
+**Status.** Kelas A: `ip_application_status` = DRAFT, FILED, FEE_DUE, FORMALITY_EXAM, PUBLISHED_OPPOSITION, SUBSTANTIVE_EXAM, DECISION_ISSUED, GRANTED, REJECTED, WITHDRAWN, LAPSED, RENEWED, LICENSED (§22.9). Kelas A reuse: `startup_milestones.state` = `verification_status` (`0061`). Kelas A′: `incubated_startups.status` = APPLIED, INCUBATING, GRADUATED, ALUMNI, DORMANT, CLOSED. Kelas C: jenis HKI dan milestone lewat `reference_items` — tanpa `CHECK (type IN (...))` karena DJKI menambah jenis (mis. indikasi geografis) tanpa menunggu rilis kita.
+
+#### 22.5.3 M-44 SIM-LPPM dan Hibah — `0063_lppm_research.sql`
+
+Dipakai ulang: `funding_disbursements` (`0056`) untuk **setiap** pencairan (nama `disbursement_requests` kalah, §22.10), `employees`/`lecturers` (`0054`/§11.3) untuk peneliti, `articles` (`0061`) dan `ip_applications` (`0062`) untuk luaran, `reference_items` untuk skema dan kriteria, `master_system_parameters` (§21.2) untuk bobot telaah. BKD **tidak** dihitung di sini (vonis 7): `research_outputs` hanya memancarkan fakta yang dibaca M-07.
+
+```sql
+CREATE TYPE grant_proposal_status AS ENUM
+  ('DRAFT','SUBMITTED','ADMIN_SCREENING','UNDER_REVIEW','REVISION','RECOMMENDED','FUNDED','NOT_FUNDED','WITHDRAWN','TERMINATED');
+
+CREATE TABLE grant_schemes (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  funder_kind text NOT NULL CHECK (funder_kind IN ('INTERNAL','GOVERNMENT','PARTNER','ENDOWMENT','INTERNATIONAL')),
+  external_scheme_code text,                          -- kode skema nasional; kelas B: tenant memetakan label, tidak mengubah kode
+  source_allocation_grant_id uuid REFERENCES allocation_grants(id),  -- payung dana abadi (M-47); NULL = dana bukan abadi
+  ceiling_per_proposal_rupiah bigint CHECK (ceiling_per_proposal_rupiah IS NULL OR ceiling_per_proposal_rupiah >= 0),
+  requires_match_funding boolean NOT NULL DEFAULT false,
+  match_min_share_bp int NOT NULL DEFAULT 0 CHECK (match_min_share_bp BETWEEN 0 AND 10000),
+  review_rounds smallint NOT NULL DEFAULT 1 CHECK (review_rounds BETWEEN 1 AND 3),
+  blind_mode text NOT NULL DEFAULT 'DOUBLE_BLIND' CHECK (blind_mode IN ('OPEN','SINGLE_BLIND','DOUBLE_BLIND')),
+  scoring_template jsonb NOT NULL DEFAULT '[]'::jsonb,   -- [{code, weight_bp}] — bobot = kewenangan (§3.9 AGENTS): wajib berversi + empat-mata
+  parameter_version int NOT NULL DEFAULT 1 CHECK (parameter_version > 0),
+  open_from date NOT NULL, open_to date NOT NULL,
+  is_active boolean NOT NULL DEFAULT true,
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (open_to > open_from),
+  CHECK (approved_by IS NOT NULL AND approved_by <> requested_by),            -- skema hibah tidak pernah aktif tanpa pengesahan orang kedua
+  CHECK (blind_mode <> 'DOUBLE_BLIND' OR review_rounds >= 1),
+  CHECK (jsonb_typeof(scoring_template) = 'array')                             -- template bobot = larik objek, bukan objek bebas
+);
+
+CREATE TABLE research_proposals (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  scheme_id uuid NOT NULL, proposal_number text NOT NULL,
+  title text NOT NULL CHECK (length(title) BETWEEN 10 AND 500), summary text,
+  lead_employee_id uuid NOT NULL REFERENCES employees(id),
+  team_employee_ids jsonb NOT NULL DEFAULT '[]'::jsonb,   -- anggota pengusul; jam tridharma TIDAK di sini (milik M-07)
+  program_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  field_item_id uuid REFERENCES reference_items(id),      -- `kind='bidang_ilmu'` (§14.2), bukan daftar baru
+  budget_requested_rupiah bigint NOT NULL CHECK (budget_requested_rupiah >= 0),   -- RENCANA; komitmen akhir ada di `research_grant_contracts`
+  budget_approved_rupiah bigint CHECK (budget_approved_rupiah IS NULL OR budget_approved_rupiah >= 0),
+  period_from date NOT NULL, period_to date NOT NULL,
+  status grant_proposal_status NOT NULL DEFAULT 'DRAFT',
+  submitted_at timestamptz, scored_avg_bp int CHECK (scored_avg_bp IS NULL OR scored_avg_bp BETWEEN 0 AND 10000),
+  similarity_max_bp int CHECK (similarity_max_bp IS NULL OR similarity_max_bp BETWEEN 0 AND 10000),  -- kemiripan judul/abstrak (ALG-7 pola §17), usulan bukan putusan
+  plagiarism_ref text, ethical_clearance text,          -- clearance etik (komite etik) = rujukan, bukan salinan dokumen
+  conflict_declared jsonb NOT NULL DEFAULT '[]'::jsonb, -- deklarasi konflik kepentingan reviewer/ketua
+  ceiling_exception_note text,                          -- wajib terisi bila usulan melewati `ceiling_per_proposal_rupiah` skema
+  decision_note text,
+  requested_by uuid NOT NULL, decided_by uuid, decided_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, scheme_id) REFERENCES grant_schemes(tenant_id, id),
+  UNIQUE (tenant_id, proposal_number), UNIQUE (tenant_id, id),
+  CHECK (period_to > period_from),
+  CHECK (status <> 'SUBMITTED' OR submitted_at IS NOT NULL),
+  CHECK (status NOT IN ('RECOMMENDED','FUNDED','NOT_FUNDED') OR (decided_by IS NOT NULL AND decided_by <> requested_by)),
+  CHECK (budget_approved_rupiah IS NULL OR budget_approved_rupiah <= budget_requested_rupiah),
+  CHECK (ceiling_exception_note IS NULL OR length(ceiling_exception_note) >= 20)   -- pengecualian boleh ada, tapi tidak pernah senyap
+);
+
+-- Penugasan reviewer dengan buta; identitas reviewer TIDAK terbaca pengusul pada DOUBLE_BLIND.
+CREATE TABLE reviewer_assignments (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  proposal_id uuid NOT NULL, round_no smallint NOT NULL CHECK (round_no BETWEEN 1 AND 3),
+  reviewer_employee_id uuid REFERENCES employees(id), reviewer_membership_id uuid REFERENCES tenant_memberships(id),
+  reviewer_external_name text,                         -- hanya reviewer luar; tidak ada salinan nama internal
+  blind_mode text NOT NULL CHECK (blind_mode IN ('OPEN','SINGLE_BLIND','DOUBLE_BLIND')),
+  state approval_status NOT NULL DEFAULT 'PENDING',
+  conflict_of_interest boolean NOT NULL DEFAULT false, recusal_reason text,
+  assigned_by uuid NOT NULL, accepted_at timestamptz, due_on date, completed_at timestamptz,
+  FOREIGN KEY (tenant_id, proposal_id) REFERENCES research_proposals(tenant_id, id) ON DELETE CASCADE,
+  CHECK ((reviewer_employee_id IS NOT NULL) OR (reviewer_membership_id IS NOT NULL) OR (reviewer_external_name IS NOT NULL)),
+  CHECK (conflict_of_interest = false OR recusal_reason IS NOT NULL),
+  CHECK (state <> 'APPROVED' OR accepted_at IS NOT NULL)
+);
+-- Satu reviewer satu ronde per proposal. `reviewer_employee_id` boleh NULL (reviewer luar), jadi keunikan
+-- dipasang sebagai indeks ekspresi ber-COALESCE, bukan `UNIQUE (...)` di dalam CREATE TABLE (§19.4):
+CREATE UNIQUE INDEX uq_reviewer_round ON reviewer_assignments
+  (tenant_id, proposal_id, round_no, COALESCE(reviewer_employee_id, '00000000-0000-0000-0000-000000000000'::uuid));
+
+-- Skor buta per kriteria. Bobot TIDAK disalin ke sini: dibaca dari `grant_schemes.scoring_template`
+-- ber-`parameter_version`, sehingga satu perubahan bobot tidak membuat ratusan baris skor basi.
+CREATE TABLE review_scores (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  assignment_id uuid NOT NULL, criterion_item_id uuid NOT NULL REFERENCES reference_items(id),
+  score_bp int NOT NULL CHECK (score_bp BETWEEN 0 AND 10000),
+  comment_encrypted bytea,                             -- komentar reviewer = rahasia sampai keputusan: amplop §16.3.4
+  comment_public text,                                 -- yang boleh dilihat pengusul (sengaja kolom terpisah, bukan flag)
+  recommendation text CHECK (recommendation IS NULL OR recommendation IN ('FUND','REVISE','REJECT')),
+  scored_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, assignment_id) REFERENCES reviewer_assignments(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, assignment_id, criterion_item_id),
+  CHECK (comment_encrypted IS NULL OR octet_length(comment_encrypted) >= 31),
+  CHECK (scored_at IS NOT NULL)
+);
+CREATE INDEX idx_review_scores_assignment ON review_scores(tenant_id, assignment_id);
+
+-- KOMITMEN hibah. Nominal kontrak adalah angka yang disepakati; posting kas hanya lewat M-10.
+CREATE TABLE research_grant_contracts (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  proposal_id uuid NOT NULL, contract_number text NOT NULL,
+  funder_ref text, signed_with text NOT NULL,
+  contract_value_rupiah bigint NOT NULL CHECK (contract_value_rupiah >= 0),
+  phases jsonb NOT NULL DEFAULT '[]'::jsonb,          -- [{name, termNo, shareBp, dueOn}] — termin dicairkan lewat `funding_disbursements`
+  period_from date NOT NULL, period_to date NOT NULL,
+  status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','SIGNED','ACTIVE','EXTENDED','CLOSED','CANCELLED')),
+  extension_count smallint NOT NULL DEFAULT 0 CHECK (extension_count BETWEEN 0 AND 4),
+  amendment_count smallint NOT NULL DEFAULT 0 CHECK (amendment_count BETWEEN 0 AND 10),
+  committed_entry_group_id uuid,                       -- jembatan M-10: komitmen dicatat sebagai jurnal, bukan sebagai tagihan mahasiswa
+  approved_by uuid NOT NULL, second_approver uuid, approved_at timestamptz,
+  signed_by_wa uuid, signed_at timestamptz, closed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, proposal_id) REFERENCES research_proposals(tenant_id, id),
+  UNIQUE (tenant_id, proposal_id), UNIQUE (tenant_id, contract_number), UNIQUE (tenant_id, id),
+  CHECK (period_to > period_from),
+  CHECK (second_approver IS NULL OR (second_approver <> approved_by)),          -- empat-mata untuk kontrak
+  CHECK (status NOT IN ('ACTIVE','CLOSED') OR (signed_by_wa IS NOT NULL AND signed_at IS NOT NULL)),
+  CHECK (committed_entry_group_id IS NULL OR status IN ('ACTIVE','CLOSED','EXTENDED'))
+);
+
+-- LUARAN: penunjuk ke fakta milik M-21/M-22/M-25, bukan salinan. `bkd_feed_eligible` = izin membaca, bukan angka BKD.
+CREATE TABLE research_outputs (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  contract_id uuid NOT NULL,
+  output_kind_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='luaran_hibah'`: artikel nasional/internasional, HKI, buku, purwarupa, laporan
+  is_mandatory boolean NOT NULL DEFAULT true,          -- target wajib kontrak; tanpa ini "luaran kurang" tidak terukur
+  target_entity text NOT NULL DEFAULT 'ARTICLE' CHECK (target_entity IN ('ARTICLE','IP_APPLICATION','STARTUP','BOOK','PROTOTYPE','REPORT','POLICY_BRIEF','CURRICULUM_MODULE')),
+  target_ref_id uuid,                                  -- articles.id / ip_applications.id / incubated_startups.id (dibuktikan service L5)
+  due_on date, achieved_on date,
+  state verification_status NOT NULL DEFAULT 'SUBMITTED',
+  evidence_attachment_id uuid REFERENCES attachments(id),
+  verified_by uuid, verified_at timestamptz, verify_note text,
+  bkd_feed_eligible boolean NOT NULL DEFAULT true,     -- dibaca M-07; TIDAK ada kolom jam/poin di sini (vonis 7)
+  FOREIGN KEY (tenant_id, contract_id) REFERENCES research_grant_contracts(tenant_id, id),
+  UNIQUE (tenant_id, contract_id, target_entity, target_ref_id),
+  CHECK (state <> 'VERIFIED' OR (verified_at IS NOT NULL AND achieved_on IS NOT NULL AND evidence_attachment_id IS NOT NULL)),  -- capaian tanpa bukti tertolak
+  CHECK (verified_by IS NULL OR verified_at IS NOT NULL),
+  CHECK (target_ref_id IS NOT NULL OR state = 'SUBMITTED')   -- luaran tanpa objek hanya boleh berstatus belum diverifikasi
+);
+```
+
+**Kenapa kolom-kolom ini ada.** `grant_schemes.scoring_template` + `parameter_version` dengan CHECK `approved_by <> requested_by` ada karena bobot telaah adalah kewenangan: mengubah bobot berarti mengubah siapa yang mendapat dana, dan tanpa versi tidak ada yang dapat menyatakan bahwa proposals yang didanai tahun lalu dinilai dengan aturan yang benar (AGENTS §3.9 "parameter = kewenangan"). `review_scores` memisahkan `comment_encrypted` dari `comment_public` — bukan satu kolom dengan flag — karena pada `DOUBLE_BLIND` komentar reviewer adalah rahasia sampai keputusan, dan sebuah flag yang lupa dibaca service akan membocorkan identitas lewat kolom yang sama. `research_outputs` **tidak** punya kolom jam, poin, atau rupiah tridharma: ia hanya menyatakan bahwa suatu objek (artikel/HKI/rintisan) sah sebagai luaran kontrak, dan M-07 yang menghitung beban — itulah vonis 7 dalam bentuk kolom, dan §22.11 butir 4 menjaganya tetap begitu.
+
+**RLS.** Keenam tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. Untuk `blind_mode='DOUBLE_BLIND'`, `reviewer_assignments` filtered dengan policy tambahan `USING (reviewer_employee_id IS NULL OR reviewer_employee_id = app.employee_id())` di samping `tenant_isolation` — penolakan identitas tidak boleh bergantung pada proyeksi saja, karena satu bug pada satu layar membuka semua telaah satu tenant.
+
+**Status.** Kelas A: `grant_proposal_status` = DRAFT, SUBMITTED, ADMIN_SCREENING, UNDER_REVIEW, REVISION, RECOMMENDED, FUNDED, NOT_FUNDED, WITHDRAWN, TERMINATED (§22.9); reuse `approval_status` (`0054`) untuk `reviewer_assignments.state` dan `verification_status` (`0061`) untuk `research_outputs.state`. Kelas A′: `research_grant_contracts.status` = DRAFT, SIGNED, ACTIVE, EXTENDED, CLOSED, CANCELLED; `funder_kind`, `blind_mode`, `recommendation`, `target_entity` = `text + CHECK` (§15.3). Kelas C: jenis luaran, bidang ilmu, kriteria telaah — `reference_items`, tanpa CHECK daftar.
+
+**Pencairan.** Tidak ada tabel `disbursement_requests` di §22.5.3: M-44 memakai `funding_disbursements` (`0056`, §22.3.1) dengan `program_kind='GRANT'` dan `program_ref_id = research_grant_contracts.id`. Alasannya tercatat di §22.10, dan pemicunya adalah vonis 5 — satu pencairan, satu jejak jurnal, satu tempat ditolak.
+
+### 22.6 Kemahasiswaan, acara, dan kerja lapangan — M-24, M-43, M-25
+
+Ketiga modul ini menghasilkan **bukti aktivitas**, dan semuanya tergoda menyimpan "status" yang sebenarnya milik modul lain: poin yang mengubah kelulusan, kehadiran yang menumpang presensi kelas, dan konversi SKS. Vonis 1, 3, dan 9 (`PRD §5.13`) membatasi ketiganya, dan sub-bagian ini menuliskan pembatasannya sebagai CHECK, bukan sebagai paragraf.
+
+#### 22.6.1 M-24 Kemahasiswaan dan SKKM — `0064_student_affairs.sql`
+
+Dipakai ulang dan **tidak** dibuat kembar: `student_activities` (`0026`, §14.7 baris G kemahasiswaan) tetap pemilik header kegiatan; `activity_kinds` dan `achievement_levels` **kalah** sebagai tabel dan pindah ke kamus (`reference_items`, §20) — pemindahan itu tercatat di §22.10, bukan dilakukan diam-diam di sini.
+
+```sql
+-- Keanggotaan tim: satu sertifikat untuk banyak anggota terverifikasi (BENCH-113),
+-- bukan dua puluh sertifikat untuk satu prestasi.
+CREATE TABLE activity_participations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_activity_id uuid NOT NULL,                  -- header milik `student_activities` (`0026`); FK tunggal, keunikan tenant dibuktikan service
+  student_id uuid NOT NULL REFERENCES students(id),
+  role_kind text NOT NULL DEFAULT 'PESERTA' CHECK (role_kind IN ('PESERTA','PENGURUS','PANITIA','JURI','DELEGASI','KAPTEN','PENDAMPING')),
+  is_leader boolean NOT NULL DEFAULT false,
+  joined_on date, left_on date,
+  points_awarded numeric(6,2) CHECK (points_awarded IS NULL OR points_awarded >= 0),   -- kelas A′: angkanya dari `reference_items.extra->points`, bukan konstanta
+  points_source text NOT NULL DEFAULT 'KAMUS' CHECK (points_source IN ('KAMUS','MANUAL_ADJUSTMENT','COMMITTEE_DECISION')),
+  show_in_skpi boolean NOT NULL DEFAULT false,
+  validated_by uuid, validated_at timestamptz, validation_note text,
+  evidence_attachment_id uuid REFERENCES attachments(id),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, student_activity_id, student_id),
+  CHECK (show_in_skpi = false OR (validated_at IS NOT NULL AND validated_by IS NOT NULL)),  -- poin naik ke SKPI hanya setelah validasi (BENCH-112)
+  CHECK (points_source = 'KAMUS' OR validation_note IS NOT NULL),   -- penyimpangan dari kamus wajib beralasan
+  CHECK (left_on IS NULL OR joined_on IS NULL OR left_on >= joined_on)
+);
+CREATE INDEX idx_activity_members_student ON activity_participations(tenant_id, student_id, validated_at DESC);
+
+CREATE TABLE achievement_records (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  title text NOT NULL CHECK (length(title) BETWEEN 3 AND 300),
+  level_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='tingkat_prestasi'` (lokal/nasional/internasional) — TANPA CHECK daftar
+  source_kind text NOT NULL CHECK (source_kind IN ('COMPETITION','CERTIFICATION','COMPETITION_TEAM','PROJECT','SPONSORSHIP_AWARD','OLYMPIAD')),
+  organizer text NOT NULL, occurred_on date NOT NULL,
+  student_id uuid REFERENCES students(id),             -- prestasi perorangan
+  student_activity_id uuid,                             -- prestasi tim yang ber-kanon di header kegiatan
+  team_size int CHECK (team_size IS NULL OR team_size BETWEEN 1 AND 200),
+  certificate_attachment_id uuid NOT NULL REFERENCES attachments(id),
+  certificate_digest char(64) NOT NULL,                 -- SHA-256 sertifikat: kunci anti klaim ganda
+  certificate_number text,
+  claimed_points numeric(6,2) CHECK (claimed_points IS NULL OR claimed_points >= 0),
+  state verification_status NOT NULL DEFAULT 'SUBMITTED',
+  submitted_by uuid NOT NULL, submitted_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((student_id IS NOT NULL) <> (student_activity_id IS NOT NULL)),   -- perorangan ATAU tim, bukan keduanya
+  CHECK (team_size IS NULL OR student_activity_id IS NOT NULL),
+  CHECK (certificate_digest ~ '^[0-9a-f]{64}$'),
+  CHECK (certificate_number IS NULL OR certificate_number <> '')
+);
+-- Satu nomor sertifikat tidak boleh masuk dua kali di satu kampus: inilah penjaga "20 anggota klaim 20 sertifikat".
+CREATE UNIQUE INDEX uq_achievement_cert ON achievement_records(tenant_id, certificate_digest);
+CREATE INDEX idx_achievement_student ON achievement_records(tenant_id, student_id, state, occurred_on DESC);
+
+-- Rantai verifikasi insert-only: verifikator berbeda dari pelapor, dan tiap keputusan meninggalkan jejak.
+CREATE TABLE achievement_verifications (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  achievement_id uuid NOT NULL, seq smallint NOT NULL CHECK (seq BETWEEN 1 AND 10),
+  verifier_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  decision text NOT NULL CHECK (decision IN ('VERIFIED','NEEDS_EVIDENCE','REJECTED','REVOKED')),
+  checked_certificate_digest char(64), score_bp int CHECK (score_bp IS NULL OR score_bp BETWEEN 0 AND 10000),
+  note text NOT NULL CHECK (length(note) >= 10), decided_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, achievement_id) REFERENCES achievement_records(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, achievement_id, seq),
+  CHECK (checked_certificate_digest IS NULL OR checked_certificate_digest ~ '^[0-9a-f]{64}$')
+);
+REVOKE UPDATE, DELETE ON achievement_verifications FROM sica_app;   -- jejak verifikasi tidak dapat disunting
+
+CREATE TABLE student_sanctions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  dimension clearance_dimension NOT NULL DEFAULT 'STUDENT_AFFAIRS' CHECK (dimension = 'STUDENT_AFFAIRS'),
+  sanction_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='jenis_sanksi'`
+  severity text NOT NULL CHECK (severity IN ('WARN','BLOCK')),      -- SATU kosakata dengan `blockades.severity` (§15.3), bukan daftar kedua
+  reason text NOT NULL CHECK (length(reason) >= 20),
+  based_on_rule text NOT NULL,                          -- pasal kode etik + nomor keputusan; sanksi tanpa dasar tidak dapat diterbitkan
+  starts_on date NOT NULL, ends_on date,
+  is_announced boolean NOT NULL DEFAULT false,          -- pemberitahuan ke mahasiswa: wajib, bukan pilihan
+  acknowledged_at timestamptz, acknowledged_by uuid,
+  status text NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('DRAFT','ACTIVE','APPEAL_PENDING','UPHELD','ANNULLED','EXPIRED')),
+  appeal_state text CHECK (appeal_state IS NULL OR appeal_state IN ('NONE','FILED','GRANTED','DENIED')),
+  appeal_ref text,
+  issued_by uuid NOT NULL, validated_by uuid, validated_at timestamptz, annulled_by uuid, annul_reason text,
+  clearance_signal_emitted boolean NOT NULL DEFAULT false,   -- SINYAL ke M-30 (`clearances`); kolom ini tidak pernah berisi "boleh lulus"
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (ends_on IS NULL OR ends_on >= starts_on),
+  CHECK (validated_by IS NOT NULL AND validated_by <> issued_by),      -- sanksi = keputusan dua orang (SoD)
+  CHECK (status <> 'ANNULLED' OR annul_reason IS NOT NULL),
+  CHECK (appeal_state IS NULL OR appeal_state = 'NONE' OR appeal_ref IS NOT NULL),
+  CHECK (severity <> 'BLOCK' OR is_announced)
+);
+CREATE INDEX idx_sanction_active ON student_sanctions(tenant_id, student_id, status, ends_on);
+```
+
+**Kenapa kolom-kolom ini ada.** `achievement_records.certificate_digest` dijadikan **indeks unik** karena penipuan paling mahal di kemahasiswaan adalah satu sertifikat dilampirkan dua puluh mahasiswa: dengan digest sebagai kunci, anggota lain harus masuk lewat `activity_participations` pada satu header tim (BENCH-113), dan sistem menolak secara fisik — bukan dengan imbauan panitia. `student_sanctions.dimension` dipaksa `= 'STUDENT_AFFAIRS'` dengan enum `clearance_dimension` yang sudah ada (§15.2) supaya sanksi kemahasiswaan tidak dapat menyamar sebagai cekal keuangan atau akademik, dan kolomnya berhenti di `clearance_signal_emitted`: yang boleh keluar hanyalah sinyal "ada dimensi yang belum bersih", sedangkan keputusan "boleh lulus" tetap milik `clearances`/`graduation_records` M-30 (vonis 3). `achievement_verifications` insert-only + `CHECK (validated_by <> issued_by)` ada karena poin SKKM adalah mata uang yang menentukan beasiswa dan wisuda — satu baris yang dapat diedit membuat seluruh riwayat perolehan poin tidak dapat dipertahankan di audit.
+
+**RLS.** Keempat tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. `student_sanctions` adalah satu-satunya tabel §22.6 yang isinya tidak boleh dibaca peran dosen wali lintas prodi: scope dibaca dari `advisement_assignments` (L4), dan mahasiswa lain tidak pernah melihat sanksi temannya walau keduanya berada di satu kegiatan.
+
+**Status.** Kelas A reuse: `clearance_dimension` (`0009`, §15.2) untuk dimensi, `verification_status` (`0061`) untuk `achievement_records.state`. Kelas A′: `student_sanctions.status` = DRAFT, ACTIVE, APPEAL_PENDING, UPHELD, ANNULLED, EXPIRED; `severity` = WARN, BLOCK (satu kosakata dengan `blockades.severity`, §15.3). Kelas C: `level_item_id`, `sanction_item_id`, dan poin per tingkat hidup di `reference_items` — **tidak** ada `CHECK (level IN (...))`.
+
+#### 22.6.2 M-43 Humas dan Event — `0065_event_signage.sql`
+
+Vonis 9 berlaku di sini lewat penolakan eksplisit: `gate_checkins` **bukan** presensi kelas dan tidak pernah menulis ke `attendances`/`attendance_evidence` (`0041`/`0049`). M-18 adalah pemilik satu vonis kehadiran per (sesi, mahasiswa); acara punya vonis kehadirannya sendiri, di tabelnya sendiri.
+
+```sql
+CREATE TYPE event_status AS ENUM
+  ('DRAFT','APPROVED','PUBLISHED','REGISTRATION_OPEN','REGISTRATION_CLOSED','RUNNING','COMPLETED','CANCELLED','POSTPONED');
+
+CREATE TABLE events (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, title text NOT NULL CHECK (length(title) BETWEEN 3 AND 300), description text,
+  kind_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='jenis_acara'` (seminar, wisuda, open house, bakti sosial)
+  organizer_org_id uuid REFERENCES organizations(id),
+  site_id uuid REFERENCES campus_sites(id), room_id uuid REFERENCES rooms(id),
+  starts_at timestamptz NOT NULL, ends_at timestamptz NOT NULL,
+  registration_opens_at timestamptz, registration_closes_at timestamptz,
+  capacity int CHECK (capacity IS NULL OR capacity > 0),
+  registered_count int NOT NULL DEFAULT 0 CHECK (registered_count >= 0),   -- agregat yang ditegakkan service saat registrasi INSERT; TIDAK boleh ditulis klien
+  requires_payment boolean NOT NULL DEFAULT false,
+  tariff_group_id uuid REFERENCES fee_tariff_groups(id),   -- bila berbayar: tagihan diterbitkan M-10 lewat `invoices`; TIDAK ada kolom harga di sini (vonis 5)
+  is_public boolean NOT NULL DEFAULT true,
+  status event_status NOT NULL DEFAULT 'DRAFT',
+  checkin_mode text NOT NULL DEFAULT 'QR_ONCE' CHECK (checkin_mode IN ('QR_ONCE','QR_MULTI','LIST','MANUAL','NFC')),
+  credential_ttl_minutes smallint NOT NULL DEFAULT 5 CHECK (credential_ttl_minutes BETWEEN 1 AND 60),  -- default dapat dibaca `master_system_parameters` (event.credential_ttl_minutes)
+  media_consent_required boolean NOT NULL DEFAULT true,  -- UU PDP: dokumentasi wajah peserta butuh persetujuan tercatat
+  approved_by uuid, approved_at timestamptz, cancelled_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (ends_at > starts_at),
+  CHECK (registration_closes_at IS NULL OR registration_opens_at IS NULL OR registration_closes_at >= registration_opens_at),
+  CHECK (registration_closes_at IS NULL OR registration_closes_at <= starts_at),
+  CHECK (status <> 'PUBLISHED' OR approved_by IS NOT NULL),
+  CHECK (status <> 'CANCELLED' OR cancelled_reason IS NOT NULL),
+  CHECK (registered_count <= COALESCE(capacity, registered_count))
+);
+CREATE INDEX idx_events_calendar ON events(tenant_id, status, starts_at);
+
+CREATE TABLE event_registrations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  event_id uuid NOT NULL, reg_number text NOT NULL,
+  attendee_kind text NOT NULL CHECK (attendee_kind IN ('STUDENT','STAFF','LECTURER','ALUMNI','EXTERNAL')),
+  student_id uuid REFERENCES students(id), membership_id uuid REFERENCES tenant_memberships(id),
+  external_name text, external_email_encrypted bytea, external_email_bidx char(64), external_phone_encrypted bytea,
+  external_org_id uuid REFERENCES external_organizations(id),
+  state text NOT NULL DEFAULT 'REGISTERED' CHECK (state IN ('REGISTERED','WAITLIST','CONFIRMED','ATTENDED','NO_SHOW','CANCELLED')),
+  credential_token_hash char(64),                       -- HMAC token QR sekali-pakai; token utuh tidak pernah disimpan (pola §18.6)
+  credential_issued_at timestamptz, credential_expires_at timestamptz,
+  invoice_id uuid REFERENCES invoices(id),              -- penunjuk tagihan M-10: tidak ada nominal, tidak ada status bayar di sini
+  consent_media boolean NOT NULL DEFAULT false, consent_at timestamptz,
+  registered_at timestamptz NOT NULL DEFAULT now(), cancelled_at timestamptz, waitlist_position int CHECK (waitlist_position IS NULL OR waitlist_position > 0),
+  FOREIGN KEY (tenant_id, event_id) REFERENCES events(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, reg_number),
+  CHECK ((attendee_kind = 'EXTERNAL') = (external_name IS NOT NULL)),
+  CHECK ((attendee_kind = 'STUDENT') = (student_id IS NOT NULL)),
+  CHECK (attendee_kind = 'EXTERNAL' OR membership_id IS NOT NULL),
+  CHECK (consent_media = false OR consent_at IS NOT NULL),
+  CHECK (state <> 'WAITLIST' OR waitlist_position IS NOT NULL),
+  CHECK (external_email_encrypted IS NULL OR octet_length(external_email_encrypted) >= 31)
+);
+CREATE UNIQUE INDEX uq_event_reg_internal ON event_registrations(tenant_id, event_id, membership_id) WHERE membership_id IS NOT NULL;
+CREATE INDEX idx_event_reg_state ON event_registrations(tenant_id, event_id, state, waitlist_position);
+
+-- Vonis kehadiran acara: satu baris per pemindaian, TIDAK ada jalur tulis ke `attendances`.
+CREATE TABLE gate_checkins (
+  id bigint PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  event_id uuid NOT NULL, registration_id uuid,
+  entry_no smallint NOT NULL DEFAULT 1 CHECK (entry_no BETWEEN 1 AND 20),
+  gate_label text NOT NULL, screen_id uuid, checked_at timestamptz NOT NULL DEFAULT now(),
+  result text NOT NULL CHECK (result IN ('ACCEPTED','ALREADY_USED','EXPIRED_TOKEN','UNKNOWN_TOKEN','NOT_REGISTERED','MANUAL_OVERRIDE','REJECTED_CONSENT')),
+  device_id text, operator_membership_id uuid REFERENCES tenant_memberships(id),
+  override_reason text, token_digest char(64),
+  FOREIGN KEY (tenant_id, event_id) REFERENCES events(tenant_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, registration_id) REFERENCES event_registrations(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, registration_id, entry_no),
+  CHECK (result <> 'MANUAL_OVERRIDE' OR (override_reason IS NOT NULL AND operator_membership_id IS NOT NULL)),
+  CHECK (result <> 'ALREADY_USED' OR registration_id IS NULL OR operator_membership_id IS NOT NULL)
+);
+CREATE INDEX idx_gate_checkins_event ON gate_checkins(tenant_id, event_id, checked_at DESC);
+REVOKE UPDATE, DELETE ON gate_checkins FROM sica_app;
+
+CREATE TABLE signage_screens (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  site_id uuid REFERENCES campus_sites(id), room_id uuid REFERENCES rooms(id),
+  device_public_key text,                              -- kunci publik perangkat untuk menandatangani permintaan tayang; rahasia tetap di perangkat (§3.9 nol-egress)
+  credential_ref text,                                 -- penunjuk vault; TIDAK ada token perangkat di kolom mana pun (§21.2)
+  resolution text CHECK (resolution IS NULL OR resolution IN ('1080p','4k','portrait_1080','portrait_4k','e_ink')),
+  is_online boolean NOT NULL DEFAULT false, last_heartbeat_at timestamptz,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code)
+);
+
+CREATE TABLE signage_schedules (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  screen_id uuid NOT NULL REFERENCES signage_screens(id) ON DELETE CASCADE,
+  event_id uuid REFERENCES events(id),
+  title text NOT NULL, content_attachment_id uuid REFERENCES attachments(id),
+  playlist jsonb NOT NULL DEFAULT '[]'::jsonb,          -- [{seq, assetId, durationS}] — daftar tayang, bukan kosakata mesin
+  priority smallint NOT NULL DEFAULT 50 CHECK (priority BETWEEN 0 AND 100),
+  starts_at timestamptz NOT NULL, ends_at timestamptz NOT NULL,
+  recurrence text CHECK (recurrence IS NULL OR recurrence IN ('NONE','DAILY','WEEKLY')),
+  status text NOT NULL DEFAULT 'SCHEDULED' CHECK (status IN ('DRAFT','SCHEDULED','PLAYING','DONE','CANCELLED')),
+  approved_by uuid, approved_at timestamptz,
+  created_by uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (ends_at > starts_at),
+  CHECK (status <> 'PLAYING' OR approved_by IS NOT NULL),
+  CHECK (jsonb_typeof(playlist) = 'array'),
+  EXCLUDE USING gist (tenant_id WITH =, screen_id WITH =, tstzrange(starts_at, ends_at) WITH &&)
+    WHERE (status IN ('SCHEDULED','PLAYING'))
+);
+CREATE INDEX idx_signage_lookup ON signage_schedules(tenant_id, screen_id, starts_at);
+```
+
+**Kenapa kolom-kolom ini ada.** `event_registrations.credential_token_hash` menyimpan HMAC dan bukan token utuh karena QR pintu adalah kredensial yang difoto orang: dengan token di tangan, siapa pun dapat masuk dua kali — dan `gate_checkins UNIQUE (registration_id, entry_no)` + hasil `ALREADY_USED` menutup jalur itu di level database (§18.6 memakai argumen yang sama untuk presensi kelas). Tabel `gate_checkins` berdiri sendiri, bukan baris tambahan di `attendances`, karena vonis 9 memberi M-18 hak tunggal atas kehadiran **akademik**; bila presensi acara dititipkan ke sana, satu check-in konser akan mengubah persentase kehadiran kelas dan meruntuhkan gerbang BR-A15. `signage_schedules` memakai `EXCLUDE USING gist` per (layar, rentang waktu) karena dua konten pada satu layar di jam yang sama bukan konflik yang dapat dipilih pengguna — ia harus mustahil tersimpan, persis alasan `EXCLUDE` dipakai di §18.2.
+
+**RLS.** Kelima tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2; `gate_checkins` diberi policy **SELECT + INSERT** saja (jejak). `external_email_encrypted`/`external_phone_encrypted` pada peserta luar tidak pernah muncul di proyeksi daftar hadir yang dicetak panitia: yang dibutuhkan panitia adalah nama dan status, bukan kanal kontak (`FIELD_RULES`, §14.9).
+
+**Status.** Kelas A: `event_status` = DRAFT, APPROVED, PUBLISHED, REGISTRATION_OPEN, REGISTRATION_CLOSED, RUNNING, COMPLETED, CANCELLED, POSTPONED (§22.9). Kelas A′: `event_registrations.state` = REGISTERED, WAITLIST, CONFIRMED, ATTENDED, NO_SHOW, CANCELLED; `gate_checkins.result`, `signage_schedules.status`, `checkin_mode` = `text + CHECK` (§15.3). Kelas C: jenis acara lewat `reference_items(kind='jenis_acara')`, tanpa `CHECK` daftar.
+
+#### 22.6.3 M-25 KKN, PKL, dan Magang — `0066_fieldwork_placement.sql`
+
+Penahan terberat ada di sini: `conversion_proposals` **tidak** memutuskan SKS. Vonis 1 memberi hak itu hanya kepada `mbkm_conversions` + `mbkm_conversion_lines` (`0033`, ALG-16/M-38), dan kolom `conversion_id` di bawah hanya boleh diisi oleh service itu.
+
+```sql
+CREATE TYPE fieldwork_status AS ENUM
+  ('PROPOSED','APPROVED','PLACED','ACTIVE','ON_HOLD','COMPLETED','EVALUATED','CLOSED','TERMINATED');
+
+CREATE TABLE placement_sites (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  organization_id uuid NOT NULL,                       -- `external_organizations` (`0053`) pemilik nama/alamat/NPWP: tidak disalin
+  site_label text NOT NULL,                            -- nama lokal lokasi ("Kantor Perwakilan Banyuwangi"); bukan identitas badan hukum
+  site_kind text NOT NULL DEFAULT 'OFFICE' CHECK (site_kind IN ('OFFICE','SCHOOL','CLINIC','VILLAGE','FACTORY','FARM','LAB','NGO','GOVERNMENT_UNIT','MARITIME')),
+  address text, village text, district text, city text, province_code text, postal_code text,
+  latitude numeric(9,6), longitude numeric(9,6),
+  geofence_radius_m int CHECK (geofence_radius_m IS NULL OR geofence_radius_m BETWEEN 10 AND 2000),  -- default dari `attendance.geofence_default_radius_m` (§21.3(3)); per lokasi boleh menyimpang beralasan
+  capacity_students int NOT NULL DEFAULT 0 CHECK (capacity_students >= 0),
+  industry_mentor_name text, industry_mentor_email_encrypted bytea, industry_mentor_phone_encrypted bytea,
+  dpl_lecturer_id uuid REFERENCES lecturers(id),       -- Dosen Pembimbing Lapangan (milik M-20/`0027` untuk pola bimbingan; tidak membuat tabel dosen baru)
+  moat_agreement_number text, agreement_from date, agreement_to date,
+  risk_class text NOT NULL DEFAULT 'LOW' CHECK (risk_class IN ('LOW','MEDIUM','HIGH')),   -- HIGH butuh persetujuan orang kedua sebelum penempatan
+  is_active boolean NOT NULL DEFAULT true,
+  approved_by uuid, approved_at timestamptz, note text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, organization_id) REFERENCES external_organizations(tenant_id, id),
+  UNIQUE (tenant_id, organization_id, site_label), UNIQUE (tenant_id, id),
+  CHECK ((latitude IS NULL) = (longitude IS NULL)),
+  CHECK (risk_class <> 'HIGH' OR approved_by IS NOT NULL),
+  CHECK (agreement_to IS NULL OR agreement_from IS NULL OR agreement_to > agreement_from)
+);
+CREATE INDEX idx_sites_lookup ON placement_sites(tenant_id, is_active, site_kind, province_code);
+
+CREATE TABLE fieldwork_groups (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  group_number text NOT NULL,
+  activity_kind_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='jenis_kerja_lapangan'` (KKN reguler, KKN tematik, PKL, magang bersertifikat)
+  site_id uuid NOT NULL, period_id uuid REFERENCES academic_periods(id),
+  program_id uuid REFERENCES study_programs(id),
+  theme text, title text CHECK (title IS NULL OR length(title) BETWEEN 5 AND 300),
+  dpl_lecturer_id uuid REFERENCES lecturers(id), external_supervisor_name text,
+  planned_start date NOT NULL, planned_end date NOT NULL, actual_start date, actual_end date,
+  status fieldwork_status NOT NULL DEFAULT 'PROPOSED',
+  sks_planned numeric(4,1) NOT NULL DEFAULT 0 CHECK (sks_planned BETWEEN 0 AND 24),   -- RENCANA kurikulum; SKS **diakui** hanya lewat `mbkm_conversions` (vonis 1)
+  approved_by uuid, approved_at timestamptz, terminated_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, site_id) REFERENCES placement_sites(tenant_id, id),
+  UNIQUE (tenant_id, group_number, period_id), UNIQUE (tenant_id, id),
+  CHECK (planned_end > planned_start),
+  CHECK (actual_end IS NULL OR actual_start IS NULL OR actual_end >= actual_start),
+  CHECK (status NOT IN ('PLACED','ACTIVE','COMPLETED','EVALUATED','CLOSED') OR approved_by IS NOT NULL),
+  CHECK (status <> 'TERMINATED' OR terminated_reason IS NOT NULL)
+);
+
+-- Anggota kelompok: tanpa tabel ini logbook tidak punya tempat menempel yang benar.
+CREATE TABLE fieldwork_members (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  group_id uuid NOT NULL, student_id uuid NOT NULL REFERENCES students(id),
+  enrollment_id uuid REFERENCES enrollments(id),       -- link ke KRS mata kuliah KKN/PKL; bukan salinan status
+  role_kind text NOT NULL DEFAULT 'ANGGOTA' CHECK (role_kind IN ('ANGGOTA','KETUA','BENDAHARA','KOORDINATOR_LOKASI')),
+  joined_on date, left_on date, left_reason text,
+  FOREIGN KEY (tenant_id, group_id) REFERENCES fieldwork_groups(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, group_id, student_id),
+  CHECK (left_on IS NULL OR joined_on IS NULL OR left_on >= joined_on),
+  CHECK (role_kind <> 'KETUA' OR left_on IS NULL OR left_reason IS NOT NULL)
+);
+CREATE INDEX idx_fieldwork_members_student ON fieldwork_members(tenant_id, student_id, joined_on DESC);
+
+-- Logbook harian bergeofence: satu baris per (anggota, tanggal).
+CREATE TABLE fieldwork_logs (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  group_id uuid NOT NULL, member_id uuid NOT NULL,
+  log_date date NOT NULL,
+  activity text NOT NULL CHECK (length(activity) BETWEEN 5 AND 4000),
+  minutes int NOT NULL CHECK (minutes BETWEEN 1 AND 720),
+  evidence_attachment_id uuid REFERENCES attachments(id),
+  latitude numeric(9,6), longitude numeric(9,6), accuracy_m numeric(7,2),
+  distance_m numeric(8,2), within_fence boolean,       -- dihitung service dari `placement_sites` (L5); TIDAK pernah diterima dari body
+  location_source text CHECK (location_source IS NULL OR location_source IN ('GPS','MANUAL','NO_SIGNAL')),
+  state approval_status NOT NULL DEFAULT 'PENDING',    -- persetujuan DPL per log mingguan
+  reviewed_by uuid, reviewed_at timestamptz, review_note text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, group_id) REFERENCES fieldwork_groups(tenant_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, member_id) REFERENCES fieldwork_members(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, member_id, log_date),
+  CHECK ((latitude IS NULL) = (longitude IS NULL)),
+  CHECK (location_source <> 'GPS' OR latitude IS NOT NULL),
+  CHECK (state <> 'APPROVED' OR (reviewed_at IS NOT NULL AND reviewed_by IS NOT NULL)),
+  CHECK (reviewed_by IS NULL OR accuracy_m IS NULL OR accuracy_m <= 200)   -- akurasi 200 m tidak pernah layak jadi bukti hadir di lokasi
+);
+CREATE INDEX idx_fieldwork_logs_review ON fieldwork_logs(tenant_id, group_id, state, log_date);
+-- Koordinat = PII bergeolokasi: retensi wajib tercatat di `retention_rules` (§14.9 butir 5, BR-R14).
+
+-- Penilaian mitra: USULAN angka, bukan nilai. Yang menulis nilai resmi hanyalah `grades` milik M-19 (vonis 2).
+CREATE TABLE partner_evaluations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  group_id uuid NOT NULL, member_id uuid REFERENCES fieldwork_members(id),
+  evaluator_name text NOT NULL, evaluator_email_encrypted bytea,
+  period_no smallint NOT NULL DEFAULT 1 CHECK (period_no BETWEEN 1 AND 4),
+  criterion_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='kriteria_penilaian_mitra'` (disiplin, inisiatif, kerja sama, etika)
+  score_bp int NOT NULL CHECK (score_bp BETWEEN 0 AND 10000),
+  weight_bp int NOT NULL DEFAULT 10000 CHECK (weight_bp BETWEEN 1 AND 10000),   -- bobot dibaca dari kamus/parameter, bukan angka di kode
+  narrative text,
+  proposed_grade_letter text,                          -- huruf host/mentor apa adanya; BUKAN huruf SICA dan tidak pernah menulis `grades`
+  submitted_at timestamptz NOT NULL DEFAULT now(),
+  state verification_status NOT NULL DEFAULT 'SUBMITTED',
+  verified_by uuid, verified_at timestamptz,
+  FOREIGN KEY (tenant_id, group_id) REFERENCES fieldwork_groups(tenant_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, member_id) REFERENCES fieldwork_members(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, group_id, member_id, period_no, criterion_item_id, evaluator_name),
+  CHECK (member_id IS NULL OR group_id IS NOT NULL),
+  CHECK (state <> 'VERIFIED' OR verified_at IS NOT NULL)
+);
+CREATE INDEX idx_partner_eval_group ON partner_evaluations(tenant_id, group_id, period_no);
+
+-- USULAN konversi kredit. Keputusan SKS diakui HANYA di `mbkm_conversions` (`0033`, M-38/ALG-16).
+CREATE TABLE conversion_proposals (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  group_id uuid NOT NULL, member_id uuid NOT NULL,
+  mbkm_type mbkm_type NOT NULL,                        -- **reuse** enum §15.2 (`0033`): tidak ada kosakata jenis magang kedua
+  activity_summary text NOT NULL CHECK (length(activity_summary) BETWEEN 20 AND 4000),
+  hours_logged int NOT NULL DEFAULT 0 CHECK (hours_logged >= 0),   -- agregat dari `fieldwork_logs.minutes`; dihitung ulang, bukan disunting
+  evidence_digest char(64) NOT NULL,                   -- digest bundle logbook + penilaian mitra: usulan tidak boleh menunjuk data yang sudah berubah
+  proposed_sks numeric(4,1) NOT NULL CHECK (proposed_sks BETWEEN 0 AND 24),
+  home_course_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  similarity_bp int CHECK (similarity_bp IS NULL OR similarity_bp BETWEEN 0 AND 10000),   -- keluaran ALG-16 (usulan), bukan vonis
+  decision_state text NOT NULL DEFAULT 'DRAFT' CHECK (decision_state IN ('DRAFT','SUBMITTED','NEEDS_EVIDENCE','FORWARDED','RECOGNIZED','PARTIAL','DECLINED')),
+  conversion_id uuid REFERENCES mbkm_conversions(id),  -- diisi HANYA service M-38 setelah VALIDATE (vonis 1)
+  requested_by uuid NOT NULL, forwarded_by uuid, forwarded_at timestamptz, note text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, group_id) REFERENCES fieldwork_groups(tenant_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, member_id) REFERENCES fieldwork_members(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, member_id, mbkm_type, group_id),
+  CHECK (decision_state <> 'RECOGNIZED' OR conversion_id IS NOT NULL),
+  CHECK (decision_state <> 'PARTIAL' OR conversion_id IS NOT NULL),
+  CHECK (forwarded_by IS NULL OR forwarded_by <> requested_by),
+  CHECK (evidence_digest ~ '^[0-9a-f]{64}$')
+);
+```
+
+**Kenapa kolom-kolom ini ada.** `fieldwork_logs.distance_m` dan `within_fence` dihitung service dari `placement_sites.latitude/longitude` + `geofence_radius_m` dan tidak pernah diterima dari body, karena bila klien boleh mengirim "di dalam pagar" maka seluruh logbook magang dapat dipalsukan dari rumah — aturan yang sama sudah ditegakkan untuk presensi kelas di §18.6 (titik acuan milik server). `conversion_proposals.conversion_id` dan `CHECK (decision_state <> 'RECOGNIZED' OR conversion_id IS NOT NULL)` adalah vonis 1 dalam bentuk constraint: usulan KKN tidak dapat menyatakan SKS-nya sendiri sudah diakui, dan angka yang tampil di transkrip hanya boleh berasal dari `mbkm_conversions` (`0033`). `evidence_digest` wajib ada karena penyetaraan adalah keputusan atas bukti pada satu saat: tanpa digest, logbook yang diedit setelah persetujuan akan membuat keputusan kaprodi tidak dapat direkonstruksi, dan `hours_logged` adalah agregat yang dihitung ulang, bukan kolom yang dapat diketik.
+
+**RLS.** Keenam tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. Koordinat `fieldwork_logs` tunduk `retention_rules` (kelas `pii_encrypted_column`/geodata, §16.5, BR-R14) dan tidak pernah keluar di laporan massal tanpa `pii_level` MASKED/PSEUDONYMISED (§16.3.5); `evaluator_email_encrypted` hanya terbaca pengelola kerja lapangan dan DPL kelompok itu saja.
+
+**Status.** Kelas A reuse: `mbkm_type` (§15.2, `0033`) untuk jenis kegiatan, `approval_status` (`0054`) untuk `fieldwork_logs.state`, `verification_status` (`0061`) untuk `partner_evaluations.state`. Kelas A baru: `fieldwork_status` = PROPOSED, APPROVED, PLACED, ACTIVE, ON_HOLD, COMPLETED, EVALUATED, CLOSED, TERMINATED (§22.9). Kelas A′: `conversion_proposals.decision_state` memakai **daftar nilai yang sama** dengan `credit_transfer_proposals` (`0060`) — satu kosakata usulan penyetaraan untuk dua modul, tidak dua daftar. Kelas C: jenis kerja lapangan, lokasi, dan kriteria mitra lewat `reference_items`.
+
+### 22.7 Sarana, koleksi, perolehan, dan hunian — M-39, M-40, M-46, M-42
+
+Empat modul ini berbagi satu hukum yang sama: **angka uang hanya punya satu rumah**. Denda pustaka, harga perolehan aset, termin kontrak pengadaan, dan saldo dompet kantin semuanya EITHER menunjuk `invoices`/`payments`/`ledger` milik M-10 EITHER adalah kebijakan (rate, plafon) yang bukan tagihan. Vonis 3, 5, dan 6 diterapkan apa adanya di bawah.
+
+#### 22.7.1 M-39 e-Library — `0067_library_circulation.sql`
+
+Dipakai ulang: `invoices` + `payment_waivers` (§5, M-10) untuk denda, `clearances` (§5, M-30) untuk keadaan bebas pustaka, `campus_sites`/`rooms` (`0044`/§5) untuk lokasi rak, `reference_items` untuk jenis koleksi dan materi, `attachments` (`0020`) untuk naskah digital.
+
+```sql
+CREATE TYPE library_item_state AS ENUM
+  ('IN_PROCESSING','AVAILABLE','ON_LOAN','RESERVED','IN_REPAIR','LOST','WITHDRAWN','ON_DISPLAY','TRANSFERRED');
+CREATE TYPE library_loan_state AS ENUM ('LOANED','RETURNED','OVERDUE','LOST_COMPENSATED','CANCELLED');
+
+-- Katalog: SATU deskripsi bibliografis, banyak eksemplar. `marc_*` dan `dc_*` berdampingan karena
+-- keduanya adalah BENTUK YANG BERBEDA dari record yang sama, bukan dua katalog.
+CREATE TABLE bibliographic_records (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  record_number text NOT NULL,
+  format_kind text NOT NULL DEFAULT 'MARC21' CHECK (format_kind IN ('MARC21','UNIMARC','DUBLIN_CORE')),
+  record_type text NOT NULL CHECK (record_type IN ('MONOGRAPH','SERIAL','PROCEEDINGS','THESIS','REPORT','MAP','AUDIO','VIDEO','EBOOK','DATABASE','MICROFORM')),
+  material_kind_item_id uuid REFERENCES reference_items(id),        -- kelas C `kind='jenis_materi'`
+  main_title text NOT NULL CHECK (length(main_title) BETWEEN 2 AND 500), subtitle text,
+  statement_of_responsibility text,                    -- "oleh Siapa" di katalog: teks, BUKAN salinan nama orang dari `people`
+  author_display text, corporate_author text,
+  publisher text, place_of_publication text, publication_year int CHECK (publication_year IS NULL OR publication_year BETWEEN 1400 AND 2100),
+  edition text, physical_description jsonb NOT NULL DEFAULT '{}'::jsonb,
+  isbn text CHECK (isbn IS NULL OR isbn ~ '^(97[89])?[0-9\-X]{9,17}$'),
+  issn text CHECK (issn IS NULL OR issn ~ '^[0-9]{4}-[0-9]{3}[0-9X]$'),
+  doi text CHECK (doi IS NULL OR doi ~ '^10\.[0-9]{4,9}/.*$'),
+  language text NOT NULL DEFAULT 'id',
+  marc_leader char(24) CHECK (marc_leader IS NULL OR marc_leader ~ '^[0-9 ]{24}$'),
+  marc_subfields jsonb NOT NULL DEFAULT '[]'::jsonb,               -- [{tag, ind1, ind2, subfields:[{code,value}]}] — simpan apa adanya, JANGAN jadi instruksi SQL
+  dc_elements jsonb NOT NULL DEFAULT '{}'::jsonb,                  -- Dublin Core 15 elemen; hasil transform, bukan sumber kedua
+  subject_terms jsonb NOT NULL DEFAULT '[]'::jsonb,
+  call_number_scheme text CHECK (call_number_scheme IS NULL OR call_number_scheme IN ('DDC','UDC','LC','LCCN','LOCAL','NONE')),
+  is_authority_controlled boolean NOT NULL DEFAULT false,
+  holdings_count int NOT NULL DEFAULT 0 CHECK (holdings_count >= 0),   -- agregat dari `items`, dihitung ulang; tidak dapat ditulis dari klien
+  digital_master_attachment_id uuid REFERENCES attachments(id),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, record_number), UNIQUE (tenant_id, id),
+  CHECK (format_kind <> 'MARC21' OR marc_subfields <> '[]'::jsonb)    -- claim MARC tanpa isi = katalog hantu
+);
+CREATE INDEX idx_bibb_search ON bibliographic_records(tenant_id, lower(main_title) text_pattern_ops);
+CREATE INDEX idx_bibb_isbn ON bibliographic_records(tenant_id, isbn) WHERE isbn IS NOT NULL;
+CREATE INDEX idx_bibb_type ON bibliographic_records(tenant_id, record_type, format_kind);
+
+CREATE TABLE items (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  record_id uuid NOT NULL, accession_number text NOT NULL, barcode text NOT NULL,
+  copy_no smallint NOT NULL DEFAULT 1 CHECK (copy_no BETWEEN 1 AND 999),
+  call_number text, location_site_id uuid REFERENCES campus_sites(id),
+  location_room_id uuid REFERENCES rooms(id), shelf_label text,
+  item_state library_item_state NOT NULL DEFAULT 'IN_PROCESSING',
+  condition text NOT NULL DEFAULT 'GOOD' CHECK (condition IN ('NEW','GOOD','FAIR','POOR','DAMAGED','UNRECOVERABLE')),
+  circulation_policy_id uuid,                         -- FK ditambahkan pada blok `circulation_policies` di bawah
+  acquisition_source text NOT NULL DEFAULT 'PURCHASE' CHECK (acquisition_source IN ('PURCHASE','DONATION','EXCHANGE','TRANSFER','LEGAL_DEPOSIT')),
+  acquisition_ref_id uuid,                            -- penunjuk `receipt_assets` (`0069`) atau surat menyumbangkan: TIDAK ada harga di sini
+  is_reference_only boolean NOT NULL DEFAULT false,   -- koleksi referensi tidak pernah keluar rak
+  withdrawn_on date, withdrawn_by uuid, withdrawal_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, record_id) REFERENCES bibliographic_records(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, accession_number), UNIQUE (tenant_id, barcode), UNIQUE (tenant_id, id),
+  CHECK (withdrawn_on IS NULL OR (withdrawal_reason IS NOT NULL AND withdrawn_by IS NOT NULL)),
+  CHECK (item_state <> 'WITHDRAWN' OR withdrawn_on IS NOT NULL),
+  CHECK (is_reference_only = false OR circulation_policy_id IS NULL)
+);
+CREATE INDEX idx_items_shelf ON items(tenant_id, item_state, location_site_id, record_id);
+
+CREATE TABLE circulation_policies (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  applies_to_record_types text[] NOT NULL DEFAULT '{}',            -- isi dari kosakata `record_type` (§15.3), bukan tabel kamus kedua
+  applies_to_patron_roles text[] NOT NULL DEFAULT '{}',            -- 'STUDENT','LECTURER','STAFF','EXTERNAL' dari kosakata peran
+  loan_days smallint NOT NULL CHECK (loan_days BETWEEN 1 AND 120),
+  max_renewals smallint NOT NULL DEFAULT 0 CHECK (max_renewals BETWEEN 0 AND 5),
+  max_items_borrowed smallint NOT NULL DEFAULT 3 CHECK (max_items_borrowed BETWEEN 1 AND 30),
+  fine_per_day_rupiah bigint NOT NULL DEFAULT 0 CHECK (fine_per_day_rupiah >= 0),   -- RATE kebijakan, bukan tagihan: tagihannya `invoices` (§5)
+  requires_no_outstanding_fines boolean NOT NULL DEFAULT true,
+  reserve_holds_days smallint NOT NULL DEFAULT 7 CHECK (reserve_holds_days BETWEEN 1 AND 30),
+  is_active boolean NOT NULL DEFAULT true,
+  requested_by uuid, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+ALTER TABLE items ADD CONSTRAINT fk_items_policy
+  FOREIGN KEY (tenant_id, circulation_policy_id) REFERENCES circulation_policies(tenant_id, id);
+
+CREATE TABLE circulations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  item_id uuid NOT NULL, borrower_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  patron_student_id uuid REFERENCES students(id),
+  state library_loan_state NOT NULL DEFAULT 'LOANED',
+  loaned_at timestamptz NOT NULL DEFAULT now(), due_at timestamptz NOT NULL,
+  returned_at timestamptz, renewed_count smallint NOT NULL DEFAULT 0 CHECK (renewed_count BETWEEN 0 AND 5),
+  late_days int NOT NULL DEFAULT 0 CHECK (late_days >= 0),   -- ditulis ulang service sirkulasi dari batas hari zona tenant; BUKAN generated column karena `now()::date` tidak immutable
+  lost_declared_at timestamptz, lost_compensation_invoice_id uuid REFERENCES invoices(id),
+  handled_by uuid, note text,
+  FOREIGN KEY (tenant_id, item_id) REFERENCES items(tenant_id, id),
+  UNIQUE (tenant_id, id),
+  CHECK (returned_at IS NULL OR returned_at >= loaned_at),
+  CHECK (state <> 'RETURNED' OR returned_at IS NOT NULL),
+  CHECK (state <> 'CANCELLED' OR returned_at IS NULL),
+  CHECK (state <> 'LOST_COMPENSATED' OR (lost_declared_at IS NOT NULL AND lost_compensation_invoice_id IS NOT NULL))
+);
+CREATE INDEX idx_circ_open ON circulations(tenant_id, state, due_at);
+CREATE INDEX idx_circ_patron ON circulations(tenant_id, borrower_membership_id, loaned_at DESC);
+
+CREATE TABLE holds (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  record_id uuid NOT NULL, item_id uuid REFERENCES items(id),
+  requester_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  position int NOT NULL CHECK (position > 0),
+  placed_at timestamptz NOT NULL DEFAULT now(), available_on timestamptz, expires_at timestamptz,
+  state text NOT NULL DEFAULT 'QUEUED' CHECK (state IN ('QUEUED','READY','COLLECTED','EXPIRED','CANCELLED')),
+  FOREIGN KEY (tenant_id, record_id) REFERENCES bibliographic_records(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, record_id, requester_membership_id),
+  CHECK (state <> 'READY' OR (available_on IS NOT NULL AND expires_at IS NOT NULL AND expires_at > available_on)),
+  CHECK (state <> 'COLLECTED' OR available_on IS NOT NULL)
+);
+CREATE INDEX idx_holds_queue ON holds(tenant_id, record_id, position);
+
+-- JEMBATAN DENDA: tanpa satu pun kolom nominal dan tanpa satu pun kolom status bayar.
+-- Jumlah dan pelunasan dibaca dari `invoices`/`payments` M-10 lewat JOIN (vonis 5, uji §22.11 butir 1).
+CREATE TABLE library_fines (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  circulation_id uuid NOT NULL, invoice_id uuid NOT NULL,
+  reason text NOT NULL CHECK (reason IN ('OVERDUE','DAMAGE','LOST','LATE_HOLD_PICKUP','OTHER')),
+  fee_tariff_group_id uuid REFERENCES fee_tariff_groups(id),        -- kelompok tarif denda; komponen biaya tetap di §19.4
+  linked_by uuid NOT NULL, linked_at timestamptz NOT NULL DEFAULT now(),
+  waiver_id uuid,                                                  -- penghapusan denda = `payment_waivers` milik M-10, bukan kolom "dihapus" di sini
+  note text,
+  FOREIGN KEY (tenant_id, circulation_id) REFERENCES circulations(tenant_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, invoice_id) REFERENCES invoices(tenant_id, id),
+  UNIQUE (tenant_id, invoice_id),                                  -- satu surat tagihan denda untuk satu peminjaman
+  UNIQUE (tenant_id, circulation_id, reason)
+);
+
+-- SINYAL bebas pustaka: memancarkan keadaan dimensi ke M-30, TIDAK pernah menulis kelulusan (vonis 3).
+CREATE TABLE library_clearance_signals (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
+  dimension clearance_dimension NOT NULL DEFAULT 'LIBRARY' CHECK (dimension = 'LIBRARY'),
+  signal_state text NOT NULL DEFAULT 'PENDING' CHECK (signal_state IN ('PENDING','CLEAN','BLOCKING')),
+  open_circulations int NOT NULL DEFAULT 0 CHECK (open_circulations >= 0),
+  open_fines int NOT NULL DEFAULT 0 CHECK (open_fines >= 0),       -- CACAH baris, bukan jumlah rupiah: pustakawan tidak membaca nominal (SoD §14.9)
+  blocking_evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+  computed_at timestamptz NOT NULL DEFAULT now(),
+  emitted_at timestamptz, cleared_at timestamptz, override_by uuid, override_reason text,
+  UNIQUE (tenant_id, student_id, period_id),
+  CHECK (signal_state <> 'CLEAN' OR cleared_at IS NOT NULL),
+  CHECK (override_reason IS NULL OR (override_by IS NOT NULL AND length(override_reason) >= 20))
+);
+```
+
+**Kenapa kolom-kolom ini ada.** `circulations.late_days` tidak pernah diterima dari aplikasi dan tidak dapat ditulis dari payload mana pun: kolom itu hanya dihitung ulang service sirkulasi dari `due_at` dan `returned_at` dengan batas hari zona waktu tenant, karena begitu hari terlambat dapat ditulis klien, denda dapat dinolkan tanpa jejak, dan `library_fines` hanya tinggal menunggu permintaan yang sama. `library_fines` dan `library_clearance_signals` **tidak** punya satu pun kolom rupiah — yang pertama karena jumlah adalah milik `invoices` (M-10), yang kedua karena pustakawan berhak tahu "berapa banyak" tetapi tidak berhak tahu "berapa rupiah" (SoD BAAK↔BAUK, §14.9 butir 5) — dan `signal_state` berhenti di PENDING/CLEAN/BLOCKING karena "boleh lulus" diputus `clearances`/`graduation_records` M-30, bukan oleh rak buku (vonis 3). `bibliographic_records.marc_subfields` disimpan sebagai JSONB baca-saja dan `dc_elements` sebagai hasil transform: tidak satu pun isinya yang pernah menjadi predikat pencarian yang dirakit string, karena isi katalog adalah **data** yang datang dari luar (§3.9 AGENTS "input tak-tepercaya adalah data").
+
+**RLS.** Ketujuh tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. Penajaman: `library_fines` tidak pernah dibaca peran mahasiswa lewat tabel ini — yang mereka baca adalah proyeksi "ada denda / tidak" dari `invoices` milik M-10, dan `holds` hanya terbaca oleh peminjamnya sendiri plus petugas sirkulasi.
+
+**Status.** Kelas A: `library_item_state` = IN_PROCESSING, AVAILABLE, ON_LOAN, RESERVED, IN_REPAIR, LOST, WITHDRAWN, ON_DISPLAY, TRANSFERRED; `library_loan_state` = LOANED, RETURNED, OVERDUE, LOST_COMPENSATED, CANCELLED; `clearance_dimension` reuse (`0009`, §15.2) dengan CHECK `= 'LIBRARY'` pada sinyal. Kelas A′: `holds.state` = QUEUED, READY, COLLECTED, EXPIRED, CANCELLED; `condition`, `acquisition_source`, `reason`, `signal_state`, `format_kind` = `text + CHECK` (§15.3). Kelas C: jenis materi & subjek lewat `reference_items`. **Tambahan wajib sebelum `0067` jalan:** nilai `invoices.kind` `LIBRARY_FINE` harus didaftarkan lebih dulu di §15.3 (daftar `invoices.kind` hari ini tidak memuatnya) — itu baris dokumen, bukan keputusan kode.
+
+#### 22.7.2 M-40 Aset dan Inventaris — `0068_asset_inventory.sql`
+
+Vonis 6: M-40 adalah **pemilik kartu aset**; M-46 hanya menghasilkan *terima-aset* yang memicu pembuatan baris lewat service M-40. Karena itu kolom harga perolehan di bawah adalah `SERVER_ONLY` dan diturunkan dari receipt, tidak pernah diketik operator.
+
+```sql
+CREATE TYPE asset_status AS ENUM
+  ('ACQUIRED','REGISTERED','IN_USE','IN_MAINTENANCE','ON_LOAN','TRANSFERRED','DISPOSED','WRITTEN_OFF','LOST','DAMAGED');
+
+CREATE TABLE assets (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  inventory_code text NOT NULL,                        -- nomor induk barang milik (NIB) per tenant dari sequence, BUKAN MAX+1
+  name text NOT NULL CHECK (length(name) BETWEEN 3 AND 300),
+  category_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='jenis_aset'` (komputer, kendaraan, gedung, laboratorium)
+  asset_kind text NOT NULL CHECK (asset_kind IN ('LAND','BUILDING','STRUCTURE','MACHINERY','VEHICLE','IT_HARDWARE','IT_SOFTWARE','EQUIPMENT','FURNITURE','LABORATORY','BOOK_COLLECTION','INFRASTRUCTURE','OTHER')),
+  quantity numeric(12,2) NOT NULL DEFAULT 1 CHECK (quantity > 0), unit text,
+  serial_number text, bmu_code text,                   -- kode BMN untuk aset negara; label saja, tidak jadi kunci Feeder
+  acquisition_date date NOT NULL, acquisition_source text NOT NULL CHECK (acquisition_source IN ('PURCHASE','DONATION','TRANSFER','CONSTRUCTION','PRODUCTION','SEIZURE')),
+  acquisition_cost_rupiah bigint NOT NULL DEFAULT 0 CHECK (acquisition_cost_rupiah >= 0),   -- SERVER_ONLY: diisi service dari `receipt_assets` (`0069`), bukan dari form
+  receipt_ref_id uuid,                                 -- FK komposit ditambahkan pada `0069` saat tabel receipt lahir
+  site_id uuid REFERENCES campus_sites(id), room_id uuid REFERENCES rooms(id),
+  custodian_employee_id uuid REFERENCES employees(id), custodian_membership_id uuid REFERENCES tenant_memberships(id),
+  depreciation_policy_id uuid,                         -- FK ditambahkan pada blok kebijakan di bawah
+  status asset_status NOT NULL DEFAULT 'ACQUIRED',
+  in_use_since date, disposed_on date, disposed_by uuid, disposal_method text, disposal_ref text,
+  is_certified boolean NOT NULL DEFAULT false, certificate_ref text,
+  expected_useful_life_months smallint CHECK (expected_useful_life_months IS NULL OR expected_useful_life_months BETWEEN 1 AND 600),
+  attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, inventory_code), UNIQUE (tenant_id, id),
+  CHECK (disposed_on IS NULL OR status IN ('DISPOSED','WRITTEN_OFF','TRANSFERRED')),
+  CHECK (status NOT IN ('DISPOSED','WRITTEN_OFF') OR (disposed_on IS NOT NULL AND disposed_by IS NOT NULL AND disposal_method IS NOT NULL)),
+  CHECK (acquisition_cost_rupiah > 0 OR acquisition_source IN ('DONATION','PRODUCTION','SEIZURE')),
+  CHECK (quantity <= 1 OR serial_number IS NULL)       -- satu nomor seri hanya untuk satu unit; blok barang memakai NIB tanpa serial
+);
+CREATE INDEX idx_assets_status ON assets(tenant_id, status, asset_kind, site_id);
+CREATE INDEX idx_assets_custodian ON assets(tenant_id, custodian_employee_id) WHERE custodian_employee_id IS NOT NULL;
+CREATE INDEX idx_assets_attrs ON assets USING gin (attributes jsonb_path_ops);
+
+CREATE TABLE asset_tags (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  asset_id uuid NOT NULL, tag_kind text NOT NULL CHECK (tag_kind IN ('QR','BARCODE','RFID','NFC','PLATE')),
+  tag_value text NOT NULL,
+  payload_digest char(64) NOT NULL,                    -- digest isi tag; salinan fisik dapat diverifikasi tanpa membuka data pemilik
+  printed_at timestamptz, attached_at timestamptz, attached_by uuid,
+  last_scan_at timestamptz, last_scan_by uuid, scan_count int NOT NULL DEFAULT 0 CHECK (scan_count >= 0),
+  is_active boolean NOT NULL DEFAULT true,
+  replaced_by_id uuid REFERENCES asset_tags(id),
+  FOREIGN KEY (tenant_id, asset_id) REFERENCES assets(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, tag_kind, tag_value),             -- satu tag fisik tidak dapat menempel pada dua aset
+  CHECK (replaced_by_id IS NULL OR replaced_by_id <> id),
+  CHECK (payload_digest ~ '^[0-9a-f]{64}$'),
+  CHECK (attached_at IS NULL OR attached_by IS NOT NULL)
+);
+CREATE INDEX idx_asset_tags_lookup ON asset_tags(tenant_id, tag_value);
+
+CREATE TABLE depreciation_policies (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  method text NOT NULL CHECK (method IN ('STRAIGHT_LINE','DECLINING_BALANCE','UNITS_OF_PRODUCTION','NONE')),
+  useful_life_months smallint NOT NULL CHECK (useful_life_months BETWEEN 1 AND 600),
+  residual_value_bp int NOT NULL DEFAULT 0 CHECK (residual_value_bp BETWEEN 0 AND 10000),
+  match_asset_kinds text[] NOT NULL DEFAULT '{}',      -- isi kosakata `asset_kind`; bukan tabel kamus kedua
+  regulation_ref text NOT NULL,                        -- dasar hukum penyusutan BMN/pajak: tanpa ini angka buku tidak punya pembelaan
+  fiscal_year_basis text NOT NULL DEFAULT 'CALENDAR' CHECK (fiscal_year_basis IN ('CALENDAR','GOVERNMENT','CUSTOM')),
+  effective_from date NOT NULL, effective_to date,
+  is_active boolean NOT NULL DEFAULT true,
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (method = 'NONE' OR residual_value_bp < 10000),
+  CHECK (approved_by IS NOT NULL AND approved_by <> requested_by)   -- kebijakan penyusutan = kebijakan akuntansi: selalu dua orang
+);
+ALTER TABLE assets ADD CONSTRAINT fk_asset_policy
+  FOREIGN KEY (tenant_id, depreciation_policy_id) REFERENCES depreciation_policies(tenant_id, id);
+
+-- Entri penyusutan per periode: hasil hitung worker, append-only, dapat dihitung ulang tanpa menghapus.
+CREATE TABLE depreciation_entries (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  asset_id uuid NOT NULL, policy_id uuid NOT NULL,
+  fiscal_year int NOT NULL CHECK (fiscal_year BETWEEN 1990 AND 2100),
+  period_no smallint NOT NULL CHECK (period_no BETWEEN 1 AND 12),
+  opening_book_value_rupiah bigint NOT NULL CHECK (opening_book_value_rupiah >= 0),
+  depreciation_rupiah bigint NOT NULL DEFAULT 0 CHECK (depreciation_rupiah >= 0),
+  accumulated_rupiah bigint NOT NULL DEFAULT 0 CHECK (accumulated_rupiah >= 0),
+  closing_book_value_rupiah bigint NOT NULL CHECK (closing_book_value_rupiah >= 0),
+  run_id uuid, batch_id uuid, idempotency_key text NOT NULL,
+  entry_group_id uuid,                                 -- jembatan M-10: beban penyusutan menjadi jurnal, bukan kolom di kartu aset
+  posted_at timestamptz, posted_by uuid,
+  computed_by text NOT NULL DEFAULT 'WORKER' CHECK (computed_by IN ('WORKER','MIGRATION','MANUAL_RECALC')),
+  recalc_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, asset_id) REFERENCES assets(tenant_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, policy_id) REFERENCES depreciation_policies(tenant_id, id),
+  UNIQUE (tenant_id, asset_id, fiscal_year, period_no), UNIQUE (tenant_id, idempotency_key),
+  CHECK (closing_book_value_rupiah = opening_book_value_rupiah - depreciation_rupiah),   -- aritmetika di DB, bukan di aplikasi
+  CHECK (depreciation_rupiah <= opening_book_value_rupiah)                                -- tidak pernah menyusut di bawah nol
+);
+CREATE VIEW v_asset_book_value WITH (security_invoker = true) AS
+SELECT a.tenant_id, a.id AS asset_id, a.acquisition_cost_rupiah,
+       COALESCE(sum(d.accumulated_rupiah), 0)::bigint AS accumulated_rupiah,
+       a.acquisition_cost_rupiah - COALESCE(sum(d.accumulated_rupiah), 0) AS book_value_rupiah
+  FROM assets a LEFT JOIN depreciation_entries d ON d.asset_id = a.id AND d.tenant_id = a.tenant_id
+ GROUP BY a.tenant_id, a.id, a.acquisition_cost_rupiah;      -- nilai buku = turunan; TIDAK ada kolom book_value di `assets`
+CREATE INDEX idx_depr_period ON depreciation_entries(tenant_id, fiscal_year, period_no, posted_at);
+REVOKE UPDATE, DELETE ON depreciation_entries FROM sica_app;
+-- Plafon `accumulated + residual >= 0` dan tidak menyusut di bawah nilai sisa tidak dapat ditulis CHECK
+-- karena membaca baris periode lain: ditegakkan service (L5) + §22.11 butir 5 (wajib 0 baris).
+
+-- Pemeliharaan aset BUKAN tiket kedua: `helpdesk_tickets` (`0051`) adalah satu-satunya mesin tiket.
+ALTER TABLE helpdesk_tickets ADD COLUMN asset_id uuid REFERENCES assets(id);
+ALTER TABLE helpdesk_categories ADD COLUMN queue_kind text NOT NULL DEFAULT 'IT' CHECK (queue_kind IN ('IT','FACILITY','ASSET','GENERAL'));
+```
+
+**Kenapa kolom-kolom ini ada.** `assets.acquisition_cost_rupiah` adalah satu-satunya kolom uang di kartu aset dan nilainya **tidak pernah** diterima dari form: ia disalin service M-40 dari `receipt_assets` (`0069`) pada saat barang diterima, sehingga tidak ada dua tempat menyatakan harga satu laptop dan tidak ada jalur "harga dikarang petugas gudang" — sisanya (harga kontrak, termin, pembayaran) tetap milik M-46 dan M-10. `depreciation_entries` menyimpan `opening/depreciation/closing` dengan CHECK aritmetika `closing = opening - depreciation` karena penyusutan adalah angka laporan keuangan yang diaudit: satu baris yang tidak konsisten secara internal akan bertahan selamanya di neraca, dan `REVOKE UPDATE, DELETE` membuat koreksi hanya mungkin lewat perhitungan ulang beralasan (`recalc_reason`) dengan kunci idempoten. `asset_tags UNIQUE (tag_kind, tag_value)` adalah penolakan fisik terhadap label ganda — satu stiker QR yang menempel pada dua aset akan membuat stok opname dua tahun ke depan tidak dapat dipercaya.
+
+**RLS.** Keempat tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. `assets.acquisition_cost_rupiah` dan seluruh `depreciation_entries` **tidak** terbaca peran pengguna aset biasa (hak tingkat field, §14.9): yang mereka lihat adalah nama, lokasi, penanggung jawab, dan status.
+
+**Status.** Kelas A: `asset_status` = ACQUIRED, REGISTERED, IN_USE, IN_MAINTENANCE, ON_LOAN, TRANSFERRED, DISPOSED, WRITTEN_OFF, LOST, DAMAGED (§22.9). Kelas A′: `asset_kind`, `acquisition_source`, `tag_kind`, `condition` (dari §22.7.1), `disposal_method` = `text + CHECK` (§15.3); `depreciation_policies.method` = STRAIGHT_LINE, DECLINING_BALANCE, UNITS_OF_PRODUCTION, NONE (kosakata akuntansi tertutup, bukan kamus). Kelas C: `category_item_id` → `reference_items(kind='jenis_aset')`.
+
+#### 22.7.3 M-46 E-Procurement PBJ — `0069_procurement_pbj.sql`
+
+Vonis 6 membatasi dua hal: M-46 **tidak** memposting jurnal (komitmen anggaran dibaca M-10), dan M-46 **tidak** membuat kartu aset (`receipt_assets` hanya memicu service M-40). Vonis 5 membuat seluruh pembayaran berada di `payments`/`ledger`.
+
+```sql
+CREATE TABLE procurement_vendors (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  organization_id uuid NOT NULL,                       -- `external_organizations` (`0053`) pemilik nama/alamat/NPWP
+  vendor_kind text NOT NULL CHECK (vendor_kind IN ('SUPPLIER','CONTRACTOR','CONSULTANT','SERVICE','SUBCONTRACTOR','AGENT')),
+  category_item_ids jsonb NOT NULL DEFAULT '[]'::jsonb,           -- `reference_items(kind='kategori_pengadaan')`; kelas C, tanpa CHECK daftar
+  eligibility_state text NOT NULL DEFAULT 'ELIGIBLE' CHECK (eligibility_state IN ('ELIGIBLE','UNDER_REVIEW','SUSPENDED','BLACKLISTED','DISQUALIFIED')),
+  blacklist_until date, blacklist_reason text, blacklist_by uuid, blacklist_at timestamptz,
+  qualification_documents jsonb NOT NULL DEFAULT '[]'::jsonb,      -- [{type, attachmentId, expiresOn}] — berkas tetap di `attachments` (`0020`)
+  sbu_number text, tdp_number text, npwp_mapped boolean NOT NULL DEFAULT false,
+  siroup_registered boolean NOT NULL DEFAULT false,
+  payment_terms_default_days smallint NOT NULL DEFAULT 30 CHECK (payment_terms_default_days BETWEEN 0 AND 180),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, organization_id) REFERENCES external_organizations(tenant_id, id),
+  UNIQUE (tenant_id, organization_id), UNIQUE (tenant_id, id),
+  CHECK (eligibility_state <> 'BLACKLISTED' OR (blacklist_until IS NOT NULL AND blacklist_reason IS NOT NULL AND blacklist_by IS NOT NULL)),
+  CHECK (eligibility_state <> 'SUSPENDED' OR blacklist_reason IS NOT NULL)
+);
+
+CREATE TABLE vendor_evaluations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  vendor_id uuid NOT NULL, eval_period text NOT NULL,               -- 'YYYY-Q1' | 'YYYY'; BUKAN enum
+  criterion_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='kriteria_vendor'` (tepat waktu, kualitas, kepatuhan)
+  score_bp int NOT NULL CHECK (score_bp BETWEEN 0 AND 10000),
+  weight_bp int NOT NULL DEFAULT 10000 CHECK (weight_bp BETWEEN 1 AND 10000),   -- bobot dari kamus/parameter, bukan dari kode
+  evidence text, contract_ref_id uuid,
+  evaluated_by uuid NOT NULL, evaluated_at timestamptz NOT NULL DEFAULT now(),
+  reviewed_by uuid, reviewed_at timestamptz,
+  FOREIGN KEY (tenant_id, vendor_id) REFERENCES procurement_vendors(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, vendor_id, eval_period, criterion_item_id),
+  CHECK (reviewed_by IS NULL OR reviewed_by <> evaluated_by)          -- penilai ≠ pemeriksa (SoD)
+);
+
+CREATE TABLE requisitions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  requisition_number text NOT NULL,
+  requesting_org_id uuid NOT NULL REFERENCES organizations(id),
+  need_by_date date NOT NULL, justification text NOT NULL CHECK (length(justification) >= 20),
+  spec_summary text, quantity_total numeric(12,2) NOT NULL DEFAULT 1 CHECK (quantity_total > 0),
+  estimated_value_rupiah bigint NOT NULL DEFAULT 0 CHECK (estimated_value_rupiah >= 0),   -- prakiraan awal; HPS resmi ada di `hps_items`
+  method text NOT NULL DEFAULT 'E_PURCHASING' CHECK (method IN ('DIRECT','E_PURCHASING','E_CATALOG','TENDER','RFQ','COMPETITION','EMANUAL','URGENT')),
+  state approval_status NOT NULL DEFAULT 'PENDING',
+  budget_line_ref text,                                -- penunjuk DIPA/RKA: anggaran adalah fakta keuangan, bukan milik PBJ
+  committed_entry_group_id uuid,                       -- diisi service M-10 saat komitmen dibukukan (vonis 6)
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, requisition_number), UNIQUE (tenant_id, id),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (state <> 'APPROVED' OR approved_at IS NOT NULL),
+  CHECK (budget_line_ref IS NULL OR budget_line_ref <> '')
+);
+
+CREATE TABLE hps_items (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  requisition_id uuid NOT NULL, package_label text NOT NULL,
+  seq smallint NOT NULL CHECK (seq > 0),
+  description text NOT NULL, unit text NOT NULL,
+  quantity numeric(12,2) NOT NULL CHECK (quantity > 0),
+  unit_price_rupiah bigint NOT NULL CHECK (unit_price_rupiah >= 0),
+  line_total_rupiah bigint GENERATED ALWAYS AS (round(quantity * unit_price_rupiah)::bigint) STORED,   -- integer math: tidak ada `float` (§3.4 AGENTS)
+  price_source text NOT NULL CHECK (price_source IN ('E_CATALOG','PRICE_SURVEY','SIRUPA','CONTRACT_HISTORY','VENDOR_QUOTE','MANUAL')),
+  price_source_ref text, surveyed_at date,
+  created_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  FOREIGN KEY (tenant_id, requisition_id) REFERENCES requisitions(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, requisition_id, package_label, seq),
+  CHECK (price_source <> 'MANUAL' OR price_source_ref IS NOT NULL),   -- harga tanpa sumber = temuan audit
+  CHECK (price_source <> 'PRICE_SURVEY' OR (surveyed_at IS NOT NULL AND price_source_ref IS NOT NULL)),   -- kesegaran 180 hari = aturan service (`master_system_parameters`), CHECK tidak boleh memuat `current_date`
+  CHECK (approved_by IS NULL OR approved_by <> created_by)
+);
+
+CREATE TABLE tenders (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tender_number text NOT NULL, package_label text NOT NULL,
+  requisition_id uuid REFERENCES requisitions(id),
+  method text NOT NULL CHECK (method IN ('TENDER','RFQ','COMPETITION','E_CATALOG','DIRECT')),
+  hps_total_rupiah bigint NOT NULL DEFAULT 0 CHECK (hps_total_rupiah >= 0),   -- agregat `hps_items`, dihitung ulang saat penetapan
+  announced_at timestamptz, document_upload_closes_at timestamptz, bid_opens_at timestamptz,
+  award_at timestamptz,
+  evaluation_stages text[] NOT NULL DEFAULT '{ADMINISTRASI,TEKNIS,HARGA}',
+  panel_members jsonb NOT NULL DEFAULT '[]'::jsonb,     -- [{membershipId, role}] — KLPiK; bukan tabel orang kedua
+  winner_bid_id uuid, award_reason text, award_approved_by uuid, award_second_approver uuid,
+  state text NOT NULL DEFAULT 'ANNOUNCED' CHECK (state IN ('ANNOUNCED','OPEN','CLOSED','EVALUATING','AWARDED','CANCELLED','FAILED_NO_BID','CONTRACTED')),
+  cancel_reason text, created_by uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, requisition_id) REFERENCES requisitions(tenant_id, id) ON DELETE SET NULL,
+  UNIQUE (tenant_id, tender_number), UNIQUE (tenant_id, id),
+  CHECK (bid_opens_at IS NULL OR announced_at IS NULL OR bid_opens_at >= announced_at),
+  CHECK (state <> 'AWARDED' OR (winner_bid_id IS NOT NULL AND award_reason IS NOT NULL AND award_second_approver IS NOT NULL AND award_second_approver <> award_approved_by)),
+  CHECK (state <> 'CANCELLED' OR cancel_reason IS NOT NULL)
+);
+
+-- Penawaran. Harga penawaran RAHASIA sampai pembukaan: kolomnya ada, proyeksinya tidak sebelum `opened_at`.
+CREATE TABLE tender_bids (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tender_id uuid NOT NULL, vendor_id uuid NOT NULL, bid_number text NOT NULL,
+  price_rupiah bigint NOT NULL CHECK (price_rupiah >= 0),
+  validity_until date NOT NULL,
+  document_digest char(64) NOT NULL,
+  technical_docs jsonb NOT NULL DEFAULT '[]'::jsonb,          -- [{type, attachmentId}] — berkas tetap di `attachments` (`0020`)
+  state text NOT NULL DEFAULT 'SEALED' CHECK (state IN ('SEALED','OPENED','WITHDRAWN','DISQUALIFIED','AWARDED','NOT_AWARDED')),
+  submitted_at timestamptz NOT NULL DEFAULT now(), opened_at timestamptz, withdrawn_at timestamptz,
+  submitted_by_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  FOREIGN KEY (tenant_id, tender_id) REFERENCES tenders(tenant_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, vendor_id) REFERENCES procurement_vendors(tenant_id, id),
+  UNIQUE (tenant_id, tender_id, vendor_id), UNIQUE (tenant_id, bid_number), UNIQUE (tenant_id, id),
+  CHECK (validity_until >= submitted_at::date),
+  CHECK (state <> 'OPENED' OR opened_at IS NOT NULL),
+  CHECK (state <> 'AWARDED' OR opened_at IS NOT NULL),
+  CHECK (document_digest ~ '^[0-9a-f]{64}$')
+);
+CREATE INDEX idx_bids_tender ON tender_bids(tenant_id, tender_id, state);
+
+CREATE TABLE bid_evaluations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  bid_id uuid NOT NULL, stage text NOT NULL CHECK (stage IN ('ADMINISTRASI','TEKNIS','HARGA')),
+  criterion_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='kriteria_penilaian_tender'`
+  score_bp int CHECK (score_bp IS NULL OR score_bp BETWEEN 0 AND 10000),
+  weight_bp int NOT NULL DEFAULT 10000 CHECK (weight_bp BETWEEN 1 AND 10000),
+  result text NOT NULL CHECK (result IN ('PASS','FAIL','SCORED','NOT_APPLICABLE')),
+  rank_after int CHECK (rank_after IS NULL OR rank_after > 0),
+  exclusion_reason text,
+  evaluator_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  evaluated_at timestamptz NOT NULL DEFAULT now(), note text,
+  FOREIGN KEY (tenant_id, bid_id) REFERENCES tender_bids(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, bid_id, stage, criterion_item_id, evaluator_membership_id),
+  CHECK (result <> 'FAIL' OR exclusion_reason IS NOT NULL),          -- gugur tanpa sebab = tidak dapat dijawab di sanggahan
+  CHECK (stage <> 'HARGA' OR score_bp IS NULL)                       -- harga tidak "dinilai", hanya diurutkan
+);
+
+CREATE TABLE procurement_contracts (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  contract_number text NOT NULL,
+  vendor_id uuid NOT NULL, tender_id uuid REFERENCES tenders(id), bid_id uuid REFERENCES tender_bids(id),
+  requisition_id uuid REFERENCES requisitions(id),
+  object_description text NOT NULL,
+  contract_value_rupiah bigint NOT NULL CHECK (contract_value_rupiah >= 0),   -- KOMITMEN; pembayaran & jurnal tetap milik M-10
+  term_months smallint NOT NULL CHECK (term_months BETWEEN 1 AND 120),
+  starts_on date NOT NULL, ends_on date NOT NULL,
+  phases jsonb NOT NULL DEFAULT '[]'::jsonb,         -- [{termNo, shareBp, dueOn, deliverable}] — penagihan termin via service M-10
+  retention_bp int NOT NULL DEFAULT 500 CHECK (retention_bp BETWEEN 0 AND 5000),
+  penalty_bp int NOT NULL DEFAULT 100 CHECK (penalty_bp BETWEEN 0 AND 1000),   -- dana keterlambatan per hari; basis poin
+  garansi_kind text CHECK (garansi_kind IS NULL OR garansi_kind IN ('NONE','BANK_GUARANTEE','RETENTION','MATTER','SURITY_BOND')),
+  is_asset_acquiring boolean NOT NULL DEFAULT false,  -- true = wajib ada `receipt_assets` sebelum termin terakhir dibayar
+  status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','SIGNED','ACTIVE','EXTENDED','COMPLETED','TERMINATED','CANCELLED')),
+  signed_by_ppk uuid NOT NULL, signed_by_vendor text NOT NULL, signed_at timestamptz,
+  extension_count smallint NOT NULL DEFAULT 0 CHECK (extension_count BETWEEN 0 AND 3),
+  terminated_reason text, committed_entry_group_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, vendor_id) REFERENCES procurement_vendors(tenant_id, id),
+  UNIQUE (tenant_id, contract_number), UNIQUE (tenant_id, id),
+  CHECK (ends_on > starts_on),
+  CHECK (status <> 'SIGNED' OR signed_at IS NOT NULL),
+  CHECK (status NOT IN ('ACTIVE','COMPLETED','EXTENDED') OR (signed_at IS NOT NULL AND signed_by_ppk IS NOT NULL)),
+  CHECK (status <> 'TERMINATED' OR terminated_reason IS NOT NULL),
+  CHECK (garansi_kind IS NULL OR garansi_kind <> 'NONE' OR contract_value_rupiah <= 50000000)  -- nilai besar tanpa jaminan = temuan
+);
+
+-- TERIMA-ASET: memicu kartu aset M-40 lewat service, BUKAN INSERT ke `assets` (vonis 6).
+CREATE TABLE receipt_assets (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  contract_id uuid NOT NULL, receipt_number text NOT NULL, received_on date NOT NULL,
+  receiver_employee_id uuid NOT NULL REFERENCES employees(id), checked_by uuid,
+  quantity_received numeric(12,2) NOT NULL CHECK (quantity_received > 0),
+  unit_price_rupiah bigint NOT NULL CHECK (unit_price_rupiah >= 0),
+  line_total_rupiah bigint GENERATED ALWAYS AS (round(quantity_received * unit_price_rupiah)::bigint) STORED,
+  inspection_result text NOT NULL CHECK (inspection_result IN ('ACCEPTED','PARTIALLY_ACCEPTED','REJECTED')),
+  rejection_reason text, serial_numbers jsonb NOT NULL DEFAULT '[]'::jsonb,
+  asset_kind text NOT NULL CHECK (asset_kind IN ('CAPITAL_ASSET','CONSUMABLE','SERVICE_RESULT','INVENTORY')),
+  is_capitalized boolean GENERATED ALWAYS AS (asset_kind = 'CAPITAL_ASSET') STORED,
+  asset_id uuid REFERENCES assets(id),               -- diisi service M-40 setelah kartu aset dibuat (NULL = belum dibuat)
+  bap_attachment_id uuid REFERENCES attachments(id), -- berita acara pemeriksaan/serah terima
+  note text,
+  FOREIGN KEY (tenant_id, contract_id) REFERENCES procurement_contracts(tenant_id, id),
+  UNIQUE (tenant_id, receipt_number), UNIQUE (tenant_id, id),
+  CHECK (inspection_result <> 'REJECTED' OR rejection_reason IS NOT NULL),
+  CHECK (checked_by IS NULL OR checked_by <> receiver_employee_id),    -- penerima ≠ pemeriksa (SoD penerimaan)
+  CHECK (received_on > date '2000-01-01')
+);
+-- Jembatan balik ke kartu aset: `assets.receipt_ref_id` (`0068`) baru dapat dibuktikan di sini.
+ALTER TABLE assets ADD CONSTRAINT fk_assets_receipt
+  FOREIGN KEY (tenant_id, receipt_ref_id) REFERENCES receipt_assets(tenant_id, id);
+```
+
+**Kenapa kolom-kolom ini ada.** `hps_items.line_total_rupiah` dihitung database dari `quantity * unit_price_rupiah` dan tidak dapat ditulis dari sisi mana pun, karena HPS adalah angka yang paling sering "disesuaikan" di pengadaan: menjadikannya kolom *generated* berarti penyesuaian hanya mungkin lewat mengubah kuantitas atau harga satuan, dan keduanya punya `approved_by` sendiri. `tenders` menolak `AWARDED` tanpa dua penyetuju berbeda (`award_second_approver <> award_approved_by`) dan `bid_evaluations` menolak `FAIL` tanpa `exclusion_reason`, karena penetapan pemenang serta gugurnya satu penawaran adalah dua keputusan yang akan disanggah vendor — sanggahan hanya dapat dijawab kalau alasannya tertulis di baris yang sama. `receipt_assets` **tidak** punya hak menulis ke `assets`: kolom `asset_id` diisi service M-40, dan `assets.receipt_ref_id` menunjuk kembali, sehingga satu barang punya satu kartu (vonis 6) sementara harga perolehan tetap dapat ditelusuri ke kontrak dan berita acara.
+
+**RLS.** Kesembilan tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. Penajaman keras: `tender_bids.price_rupiah` hanya terbaca setelah `opened_at` terisi (policy tambahan `USING (opened_at IS NOT NULL OR submitted_by_membership_id = app.membership_id())` di samping isolasi tenant) — penawaran yang bocor sebelum pembukaan bukan bug tampilan, melainkan kegagalan pengadaan; dan `procurement_contracts.contract_value_rupiah` tidak terbaca peran akademik mana pun (§14.9 butir 5).
+
+**Status.** Kelas A reuse: `requisitions.state` = `approval_status` (`0054`). Kelas A′: `tenders.state` = ANNOUNCED, OPEN, CLOSED, EVALUATING, AWARDED, CANCELLED, FAILED_NO_BID, CONTRACTED; `tender_bids.state` = SEALED, OPENED, WITHDRAWN, DISQUALIFIED, AWARDED, NOT_AWARDED; `bid_evaluations.stage`/`result`, `procurement_contracts.status`, `receipt_assets.inspection_result`/`asset_kind`, `eligibility_state`, `price_source`, `method`, `vendor_kind` = `text + CHECK` (§15.3). Kelas C: kategori vendor/produk dan kriteria penilaian lewat `reference_items`; **tidak** ada `CHECK (category IN (...))`.
+
+#### 22.7.4 M-42 Asrama dan Kantin — `0070_residence_canteen.sql`
+
+Dua aturan membatasi gugus ini: tarif asrama **sudah** punya rumah (`fee_tariff_groups.component = 'ASRAMA'`, §19.4 dan §15.3) sehingga tidak ada kolom harga di sini, dan **saldo dompet bukan piutang akademik** (vonis `PRD §5.12.1` M-42) — ia tidak pernah membayar tagihan dan tidak pernah masuk `ledger` sebagai piutang.
+
+```sql
+CREATE TYPE bed_allocation_status AS ENUM ('RESERVED','ACTIVE','EXTENDED','VACATED','CANCELLED');
+
+CREATE TABLE dormitories (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  site_id uuid REFERENCES campus_sites(id), building_code text,
+  gender_policy text NOT NULL CHECK (gender_policy IN ('MALE','FEMALE','MIXED','UNRESTRICTED')),
+  tariff_group_id uuid REFERENCES fee_tariff_groups(id),   -- tarif = komponen ASRAMA di M-10; TIDAK ada kolom harga di sini (vonis 5)
+  total_beds int NOT NULL DEFAULT 0 CHECK (total_beds >= 0),      -- agregat dari `dorm_beds`, dihitung ulang
+  warden_employee_id uuid REFERENCES employees(id),
+  supervisor_membership_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  opens_on date, closes_on date,                          -- penutupan libur: alokasi tidak dianggap meninggalkan kamar
+  safety_capacity int CHECK (safety_capacity IS NULL OR safety_capacity > 0),
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (safety_capacity IS NULL OR total_beds <= safety_capacity * 2),   -- penjaga kewarasan kapasitas vs angka keselamatan
+  CHECK (closes_on IS NULL OR opens_on IS NULL OR closes_on > opens_on)
+);
+
+CREATE TABLE dorm_beds (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  dormitory_id uuid NOT NULL, room_label text NOT NULL, bed_index smallint NOT NULL CHECK (bed_index BETWEEN 1 AND 12),
+  floor_label text, bed_kind text NOT NULL DEFAULT 'SINGLE' CHECK (bed_kind IN ('SINGLE','TWIN','BUNK','ADAPTABLE')),
+  maintenance_state text NOT NULL DEFAULT 'USABLE' CHECK (maintenance_state IN ('USABLE','MAINTENANCE','OUT_OF_SERVICE')),
+  blocked_reason text, attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, dormitory_id) REFERENCES dormitories(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, dormitory_id, room_label, bed_index), UNIQUE (tenant_id, id),
+  -- Keadaan tempat tidur hanya menjelaskan fisiknya; "terisi atau tidak" TIDAK disimpan di sini,
+  -- melainkan dibaca dari `bed_allocations` yang masih berlaku (satu keadaan = satu rumah, vonis 3).
+  CHECK (maintenance_state <> 'OUT_OF_SERVICE' OR blocked_reason IS NOT NULL)
+);
+
+CREATE TABLE bed_allocations (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  bed_id uuid NOT NULL, student_id uuid NOT NULL REFERENCES students(id),
+  period_id uuid NOT NULL REFERENCES academic_periods(id),        -- dimensi 1: periode akademik
+  program_id uuid REFERENCES study_programs(id),                  -- dimensi 2: prodi (laporan per prodi)
+  site_id uuid REFERENCES campus_sites(id),                       -- dimensi 3: kampus
+  academic_year int NOT NULL CHECK (academic_year BETWEEN 1990 AND 2100),   -- dimensi 4: tahun masuk yang diakui
+  status bed_allocation_status NOT NULL DEFAULT 'RESERVED',
+  from_date date NOT NULL, to_date date,
+  assigned_by uuid NOT NULL, approved_by uuid, approved_at timestamptz,
+  vacated_on date, vacated_by uuid, transfer_from_allocation_id uuid REFERENCES bed_allocations(id),
+  deposit_waiver_reason text,
+  note text,
+  FOREIGN KEY (tenant_id, bed_id) REFERENCES dorm_beds(tenant_id, id),
+  UNIQUE (tenant_id, id),
+  CHECK (to_date IS NULL OR to_date > from_date),
+  CHECK (status <> 'VACATED' OR (vacated_on IS NOT NULL AND vacated_by IS NOT NULL)),
+  CHECK (approved_by IS NULL OR approved_by <> assigned_by),
+  EXCLUDE USING gist (tenant_id WITH =, bed_id WITH =, daterange(from_date, COALESCE(to_date, date '9999-12-31'), '[)') WITH &&)
+    WHERE (status IN ('RESERVED','ACTIVE','EXTENDED')),
+  EXCLUDE USING gist (tenant_id WITH =, student_id WITH =, daterange(from_date, COALESCE(to_date, date '9999-12-31'), '[)') WITH &&)
+    WHERE (status IN ('RESERVED','ACTIVE','EXTENDED'))
+);
+CREATE INDEX idx_bed_alloc_student ON bed_allocations(tenant_id, student_id, status, from_date DESC);
+
+CREATE TABLE canteen_outlets (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  site_id uuid REFERENCES campus_sites(id), location_label text,
+  operator_kind text NOT NULL CHECK (operator_kind IN ('INTERNAL','STUDENT_COOPERATIVE','PARTNER','TENANT_OPERATOR')),
+  operator_org_id uuid REFERENCES external_organizations(id),
+  operator_membership_id uuid REFERENCES tenant_memberships(id),
+  halal_cert_number text, halal_cert_expires_on date,
+  hygiene_license_number text, hygiene_license_expires_on date,
+  accepts_wallet boolean NOT NULL DEFAULT true,
+  settlement_cycle text NOT NULL DEFAULT 'WEEKLY' CHECK (settlement_cycle IN ('DAILY','WEEKLY','MONTHLY')),
+  state verification_status NOT NULL DEFAULT 'SUBMITTED',   -- kios hanya beroperasi setelah izin diverifikasi (§22.5.1)
+  verified_by uuid, verified_at timestamptz,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code), UNIQUE (tenant_id, id),
+  CHECK (state <> 'VERIFIED' OR (verified_at IS NOT NULL AND verified_by IS NOT NULL)),
+  CHECK (accepts_wallet = false OR operator_kind <> 'INTERNAL' OR verified_at IS NOT NULL),
+  CHECK (halal_cert_expires_on IS NULL OR halal_cert_number IS NOT NULL)
+);
+
+-- Dompet tertutup: saldo adalah HAK ATAS BARANG, bukan piutang akademik dan bukan tagihan.
+CREATE TABLE residence_wallets (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  holder_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  student_id uuid REFERENCES students(id),
+  balance_rupiah bigint NOT NULL DEFAULT 0 CHECK (balance_rupiah >= 0),    -- agregat `wallet_ledger`; konsistensi diuji §22.11 butir 3
+  state text NOT NULL DEFAULT 'ACTIVE' CHECK (state IN ('ACTIVE','FROZEN','CLOSED')),
+  frozen_reason text, opened_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz,
+  origin_kind text NOT NULL DEFAULT 'SELF_TOPUP' CHECK (origin_kind IN ('SELF_TOPUP','SCHOLARSHIP_ALLOWANCE','REFUND','PAYROLL_ALLOWANCE','OPENING_BALANCE')),
+  origin_disbursement_id uuid REFERENCES funding_disbursements(id),         -- uang beasiswa yang masuk dompet menunjuk M-11/pencairan, tidak pernah angka baru
+  is_academic_receivable boolean NOT NULL DEFAULT false CHECK (is_academic_receivable = false),  -- penahan vonis: saldo tidak pernah jadi piutang
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, holder_membership_id), UNIQUE (tenant_id, id),
+  CHECK (state <> 'FROZEN' OR frozen_reason IS NOT NULL),
+  CHECK (state <> 'CLOSED' OR closed_at IS NOT NULL)
+);
+
+-- Buku besar dompet: append-only, satu baris satu pergerakan, saldo setelahnya tersimpan untuk baca murah.
+CREATE TABLE wallet_ledger (
+  id bigint PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  wallet_id uuid NOT NULL, seq bigint NOT NULL CHECK (seq > 0),
+  kind text NOT NULL CHECK (kind IN ('TOPUP','SPEND','REFUND','ADJUSTMENT','REVERSAL','EXPIRY','SETTLEMENT_OUT','OPENING_BALANCE')),
+  amount_signed_rupiah bigint NOT NULL CHECK (amount_signed_rupiah <> 0),
+  balance_after_rupiah bigint NOT NULL CHECK (balance_after_rupiah >= 0),
+  ref_payment_id uuid REFERENCES payments(id),        -- TOPUP wajib dari `payments` M-10: uang masuk hanya lewat jalur resmi
+  ref_outlet_id uuid REFERENCES canteen_outlets(id),  -- SPEND wajib punya kios
+  ref_order_number text, ref_discount_bp int CHECK (ref_discount_bp IS NULL OR ref_discount_bp BETWEEN 0 AND 10000),
+  idempotency_key text NOT NULL,
+  posted_at timestamptz NOT NULL DEFAULT now(),
+  actor_membership_id uuid REFERENCES tenant_memberships(id), operator_employee_id uuid REFERENCES employees(id),
+  reason text,
+  FOREIGN KEY (tenant_id, wallet_id) REFERENCES residence_wallets(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, wallet_id, seq), UNIQUE (tenant_id, idempotency_key),
+  CHECK ((kind = 'TOPUP' AND amount_signed_rupiah > 0 AND ref_payment_id IS NOT NULL)
+      OR (kind = 'SPEND' AND amount_signed_rupiah < 0 AND ref_outlet_id IS NOT NULL)
+      OR (kind IN ('REFUND','OPENING_BALANCE') AND amount_signed_rupiah > 0)
+      OR (kind IN ('REVERSAL','EXPIRY','SETTLEMENT_OUT') AND amount_signed_rupiah < 0)
+      OR (kind = 'ADJUSTMENT' AND reason IS NOT NULL AND char_length(reason) >= 20)),
+  CHECK (kind <> 'ADJUSTMENT' OR actor_membership_id IS NOT NULL)            -- penyesuaian saldo tanpa pelakunya mustahil
+);
+CREATE VIEW v_wallet_view WITH (security_invoker = true) AS
+SELECT w.tenant_id, w.id AS wallet_id, w.holder_membership_id, w.balance_rupiah,
+       COALESCE(sum(l.amount_signed_rupiah), 0)::bigint AS ledger_sum_rupiah
+  FROM residence_wallets w LEFT JOIN wallet_ledger l ON l.wallet_id = w.id AND l.tenant_id = w.tenant_id
+ GROUP BY w.tenant_id, w.id, w.holder_membership_id, w.balance_rupiah;   -- uji §22.11 butir 3 membandingkan dua angka ini
+CREATE INDEX idx_wallet_ledger_lookup ON wallet_ledger(tenant_id, wallet_id, seq DESC);
+REVOKE UPDATE, DELETE ON wallet_ledger FROM sica_app;
+```
+
+**Kenapa kolom-kolom ini ada.** `bed_allocations` memakai **dua** `EXCLUDE USING gist` — satu per (kamar-tempat tidur, rentang tanggal) dan satu per (mahasiswa, rentang tanggal) — karena dua penempatan bertumpuk bukan konflik yang boleh dipilih petugas: satu tempat tidur hanya untuk satu penghuni pada satu hari, dan satu penghuni tidak boleh menempati dua kamar (pola yang sama dipakai §18.2 untuk jadwal dan §14.7 `0022` untuk jendela pembayaran). `residence_wallets.is_academic_receivable` dipaksa `false` oleh CHECK dan `wallet_ledger.kind = 'TOPUP'` mewajibkan `ref_payment_id`: uang tidak pernah masuk dompet tanpa baris `payments` milik M-10, dan saldo tidak pernah dapat dipakai membayar tagihan akademik — itulah "saldo bukan piutang akademik" sebagai bentuk skema, bukan sebagai catatan produk. `balance_after_rupiah` disimpan pada setiap baris append-only supaya laporan harian tidak menjumlah jutaan baris saat kartu mahasiswa digeser di kantin (§13 pola indeks), dan konsistensinya dengan `balance_rupiah` induk diuji CI §22.11 butir 3, bukan diasumsikan.
+
+**RLS.** Keenam tabel ber-`tenant_id` → `ENABLE` + `FORCE` + `tenant_isolation` dari generator §6.2. `wallet_ledger` diberi policy **SELECT + INSERT** (jejak, bentuk pecahan §16.3.3) dan `REVOKE UPDATE, DELETE`: satu baris yang dapat diedit membuat saldo mahasiswa dapat "diperbaiki" tanpa saksi. Kios mitra hanya melihat `ref_order_number` dan nominal satu transaksinya sendiri, bukan saldo penghuni.
+
+**Status.** Kelas A: `bed_allocation_status` = RESERVED, ACTIVE, EXTENDED, VACATED, CANCELLED (§22.9). Kelas A reuse: `canteen_outlets.state` = `verification_status` (`0061`). Kelas A′: `residence_wallets.state` = ACTIVE, FROZEN, CLOSED; `dorm_beds.maintenance_state` = USABLE, MAINTENANCE, OUT_OF_SERVICE (keadaan **fisik**, bukan okupansi); `gender_policy`, `bed_kind`, `operator_kind`, `settlement_cycle`, `origin_kind`, `wallet_ledger.kind` = `text + CHECK` (§15.3). Kelas C: label gedung/kamar/lantai adalah teks bebas tenant, dan tarif asrama tetap data di `fee_tariff_groups` (§19.4).
+
+### 22.8 Kelas khusus UU PDP — M-41 Klinik Kampus dan M-36 Portal PPKS
+
+Vonis 14 (`PRD §5.13`) menempatkan dua modul ini di luar pola seluruh §22: **isinya** tidak boleh terbaca oleh peran yang memiliki hak baca modulnya. Karena itu keduanya memakai amplop enkripsi §16.3.4 (`v` + `key_version` + `iv` + `ciphertext` + `tag`, minimum 31 byte), kunci `purpose='FIELD_ENCRYPTION'` untuk isi dan kunci **berbeda** `purpose='BLIND_INDEX'` untuk penelusuran, dan penegakan hak baca dilakukan lewat **allowlist grant** + fungsi sesi, bukan lewat daftar peran. Angka tagihan tetap milik M-10: klinik hanya memancarkan peristiwa penagihan tanpa nominal (vonis 5).
+
+#### 22.8.1 M-41 Klinik Kampus — `0071_clinic_health.sql`
+
+```sql
+CREATE TYPE clinic_visit_state AS ENUM
+  ('SCHEDULED','CHECKED_IN','IN_CONSULTATION','COMPLETED','REFERRED','NO_SHOW','CANCELLED');
+
+-- Rekam medis: isi SELALU ciphertext. Tidak ada kolom `text` untuk diagnosis, keluhan, atau hasil lab.
+CREATE TABLE health_records (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  patient_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  patient_student_id uuid REFERENCES students(id), patient_employee_id uuid REFERENCES employees(id),
+  record_kind text NOT NULL CHECK (record_kind IN ('VITALS','CONSULTATION_NOTE','DIAGNOSIS','PRESCRIPTION','LAB_RESULT','IMMUNISATION','REFERRAL','TRIAGE','DISCHARGE_SUMMARY')),
+  recorded_on timestamptz NOT NULL DEFAULT now(),
+  clinician_employee_id uuid NOT NULL REFERENCES employees(id),
+  content_ciphertext bytea NOT NULL,                   -- amplop §16.3.4; `text` polos untuk diagnosis = pelanggaran Ps 4 UU PDP
+  content_key_version int NOT NULL CHECK (content_key_version > 0),
+  record_bidx char(64) NOT NULL,                       -- HMAC atas (patient, kind, recorded_on): cari duplikat tanpa membuka isi
+  icd10_code text CHECK (icd10_code IS NULL OR icd10_code ~ '^[A-Z][0-9]{2}(\.[0-9]{1,2})?$'),
+  is_sensitive boolean NOT NULL DEFAULT true,          -- default benar: diam diam berarti tertutup, bukan terbuka
+  retain_until date, purge_requested_at timestamptz,
+  disclosure_class text NOT NULL DEFAULT 'CLINICAL_TEAM' CHECK (disclosure_class IN ('CLINICAL_TEAM','PATIENT_ONLY','GUARDIAN_MINOR','SATGAS_REFERRAL','NONE')),
+  visit_id uuid,                                       -- FK ke `clinic_appointments` ditambahkan setelah tabelnya lahir
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, id), UNIQUE (tenant_id, record_bidx),
+  CHECK (octet_length(content_ciphertext) >= 31),
+  CHECK (disclosure_class <> 'GUARDIAN_MINOR' OR patient_student_id IS NOT NULL),   -- akses ortu hanya untuk pasien di bawah umur
+  CHECK (retain_until IS NULL OR retain_until > recorded_on::date)
+);
+CREATE INDEX idx_health_patient ON health_records(tenant_id, patient_membership_id, recorded_on DESC);
+CREATE INDEX idx_health_kind ON health_records(tenant_id, record_kind, recorded_on DESC);
+-- Isi tidak pernah diekspor massal tanpa `pii_level` MASKED/PSEUDONYMISED (§16.3.5); tidak ada jalur `text` untuk diagnosis.
+
+CREATE TABLE clinic_appointments (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  patient_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  clinician_employee_id uuid NOT NULL REFERENCES employees(id),
+  scheduled_from timestamptz NOT NULL, scheduled_to timestamptz NOT NULL,
+  state clinic_visit_state NOT NULL DEFAULT 'SCHEDULED',
+  chief_complaint_encrypted bytea,                     -- keluhan awal juga PII: amplop, bukan `text`
+  complaint_key_version int,
+  service_kind text NOT NULL CHECK (service_kind IN ('GENERAL','DENTAL','MIDWIFERY','COUNSELLING','LAB','PHARMACY','VACCINE','FIRST_AID','REFERRAL')),
+  site_id uuid REFERENCES campus_sites(id), room_id uuid REFERENCES rooms(id),
+  checked_in_at timestamptz, completed_at timestamptz, cancelled_reason text, no_show boolean NOT NULL DEFAULT false,
+  UNIQUE (tenant_id, id),
+  CHECK (scheduled_to > scheduled_from),
+  CHECK (completed_at IS NULL OR completed_at >= scheduled_from),
+  CHECK (chief_complaint_encrypted IS NULL OR octet_length(chief_complaint_encrypted) >= 31),
+  CHECK (state <> 'COMPLETED' OR completed_at IS NOT NULL),
+  CHECK (state <> 'CANCELLED' OR cancelled_reason IS NOT NULL),
+  EXCLUDE USING gist (tenant_id WITH =, clinician_employee_id WITH =,
+                      tstzrange(scheduled_from, scheduled_to) WITH &&)
+    WHERE (state IN ('SCHEDULED','CHECKED_IN','IN_CONSULTATION'))
+);
+CREATE INDEX idx_clinic_day ON clinic_appointments(tenant_id, scheduled_from, clinician_employee_id);
+ALTER TABLE health_records ADD CONSTRAINT fk_health_visit
+  FOREIGN KEY (tenant_id, visit_id) REFERENCES clinic_appointments(tenant_id, id);
+
+-- Sesi konseling: kerahasiaan dipaksa, dan satu-satunya jalan keluar adalah grant atau rujukan anonim.
+CREATE TABLE counseling_sessions (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id), counselor_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  session_no smallint NOT NULL CHECK (session_no BETWEEN 1 AND 500),
+  started_at timestamptz NOT NULL, duration_minutes int NOT NULL CHECK (duration_minutes BETWEEN 5 AND 300),
+  content_ciphertext bytea NOT NULL,                   -- catatan konselor: kelas paling sensitif setelah medis
+  content_key_version int NOT NULL CHECK (content_key_version > 0),
+  modality text NOT NULL DEFAULT 'FACE_TO_FACE' CHECK (modality IN ('FACE_TO_FACE','ONLINE','GROUP')),
+  is_confidential boolean NOT NULL DEFAULT true CHECK (is_confidential),   -- dipaksa: tidak ada mode "catatan konseling terbuka"
+  risk_level text CHECK (risk_level IS NULL OR risk_level IN ('NONE','CARE_CONCERN','SELF_HARM','HARM_TO_OTHERS','IMMEDIATE_DANGER')),
+  risk_escalated_at timestamptz, risk_escalated_to uuid, escalation_reason text,
+  referral_report_id uuid,                             -- rujukan ke M-36: **anonim**, hanya penunjuk (vonis 14)
+  referral_anon_code char(16),                         -- kode tanpa identitas pelapor; disimpan terpisah dari isi
+  outcome text CHECK (outcome IS NULL OR outcome IN ('FOLLOW_UP','CLOSED','REFERRED_CLINIC','REFERRED_EXTERNAL','REFERRED_PPKS','REACHED_PARENT')),
+  UNIQUE (tenant_id, student_id, session_no), UNIQUE (tenant_id, id),
+  CHECK (octet_length(content_ciphertext) >= 31),
+  CHECK (risk_level IS NULL OR risk_level = 'NONE' OR risk_escalated_at IS NOT NULL),   -- risiko tanpa eskalasi tercatat = temuan
+  CHECK (referral_report_id IS NULL OR referral_anon_code IS NOT NULL),
+  CHECK (outcome IS NULL OR outcome <> 'CLOSED' OR duration_minutes >= 15)
+);
+CREATE INDEX idx_counseling_student ON counseling_sessions(tenant_id, student_id, started_at DESC);
+
+-- Satu-satunya jalan membaca isi: grant tertulis dengan tujuan, kedaluwarsa, dan MFA.
+CREATE TABLE clinic_disclosure_grants (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  grantee_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  patient_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  scope text NOT NULL CHECK (scope IN ('ALL_RECORDS','SINGLE_RECORD','SINGLE_SESSION','SUMMARY_ONLY')),
+  record_id uuid REFERENCES health_records(id), session_id uuid REFERENCES counseling_sessions(id),
+  purpose text NOT NULL CHECK (purpose IN ('PATIENT_CONSENT','GUARDIAN_OF_MINOR','LEGAL_ORDER','SAFETY_RISK','INSURANCE_CLAIM','RESEARCH_ANONYMISED','CONTINUITY_OF_CARE')),
+  legal_basis text,                                    -- pasal/permintaan tertulis: tanpa ini grant tidak dapat diterbitkan
+  requested_by uuid NOT NULL, approved_by uuid NOT NULL, approved_at timestamptz NOT NULL DEFAULT now(),
+  mfa_verified_at timestamptz, expires_at timestamptz NOT NULL, revoked_at timestamptz, revoked_by uuid,
+  read_count int NOT NULL DEFAULT 0 CHECK (read_count >= 0),   -- setiap pembukaan menambah hitungan → diaudit §16.3 (`DECRYPT_DENIED`/`EXPORT_MASSAL`)
+  note text NOT NULL CHECK (length(note) >= 10),
+  CHECK (approved_by <> requested_by),                 -- pemohon ≠ penyetuju (SoD)
+  CHECK (expires_at > approved_at),
+  CHECK (grantee_membership_id <> patient_membership_id OR purpose = 'PATIENT_CONSENT'),
+  CHECK (scope = 'ALL_RECORDS' OR record_id IS NOT NULL OR session_id IS NOT NULL),
+  CHECK (revoked_at IS NULL OR revoked_by IS NOT NULL)
+);
+CREATE INDEX idx_clinic_grants ON clinic_disclosure_grants(tenant_id, grantee_membership_id, expires_at);
+
+-- Penagihan klinik: peristiwa, BUKAN nominal. Jumlah dan status hanya ada di `invoices` M-10.
+CREATE TABLE clinic_billing_events (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  visit_id uuid NOT NULL, invoice_id uuid NOT NULL,
+  event_kind text NOT NULL CHECK (event_kind IN ('CONSULTATION','LAB','PHARMACY','REFERRAL_FEE','VACCINE','SUMMARISED')),
+  summary_note text,                                   -- ringkasan non-klinis: "periksa, 1 tindakan" tanpa diagnosis (vonis 14 + SoD)
+  linked_by uuid NOT NULL, linked_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (tenant_id, visit_id) REFERENCES clinic_appointments(tenant_id, id),
+  FOREIGN KEY (tenant_id, invoice_id) REFERENCES invoices(tenant_id, id),
+  UNIQUE (tenant_id, invoice_id)                       -- satu surat tagihan untuk satu peristiwa klinik
+);
+```
+
+**Kenapa kolom-kolom ini ada.** `health_records.content_ciphertext` dan `counseling_sessions.content_ciphertext` **tidak punya padanan `text`**, karena satu kolom terbaca-nyata saja cukup untuk membocorkan diagnosis HIV atau riwayat konseling melalui log query, cadangan, dan replika — dan §16.3.4 sudah menetapkan amplop 31 byte sebagai bentuk yang dapat diuji. `counseling_sessions.is_confidential` dipaksa `true` oleh CHECK (`CHECK (is_confidential)`) karena kerahasiaan konseling adalah syarat mahasiswa mau datang; kalau kolom itu bisa `false`, satu keputusan petugas akan membuat seluruh program tidak dipercaya, dan satu-satunya jalan keluar adalah `clinic_disclosure_grants` yang berversi, ber-tujuan, ber-kedaluwarsa, dan **bersedia MFA** dengan `approved_by <> requested_by`. `clinic_billing_events` tidak punya satu kolom rupiah dan `summary_note` dilarang memuat diagnosis karena tagihan dibaca BAUK: ringkasan klinis yang menempel pada tagihan akan mengirim data kesehatan keluar dari kelas pembacanya (vonis 14 + SoD BAAK↔BAUK).
+
+**RLS.** Keempat tabel pasien-terikat (`health_records`, `clinic_appointments`, `counseling_sessions`, `clinic_disclosure_grants`) dan `clinic_billing_events` ber-`tenant_id` → `ENABLE` + `FORCE`, dan policy `tenant_isolation` untuk **INSERT/SELECT** saja tidak cukup: isi dibuka lewat policy tambahan `USING (tenant_id = app.tenant_id() AND app.clinic_can_read(tenant_id, patient_membership_id))`, fungsi yang mengembalikan `true` hanya untuk (a) peran klinis yang ditugaskan, (b) grant aktif yang belum kedaluwarsa, atau (c) pemegangnya sendiri — dan **selalu** `false` untuk `TENANT_ADMIN` serta `PLATFORM_OPERATOR` yang sedang memakai `impersonation_grants` (`0029`, §4.5): administrasi teknis tidak pernah menjadi indikasi klinis.
+
+**Status.** Kelas A: `clinic_visit_state` = SCHEDULED, CHECKED_IN, IN_CONSULTATION, COMPLETED, REFERRED, NO_SHOW, CANCELLED (§22.9). Kelas A′: `record_kind`, `service_kind`, `purpose`, `scope`, `event_kind`, `modality`, `risk_level`, `outcome`, `disclosure_class` = `text + CHECK` (§15.3). Kelas B: `icd10_code` adalah kode WHO nasional yang **tidak dapat** dirawat tenant — penjaganya bentuk, nilainya dari `reference_dictionary_entries` (§14.2, `0028`); tidak ada `CHECK (diagnosis IN (...))`.
+
+#### 22.8.2 M-36 Portal PPKS — `0072_ppks_case.sql`
+
+Vonis 14 memberi M-36 dua hak istimewa yang tidak dimiliki modul mana pun di §22: **nol visibilitas isi bagi `TENANT_ADMIN`** (Permendikbudristek 30/2021 + UU PDP) dan identitas pelapor yang tersimpan terpisah dari isi laporan sehingga satu basis data yang dibobol tidak menghasilkan "siapa melapor siapa".
+
+```sql
+CREATE TYPE ppks_case_state AS ENUM
+  ('INTAKE','SCREENING','PROTECTION_MEASURES','INVESTIGATION','HEARING','DECISION','REFERRAL_EXTERNAL','CLOSED','ARCHIVED','REOPENED');
+
+-- LAPORAN: isi terenkripsi, identitas pelapor pada kolom TERPISAH yang juga terenkripsi.
+CREATE TABLE ppks_reports (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  report_number text NOT NULL,                         -- nomor **kita** (PDD/PPKS lokal); bukan nomor polisi
+  is_anonymous boolean NOT NULL DEFAULT false,
+  reporter_role text NOT NULL CHECK (reporter_role IN ('STUDENT','LECTURER','STAFF','ALUMNI','EXTERNAL','UNKNOWN')),
+  victim_role text NOT NULL CHECK (victim_role IN ('STUDENT','LECTURER','STAFF','ALUMNI','EXTERNAL','UNKNOWN')),
+  reporter_identity_ciphertext bytea,                  -- NULL bila anonim: identitas tidak pernah tersimpan di baris yang sama dengan isinya
+  reporter_identity_key_version int,
+  victim_link_membership_id uuid REFERENCES tenant_memberships(id),   -- hanya bila korban memiliki akun dan memberi persetujuan
+  content_ciphertext bytea NOT NULL,                   -- isi laporan: amplop §16.3.4
+  content_key_version int NOT NULL CHECK (content_key_version > 0),
+  blind_index char(64) NOT NULL,                       -- HMAC atas (korban, terlapor, tanggal): deteksi laporan ganda TANPA membuka isi
+  incident_on date, reported_at timestamptz NOT NULL DEFAULT now(),
+  incident_site_id uuid REFERENCES campus_sites(id), location_note text,
+  case_type_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='jenis_kasus_ppks'` (kekerasan seksual, pelecehan verbal, ...)
+  severity text NOT NULL CHECK (severity IN ('CRITICAL','HIGH','MEDIUM','LOW')),
+  immediate_danger boolean NOT NULL DEFAULT false,     -- memicu proteksi otomatis; tidak menunggu penelaahan
+  state text NOT NULL DEFAULT 'RECEIVED' CHECK (state IN ('RECEIVED','SCREENING','CASE_OPENED','MERGED','DUPLICATE','CLOSED_WITHOUT_CASE','REFERRED_EXTERNAL')),
+  case_id uuid,                                        -- FK ke `ppks_cases` ditambahkan pada blok di bawah
+  merged_into_report_id uuid REFERENCES ppks_reports(id),
+  consent_to_proceed boolean, contact_preference text CHECK (contact_preference IS NULL OR contact_preference IN ('PHONE','WHATSAPP','EMAIL','IN_PERSON','NONE')),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, report_number), UNIQUE (tenant_id, id),
+  CHECK (octet_length(content_ciphertext) >= 31),
+  CHECK (is_anonymous = false OR reporter_identity_ciphertext IS NULL),   -- laporan anonim tidak dapat "tidak anonim" di baris yang sama
+  CHECK (is_anonymous = (reporter_role = 'UNKNOWN')),   -- anonim ATAU menyebut peran pelapor: tidak pernah setengah-setengah
+  CHECK (blind_index ~ '^[0-9a-f]{64}$'),
+  CHECK (immediate_danger = false OR state <> 'CLOSED_WITHOUT_CASE'),     -- bahaya langsung tidak boleh ditutup tanpa kasus
+  CHECK (merged_into_report_id IS NULL OR merged_into_report_id <> id)
+);
+CREATE INDEX idx_ppks_reports_state ON ppks_reports(tenant_id, state, reported_at DESC);
+CREATE INDEX idx_ppks_reports_blind ON ppks_reports(tenant_id, blind_index);
+
+CREATE TABLE ppks_cases (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  case_number text NOT NULL,
+  state ppks_case_state NOT NULL DEFAULT 'INTAKE',
+  opened_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz, archived_at timestamptz,
+  lead_satgas_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  team_membership_ids jsonb NOT NULL DEFAULT '[]'::jsonb,   -- anggota satgas yang **ternominasikan**; hak baca tetap per grant (§22.8.2 access_grants)
+  accused_link_membership_id uuid REFERENCES tenant_memberships(id),  -- identitas terlapor: kolom terpisah dari isi, terbatas perannya
+  protection_order boolean NOT NULL DEFAULT false, no_contact_order boolean NOT NULL DEFAULT false,
+  external_referral_kind text CHECK (external_referral_kind IS NULL OR external_referral_kind IN ('POLICE','LPSK','KOMNAS_PEREMPUAN','HOSPITAL','COUNSELLING','RECTORATE','NONE')),
+  external_referral_ref text, decision_summary_ciphertext bytea, decision_key_version int,
+  confidentiality_level text NOT NULL DEFAULT 'MAXIMUM' CHECK (confidentiality_level IN ('MAXIMUM','SATTGAS_ONLY','REPORTER_AWARE')),
+  reopened_count smallint NOT NULL DEFAULT 0 CHECK (reopened_count BETWEEN 0 AND 3),
+  closed_reason text CHECK (closed_reason IS NULL OR length(closed_reason) >= 20),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, case_number), UNIQUE (tenant_id, id),
+  CHECK (state <> 'CLOSED' OR (closed_at IS NOT NULL AND closed_reason IS NOT NULL)),
+  CHECK (state <> 'INTAKE' OR closed_at IS NULL),
+  CHECK (lead_satgas_membership_id <> accused_link_membership_id),          -- penyidik tidak boleh orang yang dilaporkan
+  CHECK (decision_summary_ciphertext IS NULL OR octet_length(decision_summary_ciphertext) >= 31)
+);
+ALTER TABLE ppks_reports ADD CONSTRAINT fk_reports_case
+  FOREIGN KEY (tenant_id, case_id) REFERENCES ppks_cases(tenant_id, id);
+
+-- Linimasa insert-only: setiap langkah punya angka seri + hash (rantai §16.3/§18.8), isi tetap ciphertext.
+CREATE TABLE ppks_case_timelines (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  case_id uuid NOT NULL, seq int NOT NULL CHECK (seq > 0),
+  event_kind text NOT NULL CHECK (event_kind IN ('REPORT_LINKED','SCREENING_DONE','MEASURE_GRANTED','MEASURE_LIFTED','INTERVIEW','EVIDENCE_RECEIVED','HEARING','DECISION','REFERRAL','STATUS_CHANGED','ARCHIVED')),
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  summary_ciphertext bytea NOT NULL, summary_key_version int NOT NULL CHECK (summary_key_version > 0),
+  actor_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  prev_hash char(64), hash char(64) NOT NULL,          -- rantai per kasus; tanpa hash, timeline dapat disisipi
+  FOREIGN KEY (tenant_id, case_id) REFERENCES ppks_cases(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, case_id, seq),
+  CHECK (octet_length(summary_ciphertext) >= 31),
+  CHECK (hash ~ '^[0-9a-f]{64}$' AND (prev_hash IS NULL OR prev_hash ~ '^[0-9a-f]{64}$')),
+  CHECK (seq > 1 OR prev_hash IS NULL)
+);
+REVOKE UPDATE, DELETE ON ppks_case_timelines FROM sica_app;
+
+-- Tindakan perlindungan/penanganan: angka yang mengubah hak seseorang ⇒ wajib empat-mata + tenggat.
+CREATE TABLE ppks_measures (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  case_id uuid NOT NULL,
+  measure_item_id uuid NOT NULL REFERENCES reference_items(id),   -- kelas C `kind='tindakan_ppks'` (pendampingan, penonaktifan kuliah, pindah kelas, restraining)
+  target_kind text NOT NULL CHECK (target_kind IN ('REPORTER','VICTIM','ACCUSED','WITNESS')),
+  target_membership_id uuid REFERENCES tenant_memberships(id),
+  state approval_status NOT NULL DEFAULT 'PENDING',    -- reuse `approval_status` (`0054`), tidak menambah kosakata persetujuan
+  effect_from timestamptz NOT NULL, effect_to timestamptz,
+  requested_by uuid NOT NULL, approved_by uuid, approved_at timestamptz, lifted_by uuid, lifted_at timestamptz, lift_reason text,
+  affects_academic_status boolean NOT NULL DEFAULT false,   -- **tidak boleh** true: PPKS tidak memutuskan status akademik (vonis 14)
+  affects_employment boolean NOT NULL DEFAULT false,        -- keputusan kepegawaian = M-06 + penyetuju SDM, bukan satgas saja
+  second_approver uuid,                                     -- penyetuju kedua, wajib bila tindakan menyentuh kepegawaian
+  note_encrypted bytea,
+  FOREIGN KEY (tenant_id, case_id) REFERENCES ppks_cases(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, case_id, measure_item_id, effect_from),
+  CHECK (approved_by IS NOT NULL AND approved_by <> requested_by),
+  CHECK (effect_to IS NULL OR effect_to > effect_from),
+  CHECK (affects_academic_status = false),
+  CHECK (affects_employment = false OR (second_approver IS NOT NULL AND second_approver <> approved_by)),  -- empat-mata penuh bila hak kerja tersentuh
+  CHECK (state <> 'APPROVED' OR approved_at IS NOT NULL),
+  CHECK (state <> 'REJECTED' OR lift_reason IS NOT NULL)
+);
+
+-- Allowlist akses: satu grant = satu orang × satu kasus × satu tujuan, dengan MFA dan TTL.
+CREATE TABLE ppks_access_grants (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  case_id uuid NOT NULL, grantee_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  grantee_role_carrier text NOT NULL,                  -- salinan `member_role` SAAT diterbitkan, untuk bukti; bukan dasar hak (AGENTS §3.8)
+  scope text NOT NULL CHECK (scope IN ('CONTENT','IDENTITY','TIMELINE','MEASURES','DECISION','ALL')),
+  purpose text NOT NULL CHECK (purpose IN ('HANDLING','PROTECTION','HEARING','LEGAL','REPORTER_RIGHT','AUDIT')),
+  requested_by uuid NOT NULL, approved_by uuid NOT NULL, approved_at timestamptz NOT NULL DEFAULT now(),
+  mfa_verified_at timestamptz NOT NULL,                -- tanpa MFA terverifikasi, grant tidak dapat diterbitkan (CHECK di bawah)
+  expires_at timestamptz NOT NULL, revoked_at timestamptz, revoked_by uuid,
+  read_count int NOT NULL DEFAULT 0 CHECK (read_count >= 0),   -- pembukaan isi **wajib** tercatat (vonis 14: M-05 menyimpan jejak, bukan isi)
+  last_read_at timestamptz,
+  reason text NOT NULL CHECK (length(reason) >= 20),
+  FOREIGN KEY (tenant_id, case_id) REFERENCES ppks_cases(tenant_id, id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, case_id, grantee_membership_id, scope, purpose),
+  CHECK (approved_by <> requested_by),
+  CHECK (mfa_verified_at >= approved_at),
+  CHECK (expires_at > approved_at),
+  CHECK (revoked_at IS NULL OR revoked_by IS NOT NULL),
+  CHECK (grantee_role_carrier NOT IN ('tenant_admin','super_admin') OR purpose = 'AUDIT')
+);
+CREATE INDEX idx_ppks_grants_active ON ppks_access_grants(tenant_id, grantee_membership_id, expires_at);
+```
+
+**Kenapa kolom-kolom ini ada.** `ppks_reports.reporter_identity_ciphertext` berada di **kolom terpisah** dari `content_ciphertext` karena pencabutan akses harus dapat dilakukan untuk satu dimensi saja: satgas yang menangani kasus boleh membaca isi tanpa menjadi pihak yang tahu identitas pelapor bila laporan itu anonim, dan bila keduanya ada di satu blob maka setiap pembukaan isi otomatis membocorkan pelapor — persis efek dingin yang membuat korban tidak pernah melapor. `blind_index` atas (korban, terlapor, tanggal) memakai kunci `purpose='BLIND_INDEX'` yang berbeda dari kunci isi, sehingga duplikasi laporan dapat dikenali tanpa satu pun dekripsi, dan ia tidak pernah unik karena dua korban sah melaporkan satu terlapor pada hari yang sama. `ppks_measures.affects_academic_status` dipaksa `false` oleh CHECK dan `ppks_access_grants` menolak pemegang `tenant_admin`/`super_admin` kecuali untuk tujuan `AUDIT`: tindakan perlindungan tidak boleh mengubah status akademik (itu milik `student_status_history` M-30/M-02) dan administrasi teknis tidak pernah menjadi penyidik (vonis 14, Permendikbudristek 30/2021).
+
+**RLS.** Kelima tabel ber-`tenant_id` → `ENABLE` + `FORCE`. Policy-nya **bukan** `tenant_isolation` semata: untuk `ppks_reports`, `ppks_case_timelines`, dan `ppks_measures` dipasang policy `USING (tenant_id = app.tenant_id() AND app.ppks_can_read(tenant_id, case_id, scope))` dengan fungsi `app.ppks_can_read()` yang (i) selalu mengembalikan `false` bila peran sesi adalah `tenant_admin` atau `super_admin` kecuali grant `purpose='AUDIT'` yang sah, (ii) memerlukan grant aktif yang belum kedaluwarsa, dan (iii) mencatat setiap pembukaan ke `system_audit_trails.event_kind='DECRYPT_DENIED'`/`EXPORT_MASSAL` (§16.3.2) sehingga M-05 memegang **siapa membuka** tanpa pernah memegang **apa isinya**. Penambahan fungsi ini adalah pekerjaan `0072` itu sendiri; sampai ia ada, gugus ini tidak boleh dibuka ke pengguna mana pun dan statusnya tercatat di §22.12.
+
+**Status.** Kelas A: `ppks_case_state` = INTAKE, SCREENING, PROTECTION_MEASURES, INVESTIGATION, HEARING, DECISION, REFERRAL_EXTERNAL, CLOSED, ARCHIVED, REOPENED (§22.9). Kelas A reuse: `ppks_measures.state` = `approval_status` (`0054`). Kelas A′: `ppks_reports.state` = RECEIVED, SCREENING, CASE_OPENED, MERGED, DUPLICATE, CLOSED_WITHOUT_CASE, REFERRED_EXTERNAL; `event_kind`, `scope`, `purpose`, `severity`, `target_kind`, `confidentiality_level`, `external_referral_kind`, `contact_preference`, `reporter_role`, `victim_role` = `text + CHECK` (§15.3). Kelas C: `case_type_item_id` dan `measure_item_id` menunjuk `reference_items` (`kind='jenis_kasus_ppks'`, `kind='tindakan_ppks'`) — kampus menambah jenis tindakan tanpa cabang kode, dan **tidak ada** `CHECK (measure IN (...))`.
+
+### 22.9 Register nomor migrasi baru
+
+Nomor **diukur dari §14.7 lebih dulu** sebelum satu pun ditulis di tabel ini: §14.7 menutup registrinya pada `0050_menu_parameter_permissions.sql` dan menyatakan "`0051` ke atas masih bebas". Saat pengukuran itu dilakukan, `grep -rohE "00(5[1-9]|6[0-9]|7[0-9])_[a-z0-9_]*\.sql" docs/` atas seluruh `docs/` menghasilkan **nol** nama; tabel di bawah inilah yang **pertama** menetapkan `0051`–`0075`, dan `0076` ke atas masih bebas — jadi tidak ada nomor yang dirampas. `ls packages/database/migrations/` hari ini hanya berisi `0001`–`0006` dan `0011`, sehingga **tidak satu pun** nomor di bawah pernah dieksekusi dan semuanya masih dapat dinomori ulang secara sah; begitu satu berkas ditulis ke direktori itu, nomornya membeku (aturan "penomoran ulang hanya sebelum dieksekusi" di §14.7). Satu nomor = satu nama berkas; tidak ada dua baris dengan nomor yang sama, dan tidak ada baris tanpa dependensi hulu yang disebut.
+
+| Nomor | Nama berkas | Modul | Objek baru | Dependensi hulu (harus lebih dulu) |
+|---|---|---|---|---|
+| `0073` | `0073_conference_channels.sql` | M-02 · M-15 · M-16 | enum `conference_provider` + `conference_connections` + `conference_meetings` + `conference_channel_events` + ALTER `classes.virtual_meeting_provider` + 3 baris parameter | `0049` (parameter), `0005` (class_sessions), `0011` (peran) |
+| `0074` | `0074_attendance_channel_evidence.sql` | M-18 · M-05 | `attendance_channel_evidence` + ALTER `attendances.review_state` + indeks bukti | `0073`, `0005` (attendances), `0017` (attendance_appeals) |
+| `0075` | `0075_modality_vocabulary_fix.sql` | silang §21.10.2 | rename `classes.delivery_mode` → `learning_modality` (Expand-and-Contract), pemetaan alias `HYBRID`/`OFFLINE`/`TEAMS`/`BUILTIN`/`MEET` + CHECK `crm_leads.preferred_channel` | `0073`, `0002`, `0058` (crm_leads) |
+| `0051` | `0051_helpdesk_ticketing.sql` | M-04 | 7 tabel + 5 enum | `0001` (tenant, memberships), `0005` (organizations, rooms), `0020` (attachments, sequences), `0044` (campus_sites), `0047` (kamus) |
+| `0052` | `0052_credential_pin_sivil.sql` | M-35 | 5 tabel + 2 enum | `0051`, `0003` (students), `0019`/`0027` (graduation_records), `0035` (kunci tenant) |
+| `0053` | `0053_external_parties.sql` | silang §22.2 | 2 tabel + 1 enum | `0001`, `0005` (organizations), `0047` (reference_items), `0048` (attributes), `0035` (amplop NPWP) |
+| `0054` | `0054_hris_payroll.sql` | M-06 | 6 tabel ber-tenant + 1 tabel global + 1 view + 3 enum | `0053`, `0011` (peran), `0020`, `0035` (amplop), `0036` (btree_gist untuk `EXCLUDE` cuti) |
+| `0055` | `0055_sister_sync.sql` | M-08 | 4 tabel | `0054` (employees), `0030` (queue_operations), `0028` (feeder_identities), `0040` (pola airmen), `0035` |
+| `0056` | `0056_scholarship.sql` | M-11 | 6 tabel + 2 enum | `0054`, `0046` (fee_tariff_groups), `0035` (student_bank_accounts), `0015` (invoices, ledger, payment_waivers) |
+| `0057` | `0057_endowment_fund.sql` | M-47 | 6 tabel | `0053`, `0056` (funding_disbursements), `0015` (payments), `0020` (penomoran) |
+| `0058` | `0058_crm_marketing.sql` | M-45 | 7 tabel + 1 enum | `0053`, `0021` (pmb_applications), `0039` (ml_model_versions), `0035` (amplop kontak), `0049` (parameter) |
+| `0059` | `0059_career_center.sql` | M-28 | 4 tabel + 1 enum | `0053`, `0036` (engine_runs), `0003` (students), `0020` |
+| `0060` | `0060_mobility_kui.sql` | M-29 | 4 tabel + 1 enum | `0053`, `0054`, `0033` (mbkm_conversions), `0008` (courses), `0035` |
+| `0061` | `0061_publication_journals.sql` | M-21 | 6 tabel + 2 enum | `0020`, `0015` (invoices), `0046`, `0047`, `0054` (employees untuk penulis internal) |
+| `0062` | `0062_ip_incubator.sql` | M-22 | 5 tabel + 1 enum | `0061` (verification_status), `0015`, `0053`, `0054`, `0047` |
+| `0063` | `0063_lppm_research.sql` | M-44 | 6 tabel + 1 enum | `0056` (funding_disbursements), `0057` (allocation_grants), `0061`, `0062`, `0054`, `0036` |
+| `0064` | `0064_student_affairs.sql` | M-24 | 4 tabel | `0026` (student_activities), `0061` (verification_status), `0047`, `0009` (clearance_dimension) |
+| `0065` | `0065_event_signage.sql` | M-43 | 5 tabel + 1 enum | `0053`, `0044`, `0005` (rooms), `0046`, `0015`, `0036` (btree_gist untuk `EXCLUDE` signage) |
+| `0066` | `0066_fieldwork_placement.sql` | M-25 | 6 tabel + 1 enum | `0053`, `0054` (approval_status), `0061` (verification_status), `0033` (mbkm_type, mbkm_conversions), `0009`, `0020` |
+| `0067` | `0067_library_circulation.sql` | M-39 | 7 tabel + 2 enum | `0046` (fee_tariff_groups), `0015` (invoices, payment_waivers), `0009` (clearance_dimension), `0044`, `0047` |
+| `0068` | `0068_asset_inventory.sql` | M-40 | 4 tabel + 1 enum + ALTER `helpdesk_tickets`/`helpdesk_categories` | `0051`, `0053`, `0054`, `0044`, `0048`, `0015` (ledger untuk jurnal penyusutan) |
+| `0069` | `0069_procurement_pbj.sql` | M-46 | 9 tabel | `0053`, `0054`, `0068` (assets), `0015` (ledger), `0047`, `0020` |
+| `0070` | `0070_residence_canteen.sql` | M-42 | 6 tabel + 1 enum | `0053`, `0056` (funding_disbursements), `0046` (ASRAMA), `0015` (payments), `0044`, `0036` (btree_gist) |
+| `0071` | `0071_clinic_health.sql` | M-41 | 5 tabel + 1 enum + fungsi `app.clinic_can_read()` | `0054`, `0035` (kunci + amplop), `0015` (invoices), `0061` (verification_status), `0044` |
+| `0072` | `0072_ppks_case.sql` | M-36 | 5 tabel + 1 enum + fungsi `app.ppks_can_read()` | `0054` (approval_status), `0035`, `0047`, `0043` (rantai hash), `0034` (system_audit_trails), `0064` (dimensi sanksi) |
+
+**Enum kelas A yang lahir di §22** (baris §15.2 berikutnya; tiap nama wajib ada di `packages/database/src/schema/enums.ts` + konstanta Zod **pada migrasi yang sama**, §15.5 butir 3):
+
+| Enum | Nilai | Rumah | Nomor |
+|---|---|---|---|
+| `ticket_priority` | LOW, NORMAL, HIGH, URGENT | `helpdesk_tickets` | `0051` |
+| `ticket_state` | OPEN, IN_PROGRESS, PENDING_USER, RESOLVED, CLOSED, CANCELLED | `helpdesk_tickets` | `0051` |
+| `sla_policy_state` | DRAFT, ACTIVE, RETIRED | `helpdesk_sla_policies` | `0051` |
+| `kb_article_state` | DRAFT, REVIEW, PUBLISHED, RETIRED | `kb_articles` | `0051` |
+| `kb_visibility` | PUBLIC, STUDENT, STAFF, AGENT | `kb_articles` | `0051` |
+| `pin_status` | RESERVED, ISSUED, DELIVERED, REVOKED, EXPIRED | `pin_reservations` | `0052` |
+| `certificate_state` | DRAFT, SIGNED, ISSUED, REVOKED, SUPERSEDED | `e_certificates` | `0052` |
+| `party_verification_status` | UNVERIFIED, UNDER_REVIEW, VERIFIED, REJECTED, EXPIRED, REVOKED | `external_organizations`, `school_partners`, `career_employers`, `placement_sites` | `0053` |
+| `employment_status` | PROBATION, ACTIVE, ON_LEAVE, SUSPENDED, RESIGNED, RETIRED, TERMINATED | `employees` | `0054` |
+| `approval_status` | PENDING, APPROVED, REJECTED, CANCELLED, EXPIRED | `leave_requests`, `disbursement_schedules`, `reviewer_assignments`, `fieldwork_logs`, `yield_allocations`, `allocation_grants`, `ppks_measures` | `0054` |
+| `payroll_run_status` | DRAFT, CALCULATED, REVIEWED, APPROVED, POSTED, PAID, VOID | `payroll_runs` | `0054` |
+| `paycomponent_kind` | EARNING, DEDUCTION, REIMBURSEMENT | `paycomponents` | `0054` |
+| `payroll_adjustment_state` | PENDING, APPROVED, APPLIED, REJECTED | `payroll_adjustments` | `0054` |
+| `kpi_component_state` | DRAFT, ACTIVE, RETIRED | `kpi_components` | `0054` |
+| `kpi_result_state` | DRAFT, ASSESSED, APPROVED | `kpi_results` | `0054` |
+| `scholarship_application_status` | DRAFT, SUBMITTED, UNDER_REVIEW, ELIGIBLE, NOT_ELIGIBLE, AWARDED, PARTIALLY_AWARDED, REJECTED, WITHDRAWN, LAPSED | `scholarship_applications` | `0056` |
+| `funding_disbursement_status` | REQUESTED, APPROVED, POSTED, PAID, FAILED, REVERSED, CANCELLED | `funding_disbursements` | `0056` |
+| `lead_status` | NEW, CONTACTED, QUALIFIED, NURTURING, APPLIED, CONVERTED, ENROLLED, LOST, RECYCLED | `crm_leads` | `0058` |
+| `career_application_status` | DRAFT, SUBMITTED, IN_REVIEW, SHORTLISTED, INTERVIEW, OFFERED, ACCEPTED, DECLINED, WITHDRAWN, REJECTED | `career_applications` | `0059` |
+| `mobility_status` | NOMINATED, HOST_ACCEPTED, VISA_PENDING, DEPARTED, ON_SITE, COMPLETED, RETURNED, WITHDRAWN, CANCELLED | `mobility_exchanges` | `0060` |
+| `article_status` | DRAFT, SUBMITTED, UNDER_REVIEW, REVISION_REQUESTED, ACCEPTED, REJECTED, EDITING, PUBLISHED, WITHDRAWN, RETRACTED | `articles` | `0061` |
+| `verification_status` | SUBMITTED, UNDER_VERIFICATION, VERIFIED, REJECTED, REVOKED | `article_indexing_events`, `startup_milestones`, `partner_evaluations`, `research_outputs`, `canteen_outlets` | `0061` |
+| `ip_application_status` | DRAFT, FILED, FEE_DUE, FORMALITY_EXAM, PUBLISHED_OPPOSITION, SUBSTANTIVE_EXAM, DECISION_ISSUED, GRANTED, REJECTED, WITHDRAWN, LAPSED, RENEWED, LICENSED | `ip_applications`, `ip_statuses` | `0062` |
+| `grant_proposal_status` | DRAFT, SUBMITTED, ADMIN_SCREENING, UNDER_REVIEW, REVISION, RECOMMENDED, FUNDED, NOT_FUNDED, WITHDRAWN, TERMINATED | `research_proposals` | `0063` |
+| `event_status` | DRAFT, APPROVED, PUBLISHED, REGISTRATION_OPEN, REGISTRATION_CLOSED, RUNNING, COMPLETED, CANCELLED, POSTPONED | `events` | `0065` |
+| `fieldwork_status` | PROPOSED, APPROVED, PLACED, ACTIVE, ON_HOLD, COMPLETED, EVALUATED, CLOSED, TERMINATED | `fieldwork_groups` | `0066` |
+| `library_item_state` | IN_PROCESSING, AVAILABLE, ON_LOAN, RESERVED, IN_REPAIR, LOST, WITHDRAWN, ON_DISPLAY, TRANSFERRED | `items` | `0067` |
+| `library_loan_state` | LOANED, RETURNED, OVERDUE, LOST_COMPENSATED, CANCELLED | `circulations` | `0067` |
+| `asset_status` | ACQUIRED, REGISTERED, IN_USE, IN_MAINTENANCE, ON_LOAN, TRANSFERRED, DISPOSED, WRITTEN_OFF, LOST, DAMAGED | `assets` | `0068` |
+| `bed_allocation_status` | RESERVED, ACTIVE, EXTENDED, VACATED, CANCELLED | `bed_allocations` | `0070` |
+| `clinic_visit_state` | SCHEDULED, CHECKED_IN, IN_CONSULTATION, COMPLETED, REFERRED, NO_SHOW, CANCELLED | `clinic_appointments` | `0071` |
+| `ppks_case_state` | INTAKE, SCREENING, PROTECTION_MEASURES, INVESTIGATION, HEARING, DECISION, REFERRAL_EXTERNAL, CLOSED, ARCHIVED, REOPENED | `ppks_cases` | `0072` |
+
+**Enum yang dipakai ulang, bukan dibuat ulang** (agar tidak ada dua kosakata untuk satu keadaan): `queue_operation_state` dan `queue_operation_kind` (`0030`) untuk `sister_sync_queue` — dengan konsekuensi `ALTER TYPE … ADD VALUE` dua migrasi sebelum `SISTER_PUSH`/`SISTER_PULL_RECONCILE` dapat dipakai; `clearance_dimension` (`0009`) untuk dimensi sanksi kemahasiswaan (`STUDENT_AFFAIRS`) dan sinyal pustaka (`LIBRARY`); `mbkm_type` (`0033`) untuk jenis usulan konversi KKN; `environment` tiga nilai §15.3 untuk SIVIL, SISTER, dan Feeder.
+
+### 22.10 Alias kalah yang lahir di §22
+
+Lanjutan register §14.8. Satu nama menang, nama lain alias, dan baris ini **hukumnya sama** dengan §14.8: dokumen pemilik alias wajib menunjuk nama pemenang, bukan sebaliknya.
+
+| Nama yang diminta atau dicoba | Putusan | Pemegang nama sebenarnya |
+|---|---|---|
+| `ticket_logs`, `ticket_comments`, `ticket_assignment_history` | **KALAH** — satu jejak tiket, satu tabel, `kind` membedakan isinya | `ticket_events` (`0051`) |
+| `faq_articles`, `kb_solutions` | **KALAH** | `kb_articles` + `kb_article_links` (`0051`) |
+| `pin_codes`, `diploma_pins` (kolom PIN) | **KALAH** — PIN tidak pernah disimpan sebagai kolom terbaca di mana pun | `pin_reservations.pin_hash` HMAC (`0052`) |
+| `partners`, `mitra`, `external_parties`, `organizations_external` sebagai tabel biodata | **KALAH** — enam modul akan menyalin nama/alamat yang sama enam kali | `external_organizations` + `external_org_roles` (`0053`) |
+| `school_partners`, `career_employers`, `procurement_vendors`, `placement_sites`, `endowment_donors` sebagai **biodata** | **KALAH sebagai biodata**, **MENANG sebagai profil modul** — semuanya foreign key ke master yang sama, tidak satu pun punya kolom nama/alamat/NPWP | `external_organizations` (`0053`) untuk identitas; profil modul untuk keputusan |
+| `employees` sebagai kartu biodata pegawai | **KALAH sebagian** — nama, telepon, NIP, NIDN tetap di `staff`/`lecturers` (§11.3); `employees` hanya kartu kepegawaian | `staff`, `lecturers` (identitas); `employees` (`0054`) kontrak kerja |
+| `payslips`, `payroll_details`, `salary_lines` | **KALAH** — header payslip tidak ada; total adalah view | `payslip_lines` + `v_payslip_totals` (`0054`) |
+| `concentrations` sebagai tabel induk peminatan (`0013`) | **KALAH** — nama peminatan adalah milik kampus dan sudah jadi kamus; membuat tabel induk kedua memberi dua tempat untuk satu nama | `reference_items(kind = konsentrasi)` + `concentration_preferences`/`concentration_placements` yang menyimpan `concentration_ref` (`§26` keputusan 1) |
+| `laboratories` sebagai tabel ruang praktik (`0013`) | **KALAH** — ruang praktik adalah `rooms` dengan `room_type = LAB`; kapasitas dan alat sudah punya rumah | `rooms` + `lab_resource_capabilities` + `lab_allocation_items` (`§26` keputusan 1) |
+| `learning_products` (`0014`) | **KALAH** — "luaran" sudah dua kali dipegang dokumen ini: luaran pembelajaran oleh OBE, luaran karya oleh bentuk TA | `course_outcomes`/`program_outcomes` (`0032`) dan `final_project_outputs` (`§22`) |
+| `payment_plans` (`0015`) | **KALAH** — termin + jatuh tempo + jumlah per termin sudah dimiliki tabel yang berjalan | `invoice_installments(invoice_id, seq, due_on, amount_rupiah)`; aturan "jumlah termin = nilai induk" dijaga pemicu (`§26.3`) |
+| `leave_balances` (kolom `sisa_cuti` yang dapat disunting) | **KALAH** — sisa cuti adalah turunan hak dikurangi yang sudah disetujui | `leave_requests` + view `v_leave_balance` (`0054`) |
+| `pph21_tariffs`, `tax_rates` sebagai konstanta kode | **KALAH** — tarif negara, wajib berversi dan tidak dapat diedit tenant | `pph21_brackets` global (`0054`) |
+| `sister_sync_logs`, `sister_payloads`, `sync_watermark` generik | **KALAH** — antrean sudah punya pemilik, dan airmen per sistem tidak boleh berbagi kunci dengan airmen PDDikti | `queue_operations` (`0030`), `sister_sync_queue` + `sister_delta_watermarks` (`0055`), `feeder_sync_watermarks` (`0040`) untuk domain PDDikti |
+| `disbursement_requests` (M-44), `scholarship_disbursements`, `endowment_disbursements` | **KALAH** — satu pencairan untuk semua program dana | `funding_disbursements` (`0056`) dengan `program_kind` |
+| `scholarship_awards`, `award_lines` | **KALAH** — keputusan award adalah keadaan lamaran, bukan tabel kedua | `scholarship_applications` + `disbursement_schedules` (`0056`) |
+| `contracts` generik (M-44 dan M-46 keduanya memintanya) | **KALAH** — dua objek berbeda dengan mesin keadaan berbeda tidak boleh berbagi satu nama | `research_grant_contracts` (`0063`), `procurement_contracts` (`0069`) |
+| `article_authors`, `journal_authors` | **KALAH** — penulis adalah baris bersistem urutan, bukan tabel nama | `article_author_lines` (`0061`) |
+| `ip_documents`, `hki_files` | **KALAH** — berkas punya satu pemilik polymorphic | `attachments` (`0020`, `category='berkas_hki'`) |
+| `student_activities` (`0026`) | **KALAH** — satu konsep tidak boleh punya dua tabel; `activity_participations` (`0064`, §22.6.1) sudah punya DDL lengkap | `activity_participations` + empat objek sisa §23.5 |
+| `convocations` (pernah dipakai sebagai nama jalur di `API_SPEC §7.27`) | **KALAH sebagai nama objek** — objek milik `0019` | `commencement_batches` (§23.4); jalur sudah diralat |
+| `alumni_profiles` | **DILARANG** — alumni adalah `students` dengan `status_akademik='GRADUATED'` | `students` + `tracer_*` (`0077`, §23.6) |
+| `kps_records` sebagai tabel kedua KHS | **DILARANG** — KPS maba adalah proyeksi `transcript_versions`/`enrollments`, bukan arsip baru | `transcript_versions` (`0027`, §23.3) |
+| `activity_types`, `activity_kinds`, `achievement_levels` sebagai tabel | **KALAH sebagai tabel**, **MENANG sebagai kamus** (`§14.7` baris G kemahasiswaan direvisi ke arah ini) | `reference_items(kind='jenis_aktivitas_mahasiswa')`, `kind='tingkat_prestasi'` (§20) |
+| `student_activities` di §22 | **DIPAKAI, TIDAK DIBUAT ULANG** — nomornya tetap `0026` | `student_activities` (`0026`, §14.7) |
+| `event_attendances` atau check-in acara yang ditulis ke `attendances` | **KALAH MUTLAK** — vonis 9: M-18 satu-satunya pemilik vonis kehadiran akademik | `gate_checkins` (`0065`) untuk acara; `attendances` (§5) untuk kelas |
+| `asset_maintenance_tickets`, `service_requests` | **KALAH** — mesin tiket hanya satu | `helpdesk_tickets` (`0051`) + `helpdesk_categories.queue_kind='ASSET'` + `asset_id` (`0068`) |
+| `asset_ledger`, `asset_history` | **KALAH** — kartu bergerak ditulis ke jejak, bukan ke ledger kedua | `depreciation_entries` (`0068`) untuk angka; `audit_logs` (§4) untuk perpindahan |
+| `vendors` sebagai tabel identitas | **KALAH sebagian** — profil pengadaan saja | `procurement_vendors` (`0069`) + master (`0053`) |
+| `wallets`, `campus_wallet`, `canteen_balance` sebagai pengganti `deposits` | **KALAH sebagai pengganti** — `deposits` (§5) tetap prepayment akademik yang mengurangi tagihan; dompet kantin adalah liabilitas tertutup ke kios dan **tidak pernah** menyentuh `invoices` | `residence_wallets` + `wallet_ledger` (`0070`); uji §22.11 butir 3 |
+| `credit_transfer_mappings` (M-29) | **KALAH** — "mapping" menyiratkan keputusan yang bukan milik KUI | `credit_transfer_proposals` (`0060`) + `mbkm_conversion_lines` (`0033`) |
+| `conversion_requests` (M-25) | **KALAH** — usulan bukan vonis, dan namanya terlalu dekat dengan pemilik | `conversion_proposals` (`0066`) → `mbkm_conversions` (`0033`) |
+| `library_fees`, `denda_buku` (kolom nominal di tabel pustaka) | **KALAH** — tidak ada kolom rupiah di M-39 | `library_fines` jembatan + `invoices` (§5) |
+| `alumni` (tabel M-28) | **KALAH** — alumni adalah `students` dengan `status='GRADUATED'`; dua tabel orang = dua identitas | `students` (§5, `0003`) |
+| `funnel_score` sebagai kolom di `crm_leads` | **KALAH** — skor model pada baris bisnis membuat angka probabilistik tampak seperti keadaan | `funnel_scores` read-model (`0058`) |
+| `medical_records`, `rekam_medis` dengan kolom `text` | **KALAH** — isi medis hanya ciphertext | `health_records` (`0071`) |
+| `ppks_logs`, `case_notes`, `saran_satgas` | **KALAH** — linimasa berantai hash, bukan catatan bebas | `ppks_case_timelines` (`0072`) |
+| `access_request_status` (enum §15.1) vs `approval_status` | **KEDUANYA HIDUP, SATU ARAH** — `approval_status` (`0054`) adalah kosakata rantai persetujuan generik; `access_request_status` tetap pemilik alur perubahan akses (`0011`) dan **digabung ke `approval_status`** lewat Expand-and-Contract setelah `0011` dieksekusi. Tidak ada tabel yang boleh memakai keduanya sekaligus. | §15.1 (lama), §22.9 (baru) |
+
+**Tiga nama yang saya tolak karena sudah dimiliki orang lain menurut §5.13** (selain yang tercatat di atas, dan inilah yang paling sering disalahgunakan): `invoices` kedua untuk APC, denda, dan tarif asrama (pemilik = M-10, §5); `credit_conversion` kedua untuk magang dan pertukaran pelajar (pemilik = M-38/ALG-16, `0033`); `graduation_status`/`is_graduated` kedua pada tabel pustaka, wisuda, atau sanksi (pemilik = M-30, `clearances` + `graduation_records`).
+
+### 22.11 Query verifikasi CI §22
+
+Query ini **dieksekusi**, bukan pajangan. Semuanya dirancang gagal: satu baris hasil berarti migrasi ditolak.
+
+```sql
+-- 1. Tabel jembatan tidak boleh menyimpan nominal sendiri (vonis 5 dan 6).
+SELECT c.table_name, c.column_name
+  FROM information_schema.columns c
+ WHERE c.table_schema = 'public'
+   AND c.table_name IN ('apc_invoices','library_fines','clinic_billing_events','event_registrations',
+                        'dormitories','crm_campaigns','school_partners','ticket_files','signage_schedules',
+                        'external_org_roles')
+   AND (c.column_name ~ '(rupiah|amount|price|total_)');                                  -- wajib 0 baris
+
+-- 2. Tidak ada `float`/`double precision` untuk uang atau bobot pada seluruh objek §22 (AGENTS §3.4).
+SELECT c.table_name, c.column_name, c.data_type
+  FROM information_schema.columns c
+ WHERE c.table_schema = 'public'
+   AND c.data_type IN ('double precision','real')
+   AND c.table_name ~ '^(helpdesk|ticket|kb|pin|e_cert|sivil|external|employees|leave|payroll|payslip|pph21|sister|scholarship|disbursement|funding|endowment|donor|fund|portfolio|yield|allocation|crm|lead|campaign|school|referral|funnel|career|mobility|visa|credit|journal|article|apc|ip_|incubated|startup|grant|research|reviewer|review|activity|achievement|student_sanctions|events|event|gate|signage|placement|fieldwork|partner|conversion|bibliographic|items|circulation|holds|library|assets|asset|depreciation|procurement|vendors|vendor|requisitions|hps|tenders|tender|bid|receipt|dormitories|dorm|bed|canteen|residence|wallet|health|clinic|counseling|disclosure|ppks)';   -- wajib 0 baris
+
+-- 3. Uang tidak pernah masuk dua rumah: saldo dompet = jumlah bukunya, dan bukan piutang akademik.
+SELECT w.wallet_id FROM v_wallet_view w WHERE w.balance_rupiah <> w.ledger_sum_rupiah;    -- wajib 0 baris
+SELECT conname FROM pg_constraint
+ WHERE conrelid IN ('wallet_ledger'::regclass,'residence_wallets'::regclass)
+   AND confrelid IN ('invoices'::regclass,'blockades'::regclass);                          -- wajib 0 baris: hanya `payments`
+
+-- 4. Tabel modul tidak mengulangi identitas (§11.3) maupun angka tridharma (vonis 7) yang sudah punya pemilik.
+SELECT table_name, column_name FROM information_schema.columns
+ WHERE table_name = 'employees'
+   AND column_name IN ('full_name','name','mobile_phone','phone','email','nip','nidn','birth_date','gender');   -- wajib 0 baris
+SELECT table_name, column_name FROM information_schema.columns
+ WHERE table_name IN ('research_outputs','fieldwork_groups','partner_evaluations','article_author_lines','activity_participations')
+   AND column_name ~ '(bkd|tridharma|poin_|jam_|sks_diakui)';                        -- wajib 0 baris
+
+-- 5. Angka buku aset adalah turunan: tidak ada kolom `book_value` pada kartu aset.
+SELECT column_name FROM information_schema.columns
+ WHERE table_name = 'assets' AND column_name ~ 'book_value|net_value|carrying';           -- wajib 0 baris
+SELECT a.asset_id FROM v_asset_book_value a
+  JOIN assets s ON s.id = a.asset_id AND s.tenant_id = a.tenant_id
+ WHERE a.book_value_rupiah < 0 OR a.book_value_rupiah > s.acquisition_cost_rupiah;         -- wajib 0 baris
+
+-- 6. Porsi harus berjumlah penuh, plafon tidak boleh dilanggar, dan tidak ada dua baris untuk satu pemilik.
+SELECT ya.id FROM yield_allocations ya JOIN fund_portfolios fp ON fp.id = ya.portfolio_id AND fp.tenant_id = ya.tenant_id
+ WHERE ya.allocatable_bp > fp.spending_ceiling_bp;                                    -- wajib 0 baris
+SELECT application_id FROM ip_owner_lines GROUP BY application_id
+ HAVING sum(share_bp) <> 10000 AND count(*) > 1;                                           -- wajib 0 baris
+SELECT tenant_id, student_id, count(*) FROM activity_participations
+ GROUP BY tenant_id, student_activity_id, student_id HAVING count(*) > 1;                  -- wajib 0 baris (dilindungi UNIQUE, ini penjaga replay)
+
+-- 7. Domain kelas C tidak boleh ber-`CHECK (col IN (...))` tertutup (§20.1 gerbang o, §22 preamble).
+SELECT conname, pg_get_constraintdef(o.oid) AS def
+  FROM pg_constraint o JOIN pg_class c ON c.oid = o.conrelid
+ WHERE c.relname IN ('helpdesk_categories','ip_statuses','pph21_brackets','external_org_roles')
+   AND o.contype = 'c'
+   AND pg_get_constraintdef(o.oid) ~ 'code IN \(|kind IN \('
+   AND c.relname = 'external_org_roles';                                                   -- wajib 0 baris pada kolom kelas C
+SELECT k.kind FROM reference_kinds k
+ WHERE k.kind IN ('jenis_aktivitas_mahasiswa','tingkat_prestasi','jenis_hki','status_hki','luaran_hibah',
+                  'indeks_publikasi','peran_pihak_ketiga','komponen_gaji','jenis_cuti','golongan_pegawai',
+                  'fakta_kelayakan','jenis_dokumen_akademik','kriteria_telaah_hibah','kriteria_vendor',
+                  'jenis_acara','kriteria_penilaian_mitra','jenis_kerja_lapangan','jenis_materi',
+                  'jenis_aset','kategori_pengadaan','kriteria_penilaian_tender','tindakan_ppks',
+                  'jenis_kasus_ppks','milestone_rintisan','item_sister','industri_sister','bahasa')
+   AND NOT EXISTS (SELECT 1 FROM reference_kind_usage u WHERE u.kind = k.kind);             -- wajib 0 baris (gerbang n §20.1)
+
+-- 8. Setiap indeks domain menempatkan `tenant_id` sebagai kolom pertama (§13, AGENTS §3.7).
+SELECT c.relname AS table_name, i.relname AS index_name
+  FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid
+  JOIN pg_class c ON c.oid = x.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public' AND x.indnatts > 1 AND NOT x.indisprimary
+   AND i.relname ~ '^(idx|uq)_'
+   AND c.relname IN ('helpdesk_tickets','ticket_events','scholarship_applications','funding_disbursements',
+                     'career_match_results','mobility_exchanges','research_outputs','activity_participations',
+                     'bed_allocations','wallet_ledger','ppks_reports','ppks_case_timelines','fieldwork_logs',
+                     'article_indexing_events','depreciation_entries','receipt_assets')
+   AND (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum = x.indkey[0]) <> 'tenant_id';   -- wajib 0 baris
+
+-- 9. Tabel global harus terdaftar sebagai pengecualian dan RLS-nya sengaja OFF + SELECT-only.
+SELECT relname, relrowsecurity FROM pg_class WHERE relname = 'pph21_brackets' AND relrowsecurity;   -- wajib 0 baris
+SELECT count(*) FROM information_schema.role_table_grants
+ WHERE table_name = 'pph21_brackets' AND grantee = 'sica_app'
+   AND privilege_type <> 'SELECT';                                                          -- wajib 0
+
+-- 10. Proyeksi dan hasil engine tidak punya rute tulis dari aplikasi (§5.13.2 butir 3).
+SELECT r.relname FROM pg_class r
+ WHERE r.relname IN ('v_asset_book_value','v_wallet_view','v_payslip_totals','funnel_scores',
+                     'career_match_results','portfolio_valuations','library_clearance_signals')
+   AND EXISTS (SELECT 1 FROM information_schema.role_table_grants g
+                WHERE g.table_name = r.relname AND g.grantee = 'sica_app'
+                  AND g.privilege_type IN ('INSERT','UPDATE','DELETE'));                    -- wajib 0 baris
+SELECT count(*) FROM funnel_scores WHERE proposal_only IS NOT TRUE;                         -- wajib 0
+SELECT count(*) FROM career_match_results WHERE proposal_only IS NOT TRUE;                  -- wajib 0
+
+-- 11. Pemohon tidak pernah menjadi penyetuju pada keputusan kebijakan (SoD §3.8, AGENTS).
+SELECT id, table_name FROM (
+  SELECT id, 'ppks_measure' AS table_name, requested_by, approved_by FROM ppks_measures
+  UNION ALL SELECT id, 'disbursement', requested_by, approved_by FROM funding_disbursements
+  UNION ALL SELECT id, 'payroll', requested_by, approved_by FROM payroll_runs
+  UNION ALL SELECT id, 'yield', requested_by, approved_by FROM yield_allocations
+  UNION ALL SELECT id, 'grant', requested_by, approved_by FROM allocation_grants
+) t WHERE approved_by IS NOT NULL AND approved_by = requested_by;                            -- wajib 0 baris
+
+-- 12. Isi kelas PDP tidak pernah keluar sebagai teks dan tidak pernah terbuka bagi peran lain.
+SELECT count(*) FROM health_records WHERE octet_length(content_ciphertext) < 31;             -- wajib 0
+SELECT count(*) FROM ppks_reports WHERE octet_length(content_ciphertext) < 31
+                                    OR blind_index !~ '^[0-9a-f]{64}$';                      -- wajib 0
+SELECT count(*) FROM counseling_sessions WHERE is_confidential IS NOT TRUE;                  -- wajib 0
+SELECT count(*) FROM ppks_measures WHERE affects_academic_status IS TRUE;                     -- wajib 0
+SELECT grantee FROM information_schema.role_table_grants
+ WHERE table_name IN ('ppks_reports','ppks_case_timelines','health_records','counseling_sessions')
+   AND privilege_type = 'SELECT'
+   AND grantee NOT IN ('sica_app','sica_owner','sica_readonly');                             -- wajib 0 baris peran lain
+
+-- 13. RLS: `ENABLE` + `FORCE` + policy `tenant_isolation` pada setiap tabel §22 ber-`tenant_id` (§6.2).
+SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public' AND c.relkind = 'r'
+   AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'tenant_id')
+   AND c.relname ~ '^(helpdesk|ticket|kb|pin|e_cert|sivil|external|employees|leave|payroll|payslip|sister|scholarship|disbursement|funding|endowment|donor|fund|portfolio|yield|allocation|crm|lead|campaign|school|referral|funnel|career|mobility|visa|credit|journal|article|apc|ip_|incubated|startup|grant|research|reviewer|review|activity|achievement|student_sanctions|events|event|gate|signage|placement|fieldwork|partner|conversion|bibliographic|items|circulation|holds|library|assets|asset|depreciation|procurement|vendors|vendor|requisitions|hps|tenders|tender|bid|receipt|dormitories|dorm|bed|canteen|residence|wallet|health|clinic|counseling|disclosure|ppks)'
+   AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+        OR NOT EXISTS (SELECT 1 FROM pg_policies p
+                        WHERE p.tablename = c.relname AND p.policyname = 'tenant_isolation'));   -- wajib 0 baris
+```
+
+### 22.12 Status & prasyarat
+
+**Ini spesifikasi, bukan skema yang hidup.** Diukur dengan `ls packages/database/migrations/` pada siklus ini dan hasilnya **7 berkas**: `0001_init_rls_policies.sql`, `0002_academic_core.sql`, `0003_people_biodata.sql`, `0004_entitlement_modules.sql`, `0005_field_data_attendance_courses.sql`, `0006_member_role.sql`, `0011_rbac_scoped.sql`. Semua nomor `0007`–`0050` yang terdaftar di §14.7 **juga belum pernah dieksekusi**, jadi 22 nomor baru di §22.9 berada di belakang 44 nomor yang sudah menunggu: tidak satu pun tabel §22 dapat diklik hari ini, dan menulis layarnya sebelum §22.11 lewat di CI adalah pelanggaran "dokumen dulu, kode kemudian" (§14.7).
+
+| Item | Jumlah terukur | Status | Ditahan oleh |
+|---|---|---|---|
+| Modul yang diberi objek di §22 | 21 modul + 1 gugus silang | spesifikasi ditulis | `M47-*` di ROADMAP; PRD §5.13 mencatat vonis 6, 12, 13, 14 kini **punya objek** |
+| Nomor migrasi diklaim | 22 (`0051`–`0072`) | belum dieksekusi; tidak bertabrakan (terukur `grep` atas `docs/`) | seluruh nomor `0007`–`0050` lebih dulu (urutan §14.7) |
+| Tabel baru | 119 | spesifikasi | urutan dependensi kolom "Dependensi hulu" §22.9 |
+| View/objek baca saja | 4 (`v_payslip_totals`, `v_leave_balance`, `v_asset_book_value`, `v_wallet_view`) | spesifikasi | wajib `security_invoker = true` (§20.2); tidak satu pun dapat di-UPDATE |
+| Enum kelas A baru | 26 (§22.9) | spesifikasi | `enums.ts` + konstanta Zod + §15.2 pada migrasi yang sama (§15.5 butir 3) |
+| Nilai `ALTER TYPE` yang tertunda | 2 (`queue_operation_kind`: SISTER_PUSH, SISTER_PULL_RECONCILE) | **butuh dua migrasi** | §15.2: `ADD VALUE` tidak boleh satu transaksi dengan pemakaiannya |
+| Tabel global tanpa `tenant_id` | 1 (`pph21_brackets`) | spesifikasi | wajib masuk daftar `excluded` generator §6.2 + `GRANT SELECT` saja; uji §22.11 butir 9 |
+| Fungsi sesi baru | 2 (`app.clinic_can_read()`, `app.ppks_can_read()`) | **belum ada** | `0071`/`0072` itu sendiri; sampai keduanya nyata, M-41 dan M-36 **tidak boleh** dibuka ke pengguna mana pun |
+| Kode izin yang diperlukan | titik aksi `helpdesk.*`, `hris.*`, `sister.*`, `scholarship.*`, `publication.*`, `iprs.*` (bukan `ip.*`), `research.*`, `kbm.*` (bukan `studentaffairs.*`), `event.*`, `fieldwork.*`, `career.*`, `mobility.*`, `library.*`, `asset.*`, `procurement.*` (bukan `pbj.*`), `residence.*`, `clinic.*`, `ppks.*` | **USULAN**, terdaftar di `RBAC §4.5.6`, belum normatif | `RBAC_MATRIX §4` lebih dulu, lalu `PERMISSION_SPECS` + `gen-rbac-seed.mjs --check` (`SPE-3`, `G-15`) — §3.8/§3.11 AGENTS melarang mengkode rute sebelum barisnya ada |
+| DDL hulu yang belum ditulis | `attachments` + `document_number_sequences` (`0020`), `feeder_bridges`/`feeder_identities` (`0028`), `queue_operations` (`0030`), `student_bank_accounts` (`0035`), `pmb_applications` (`0021`), `student_activities` (`0026`), `payment_waivers` (`0015`), `mbkm_conversions` (`0033`), `fee_tariff_groups` (`0046`), `campus_sites` (`0044`), `ml_model_versions` (`0039`), `engine_runs` (`0036`), `allocation_grants` (`0057`), `reference_dictionary_entries` (`0028`) | terdaftar, sebagian **DDL-nya sudah ditulis** di §14–§21, sebagian belum pernah ada berkasnya | §22 **tidak** menulis ulang objek itu; rujukan nama di sini mengikat dan menjadi penahan urutan |
+| Baris §15.3 baru | `invoices.kind` += LIBRARY_FINE, `blockades.dimension` tak berubah, kosakata §22.1 | spesifikasi | didaftarkan lebih dulu; §20.1 gerbang (o) menolak CHECK yang tidak tercatat |
+| Kelas retensi baru (JRA) | `ppks_case_content`, `clinical_record`, `counseling_note`, `wallet_ledger`, `fieldwork_geolocation`, `ticket_content` | **belum ada** | `retention_rules` + DPIA (BR-R14) sebelum satu baris pun dihapus otomatis |
+
+**Risiko yang harus dibaca sebelum mengkode.** Pertama, §22 menambah **119 tabel** ke basis yang hari ini punya 7 migrasi: angka itu bukan kemajuan, melainkan ukuran pekerjaan, dan tidak satu pun boleh dianggap selesai karena DDL-nya rapi. Kedua, `EXCLUDE USING gist` pada `leave_requests`, `signage_schedules`, `bed_allocations`, dan `clinic_appointments` bergantung pada `btree_gist` + `pg_trgm` yang baru benar-benar dibuat di `0003`/`0036` — menjalankan `0054` sebelum `0036` akan gagal, dan urutan §22.9 menuliskan itu. Ketiga, dua fungsi sesi (`app.clinic_can_read`, `app.ppks_can_read`) adalah **penegak** untuk kelas khusus UU PDP; tanpa keduanya, policy `tenant_isolation` saja akan memberi `TENANT_ADMIN` hak baca isi rekam medis dan kasus PPKS, yang berarti §22.8 menjadi klaim kosong. Keempat, seluruh kolom `*_bidx` mewarisi batas yang jujur dari §16.3.4: mereka membocorkan kesamaan dan tidak tahan serangan kamus, sehingga tidak satu pun indeks unik blind index di §22 boleh dipakai sebagai pengganti pembatasan akses.
+
+## 23. DDL gugus siklus hidup — lampiran platform, intake PMB, yudisium–tugas akhir–transkrip, permohonan kelulusan, KTM, tracer (2026-10-21)
+
+**Kenapa bagian ini ada.** Dua alat ukur berbicara lebih keras daripada keluhan: `node .tools/fk-audit.mjs` menemukan **6 target `REFERENCES` yang tidak pernah dibuat** (`attachments` dirujuk 14 kali, `thesis_records`, `pmb_paths`, `pmb_waves`, `pmb_applications`, satu artefak prosa), dan `node .tools/ddl-gap.mjs` menemukan bahwa dari nama objek yang **sudah punya nomor migrasi** di register [MIGRATION_SOP §5](file:///c:/SICA/docs/MIGRATION_SOP.md), sebagian besar tidak punya DDL: **76 dari 80** pada penghitungan longgar awal, dan **45 nama pada 12 nomor** (`0013`–`0018`, `0022`–`0025`, `0028`, `0029`) sesudah §23 ini ditulis dan sesudah alat mengenal dua daftar pengecualiannya (`NON_TABLE` = nama kolom yang tersesat di register; `ALIAS_KALAH` = nama yang vonisnya memang "tidak pernah dibuat"). Angka itu bukan keluhan: itu tagihan. Bagian ini membayar **empat nomor paling hulu** — `0020` (yang ditunjuk 14 foreign key), `0021` (modul `pmb` sudah ter-seed di `0004:83` tanpa satu tabel pun: `P-10`), `0027` (sumber field tugas akhir yang dibaca `graduation_records` §5), `0019` (permohonan kelulusan, legalisir, wisuda) — dan **dua nomor baru** yang lahir di sini karena belum pernah didaftarkan: `0076` kartu tanda mahasiswa dan `0077` tracer study. Setelah §23, `node .tools/fk-audit.mjs` berbunyi **HIJAU** dan `node .tools/ddl-gap.mjs` tidak lagi menyebut `0019`/`0020`/`0021`/`0026`/`0027`.
+
+**Tiga ralat register yang harus diputus lebih dulu, sebelum satu `CREATE TABLE` pun dibaca.**
+1. **`documents` terdaftar dua kali** — pada baris `0019` **dan** baris `0020` `MIGRATION_SOP §5`. Aturan §1 "satu tabel satu blok DDL" (`RD-06`) melarangnya: replay migrasi gagal (`relation already exists`) dan tidak ada yang punya bentuk kanonik. Vonis: **`documents` milik `0020`**; baris `0019` hanya menunjuk. Kedua baris register sudah diperbaiki pada siklus ini.
+2. **`student_activities` (`0026`) versus `activity_participations` (`0064`)** — satu konsep, dua nama, dan yang kedua sudah punya DDL lengkap di §22.6.1. Vonis: **`activity_participations` menang**, `student_activities` masuk daftar alias kalah §22.10 dan tidak akan pernah dibuat; `0026` hanya menulis sisa objeknya (`activity_kinds`, `achievement_levels`, `certification_records`, `publication_records`).
+3. **`commencement_batches` (`0019`) versus jalur `/graduation/convocations/:convocationId` di [API_SPEC §7.27](file:///c:/SICA/docs/API_SPEC.md)** — nama objek adalah wewenang dokumen ini, jadi yang diralat adalah **jalur API**: `/graduation/commencements/:batchId/register`. Satu nama, satu sumber, dan rujukan API_SPEC sudah diubah pada siklus ini.
+
+**Cara bagian ini ditulis (dan cara membacanya).** Setiap blok adalah DDL yang bisa dijalankan, bukan daftar kolom keinginan: tipe nyata, `CHECK` nyata, `UNIQUE` nyata, dan kalimat **Kenapa** di bawahnya yang menjelaskan kolom mana yang tidak bisa dihilangkan. Yang **tidak** dilakukan: menciptakan tabel proyeksi yang dapat disunting, menaruh rahasia sebagai kolom, atau membuat CHECK tertutup untuk kosakata kelas C yang dapat dirawat kampus (`AGENTS §3.10`).
+
+### 23.1 `0020_platform_attachments.sql` — satu pemilik berkas, penomoran dokumen, dan run impor
+
+```sql
+CREATE TYPE attachment_scan_state AS ENUM ('PENDING','CLEAN','INFECTED','FAILED');
+CREATE TYPE document_state AS ENUM ('DRAFT','ISSUED','REVOKED','SUPERSEDED');
+CREATE TYPE import_stage AS ENUM ('PREVIEW','COMMIT','FAILED','EXPIRED');
+
+CREATE TABLE attachments (                                  -- pemilik SATU-SATUNYA berkas di seluruh sistem (RD-27)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  owner_entity text NOT NULL,                               -- nama kelas objek logis ('pmb_document','helpdesk_ticket','thesis_draft',…);
+  owner_id    uuid,                                         --   divalidasi service terhadap registri objek §14.3 — bukan CHECK tertutup
+  category    text NOT NULL,                                -- kamus `attachment_category` (§20): bukti bayar, skripsi, legalisir, KTM, berkas impor, PDM/SPTJM, logo
+  storage_key text NOT NULL,
+  original_name text NOT NULL,
+  mime_type   text NOT NULL,
+  size_bytes  bigint NOT NULL CHECK (size_bytes > 0 AND size_bytes <= 26214400),   -- plafon 25 MiB; ambang nyata di `master_system_parameters` (§21.3)
+  sha256      char(64) NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
+  scan_state  attachment_scan_state NOT NULL DEFAULT 'PENDING',
+  scanned_at  timestamptz,
+  uploaded_by uuid NOT NULL,                                -- id pemakai; FK ke users ditahan service (kolom `users.id` belum ber-UNIQUE komposit, §16)
+  uploaded_at timestamptz NOT NULL DEFAULT now(),
+  expires_at  timestamptz,                                  -- berkas mentah hasil ekstraksi = 30 hari (§3.9 AGENTS); berkas akademik tetap NULL
+  CHECK (storage_key ~ '^tenants/[0-9a-f-]{36}/[a-z0-9_]+/[a-f0-9]{64}(/[a-z0-9_.-]+)?$'),
+  CHECK (original_name !~ '[/\\]'),                          -- nama asal untuk tampilan; tidak pernah ikut membangun path
+  CHECK (original_name <> ''),
+  CHECK ((scan_state = 'PENDING') = (scanned_at IS NULL)),
+  UNIQUE (tenant_id, sha256, owner_entity, owner_id)        -- unggah ganda untuk objek yang sama ditolak; owner_id NULL (unggah pra-objek) sengaja di luar jaminan ini
+);
+CREATE INDEX idx_attachments_owner ON attachments(tenant_id, owner_entity, owner_id);
+CREATE INDEX idx_attachments_expiry ON attachments(tenant_id, expires_at) WHERE expires_at IS NOT NULL;
+
+CREATE TABLE document_number_sequences (                    -- penomoran resmi per jenis dokumen per periode (FR-ADM-* / BR-R15)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  doc_type   text NOT NULL,                                 -- kamus `document_type`, bukan enum kampus
+  period_key text NOT NULL,                                 -- '2026', '2025/2026', atau 'GH.3' — format per jenis, tidak dipaksakan
+  prefix     text NOT NULL,
+  format_mask text NOT NULL CHECK (format_mask ~ '\{number\}'),  -- template '{prefix}/{number}/{period_key}'; dieksekusi sebagai penggantian token, bukan eval
+  next_number bigint NOT NULL DEFAULT 1 CHECK (next_number > 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, doc_type, period_key)
+);
+
+CREATE TABLE documents (                                    -- TERBIT dari 0020, bukan 0019 (ralat 1 di atas)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  doc_type text NOT NULL,
+  number   text NOT NULL,                                   -- hasil ambil nomor dari sequence; tidak pernah dikirim klien (SERVER_ONLY, §22.9)
+  student_id uuid REFERENCES students(id),                  -- NULL untuk dokumen non-mahasiswa (naskah kerjasama, surat tugas)
+  status document_state NOT NULL DEFAULT 'DRAFT',
+  issued_on date,
+  valid_until date,                                         -- surat keterangan punya umur; ijazah & transkrip tidak
+  template_id uuid REFERENCES document_templates(id),
+  attachment_id uuid REFERENCES attachments(id),            -- berkas jadi; storage tidak pernah disalin ke tabel ini
+  content_digest char(64) CHECK (content_digest IS NULL OR content_digest ~ '^[a-f0-9]{64}$'),
+  tte_signature_id uuid REFERENCES document_signatures(id), -- BR-R15: TTE tersertifikasi tetap milik §4.7, tidak dibuat kedua
+  verification_code text,                                   -- token verifikasi pihak ketiga (hash, bukan nomor telanjang)
+  superseded_by uuid REFERENCES documents(id),
+  revoked_reason text,
+  requested_by uuid NOT NULL, approved_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, doc_type, number),
+  CHECK (status <> 'ISSUED' OR (issued_on IS NOT NULL AND attachment_id IS NOT NULL)),
+  CHECK (status <> 'REVOKED' OR revoked_reason IS NOT NULL),
+  CHECK (superseded_by IS NULL OR superseded_by <> id),
+  CHECK (valid_until IS NULL OR (status <> 'ISSUED') OR valid_until >= issued_on),
+  CHECK (status <> 'ISSUED' OR approved_by IS NOT NULL)      -- menerbitkan dokumen = aksi VALIDATE ber-empat-mata saat kelas risikonya menuntutnya (§21.7)
+);
+CREATE INDEX idx_documents_student ON documents(tenant_id, student_id, doc_type, status);
+CREATE INDEX idx_documents_number ON documents(tenant_id, doc_type, issued_on DESC);
+
+CREATE TABLE import_runs (                                  -- append-only: pratinjau lalu commit, tidak pernah commit diam-diam
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind text NOT NULL,                                       -- kamus `import_kind` (mahasiswa, tagihan, aset, nilai…)
+  attachment_id uuid NOT NULL REFERENCES attachments(id),
+  actor uuid NOT NULL,
+  stage import_stage NOT NULL DEFAULT 'PREVIEW',
+  rows_total int NOT NULL DEFAULT 0 CHECK (rows_total >= 0),
+  rows_ok    int NOT NULL DEFAULT 0 CHECK (rows_ok >= 0),
+  rows_reject int NOT NULL DEFAULT 0 CHECK (rows_reject >= 0),
+  mapping jsonb NOT NULL DEFAULT '{}'::jsonb,               -- pemetaan kolom sumber→target, tersimpan supaya run dapat direproduksi
+  error_report_url text,
+  committed_by uuid, committed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (stage <> 'COMMIT' OR (committed_by IS NOT NULL AND committed_at IS NOT NULL)),
+  CHECK (stage <> 'COMMIT' OR committed_by <> actor),        -- yang memetakan bukan yang melepas (empat-mata impor massal)
+  CHECK (rows_ok + rows_reject <= rows_total)
+);
+CREATE INDEX idx_import_runs_state ON import_runs(tenant_id, kind, stage, created_at DESC);
+```
+
+**Kenapa kolom-kolom ini ada.** `sha256` ikut di `UNIQUE` bersama pasangan objeknya karena duplikat berkas pada satu objek adalah bug yang biayanya nyata (dua bukti bayar untuk satu tagihan), sedangkan duplikat berkas pada dua objek yang berbeda adalah hal yang wajar dan tidak boleh ditolak. `storage_key` diberi CHECK berbentuk, bukan sekadar sanitasi saat tulis, karena pola `RD-27` lahir dari kenyataan bahwa nama berkas pengguna adalah vektor lintas-tenant: satu `../` di nama asal sudah cukup untuk menaruh berkas kampus A di folder kampus B kalau path dibentuk dari string. `original_name` tetap disimpan — tanpa CHECK kegunaan lain — karena pengguna perlu mengenali berkasnya, dan namanya **tidak pernah** dibaca sebagai bagian path. `documents.approved_by` dan `import_runs.committed_by` adalah dua bentuk dari norma yang sama: terbit dan commit adalah `VALIDATE`, dan satu actor sebagai pemohon sekaligus penyetuju adalah temuan SoD, bukan gaya kode.
+
+**RLS.** Keempat tabel ber-`tenant_id` dan diambil generator §6.2 tanpa pengecualian (`ENABLE` + `FORCE` + policy `tenant_isolation`). `import_runs` mendapat `REVOKE UPDATE, DELETE FROM sica_app` **sebelum** policy, mengikuti pola §16.3.3: jejak impor harus bertahan setelah berkasnya kedaluwarsa. `attachments` **tidak** boleh diberi policy yang mengabaikan `owner_entity` — pemilik berkas adalah tabel ini, dan objek yang menunjuknya tidak boleh punya kolom salinan.
+
+**Status.** Kelas A: `attachment_scan_state`, `document_state`, `import_stage` — ketiganya dicerminkan ke register §15.2 pada migrasi yang sama. Kelas C: `attachments.category`, `attachments.owner_entity`, `documents.doc_type`, `import_runs.kind` (kampus menambah jenis tanpa rilis kode; gerbang §20.1 butir (n) menuntut baris `reference_kind_usage` untuk setiap jenis yang dibaca UI). **Penahan yang tidak hilang oleh DDL ini:** `storage_key` mengandaikan backend objek nyata; sampai `DEPLOYMENT_DEVOPS` punya bucket per-tenant yang terverifikasi, seluruh rute unggah tetap `blocker`.
+
+### 23.2 `0021_pmb_intake.sql` — dari gelombang sampai NIM, satu jalur tulis
+
+```sql
+CREATE TYPE pmb_application_state AS ENUM ('DRAFT','SUBMITTED','UNDER_REVIEW','SELECTED','RESERVE','REJECTED','REREGISTERED','WITHDRAWN','CANCELLED');
+CREATE TYPE pmb_document_state AS ENUM ('PENDING','VERIFIED','REJECTED');
+CREATE TYPE pmb_appeal_state AS ENUM ('OPEN','GRANTED','DENIED');
+CREATE TYPE nim_state AS ENUM ('RESERVED','ISSUED','CANCELLED','RECYCLED');
+
+CREATE TABLE pmb_paths (                                    -- jalur masuk: SNBT, SNBP, mandiri, … (kampus merawat labelnya)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL, name_en text,
+  form_fee_rupiah bigint NOT NULL DEFAULT 0 CHECK (form_fee_rupiah >= 0),   -- uang = bigint rupiah utuh (ADR-5), bukan float
+  refundable boolean NOT NULL DEFAULT false,
+  feeder_jalur_daftar text,                                 -- kode nasional; NULL = jalur tidak dikirim ke Feeder
+  is_active boolean NOT NULL DEFAULT true,
+  sort_order int NOT NULL DEFAULT 100,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code)
+);
+
+CREATE TABLE pmb_waves (                                    -- gelombang per tahun akademik; dua gelombang satu jalur TIDAK boleh beririsan
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  academic_year_id uuid NOT NULL REFERENCES academic_years(id),
+  path_id uuid NOT NULL REFERENCES pmb_paths(id),
+  code text NOT NULL,
+  opens_at timestamptz NOT NULL, closes_at timestamptz NOT NULL,
+  result_published_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, path_id, code),
+  CHECK (closes_at > opens_at),
+  EXCLUDE USING gist (tenant_id WITH =, path_id WITH =, tstzrange(opens_at, closes_at) WITH &&)
+);
+
+CREATE TABLE pmb_program_quotas (                           -- CP1 Feeder: daya tampung per prodi per gelombang
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  wave_id uuid NOT NULL REFERENCES pmb_waves(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  seats int NOT NULL CHECK (seats > 0),
+  reserved_seats int NOT NULL DEFAULT 0 CHECK (reserved_seats >= 0),
+  used_seats int NOT NULL DEFAULT 0 CHECK (used_seats >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (wave_id, program_id),
+  CHECK (reserved_seats + used_seats <= seats)
+);
+CREATE INDEX idx_pmb_quota_lookup ON pmb_program_quotas(tenant_id, wave_id, program_id);
+
+CREATE TABLE pmb_applications (                             -- SATU-SATUNYA objek pendaftaran; lead M-45 menunjuk ke sini, tidak pernah INSERT ke sini (vonis 12)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_number text NOT NULL,
+  wave_id uuid NOT NULL REFERENCES pmb_waves(id),
+  path_id uuid NOT NULL REFERENCES pmb_paths(id),
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  priority smallint NOT NULL DEFAULT 1 CHECK (priority BETWEEN 1 AND 3),
+  applicant_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  applicant_user_id uuid NOT NULL REFERENCES users(id),
+  state pmb_application_state NOT NULL DEFAULT 'DRAFT',
+  registration_fee_rupiah bigint CHECK (registration_fee_rupiah IS NULL OR registration_fee_rupiah >= 0),
+  fee_paid_at timestamptz,
+  submitted_at timestamptz, withdrawn_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, application_number),
+  UNIQUE (tenant_id, applicant_membership_id, program_id),  -- satu pendaftaran per prodi; dua prodi = dua baris dengan priority berbeda
+  UNIQUE (tenant_id, wave_id, applicant_membership_id, priority)
+);
+-- `path_id` aplikasi WAJIB sama dengan `path_id` gelombangnya. CHECK tidak boleh berisi subquery di PostgreSQL,
+-- jadi invariance ini ditegakkan pemicu `app.assert_pmb_wave_path()` BEFORE INSERT/UPDATE dan diuji di §23.7 butir 2.
+CREATE INDEX idx_pmb_apps_state ON pmb_applications(tenant_id, wave_id, state, program_id);
+
+CREATE TABLE pmb_documents (                                -- penolakan PER BERKAS dan BERALASAN (BENCH-05)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_id uuid NOT NULL REFERENCES pmb_applications(id) ON DELETE CASCADE,
+  kind text NOT NULL,                                       -- kamus `pmb_document_kind` ( rapor, KK, kartu keluarga, sertifikat…)
+  is_required boolean NOT NULL DEFAULT true,
+  attachment_id uuid REFERENCES attachments(id),
+  state pmb_document_state NOT NULL DEFAULT 'PENDING',
+  rejection_reason text, verified_by uuid, verified_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (application_id, kind),
+  CHECK (state <> 'VERIFIED' OR (verified_by IS NOT NULL AND verified_at IS NOT NULL AND attachment_id IS NOT NULL)),
+  CHECK (state <> 'REJECTED' OR rejection_reason IS NOT NULL)
+);
+
+CREATE TABLE pmb_selection_results (                        -- keputusan; rank deterministik + tie-break tertulis
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_id uuid NOT NULL REFERENCES pmb_applications(id) ON DELETE CASCADE,
+  wave_id uuid NOT NULL REFERENCES pmb_waves(id),
+  status pmb_application_state NOT NULL CHECK (status IN ('SELECTED','RESERVE','REJECTED')),
+  rank int CHECK (rank IS NULL OR rank > 0),
+  tie_break_rule text NOT NULL,                             -- nama aturan yang dipakai, bukan nilai hasil
+  score numeric(8,3),
+  decided_by uuid NOT NULL, decided_at timestamptz NOT NULL DEFAULT now(),
+  promoted_from_reserve_at timestamptz,                     -- promosi cadangan saat yang di atas tidak daftar ulang (BENCH-07)
+  UNIQUE (application_id), UNIQUE (wave_id, rank)
+);
+CREATE INDEX idx_pmb_results_wave ON pmb_selection_results(tenant_id, wave_id, status, rank);
+
+CREATE TABLE pmb_reregistrations (                          -- titik ambil field Feeder maba (§14.5 butir 1), bukan form pasca-NIM
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_id uuid NOT NULL REFERENCES pmb_applications(id) ON DELETE CASCADE,
+  funding_source_code text NOT NULL,                     -- kamus `funding_source` (§20); FK komposit tidak sah karena kunci reference_items (tenant_id, kind, code) → ditegakkan service + CI §23.7 butir 3
+  entry_cost_rupiah bigint NOT NULL CHECK (entry_cost_rupiah >= 0),
+  receipt_attachment_id uuid REFERENCES attachments(id),
+  receives_kps boolean NOT NULL DEFAULT true,
+  kps_number text, kps_issued_at timestamptz,
+  completed_at timestamptz,
+  UNIQUE (tenant_id, application_id),
+  CHECK (NOT receives_kps OR kps_number IS NOT NULL OR completed_at IS NULL)
+);
+
+CREATE TABLE pmb_school_origins (                           -- asal sekolah; badan hukumnya tetap milik `external_organizations` (0053)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_id uuid NOT NULL REFERENCES pmb_applications(id) ON DELETE CASCADE,
+  external_organization_id uuid NOT NULL REFERENCES external_organizations(id),
+  npsn text, diploma_number text, graduation_year int CHECK (graduation_year BETWEEN 1950 AND 2100),
+  entry_year int NOT NULL CHECK (entry_year BETWEEN 1950 AND 2100),
+  UNIQUE (application_id)
+);
+
+CREATE TABLE pmb_appeals (                                  -- banding hasil seleksi; berkas bukti menempel pada objek kerja
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_id uuid NOT NULL REFERENCES pmb_applications(id) ON DELETE CASCADE,
+  state pmb_appeal_state NOT NULL DEFAULT 'OPEN',
+  reason text NOT NULL CHECK (char_length(reason) BETWEEN 20 AND 2000),
+  evidence_attachment_id uuid REFERENCES attachments(id),
+  decided_by uuid, decided_at timestamptz, decision_note text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, application_id),
+  CHECK (state <> 'OPEN' OR decided_by IS NULL),
+  CHECK (state IN ('GRANTED','DENIED') = (decided_by IS NOT NULL AND decided_at IS NOT NULL))
+);
+
+CREATE TABLE nim_assignments (                              -- NIM dialokasikan lewat sequence per prefix, BUKAN MAX()+1 (BENCH-04)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  application_id uuid NOT NULL REFERENCES pmb_applications(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  nim text NOT NULL,
+  state nim_state NOT NULL DEFAULT 'RESERVED',
+  sequence_id uuid REFERENCES document_number_sequences(id),
+  issued_at timestamptz, cancelled_at timestamptz, cancelled_by uuid,
+  recycle_allowed boolean NOT NULL DEFAULT false,           -- BENCH-03/BR-R10: hanya bila NIM belum pernah terdaftar Feeder
+  pddikti_reported_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, nim), UNIQUE (application_id),
+  CHECK (nim ~ '^[0-9A-Za-z._-]{4,20}$'),
+  CHECK (state <> 'ISSUED' OR issued_at IS NOT NULL),
+  CHECK (state <> 'CANCELLED' OR (cancelled_by IS NOT NULL AND cancelled_at IS NOT NULL)),
+  CHECK (recycle_allowed = false OR pddikti_reported_at IS NULL)
+);
+CREATE INDEX idx_nim_lookup ON nim_assignments(tenant_id, program_id, state);
+```
+
+**Kenapa bentuknya begini.** `EXCLUDE USING gist` pada `pmb_waves` adalah jantung gugus ini: tanpa larangan tumpang-tindih, satu pendaftar bisa lolos dua gelombang jalur yang sama dan sistem tidak punya jawaban saat kuota sudah terpakai dua kali; `btree_gist` sudah menjadi dependensi `0036` sehingga operatornya tersedia. Kolom `path_id` **ditambahkan** pada `pmb_waves` (register §14.7 hanya menulis `code, opens_at, closes_at`) karena frasa "per jalur" di register itu tidak dapat ditegakkan tanpa kunci jalur di tabel gelombang — ini pelengkapan, bukan perluasan makna. `UNIQUE (tenant_id, wave_id, applicant_membership_id, priority)` menjamin satu pendaftar tidak menaruh dua prioritas sama pada satu gelombang, dan `UNIQUE (tenant_id, applicant_membership_id, program_id)` adalah tempat keputusan produk "satu pendaftar boleh lolos dua prodi lalu wajib melepas satu" dieksekusi. `nim_assignments.recycle_allowed` menyimpan **syarat**, bukan hasil: CHECK-nya menolak daur ulang bila NIM pernah dilaporkan ke Feeder, karena di situlah pelanggaran BR-R10 menjadi bukti hukum, bukan catatan service.
+
+**Dua hal yang sengaja TIDAK dibuat.** (1) Tidak ada tabel `pmb_applicants` kedua: orang adalah `tenant_memberships` + `users`, dan `retention_rules` kelas `pmb_applicant` (§16.6) sudah mengatur sisa hidupnya. (2) Tidak ada kolom `nim` di `pmb_applications`: NIM hanya milik `nim_assignments`, dan memindahkannya ke aplikasi adalah sumber kebenaran kedua (`RD-32`).
+
+**Cara menandai batas DDL vs pemicu.** Draf blok ini sempat memuat dua baris yang tidak sah sebagai SQL: `CHECK (path_id IN (SELECT …))` (CHECK tidak boleh berisi subquery) dan `funding_source_code … REFERENCES pmb_program_quotas(??)`. Keduanya sudah dikeluarkan dari DDL dan diubah menjadi pemicu/CI yang dinyatakan eksplisit. Normanya: **kalimat "ditegakkan service" hanya sah kalau baris DDL-nya bersih**; jika tidak, yang tertulis adalah pseudo-DDL — bentuk lain dari `RD-05`.
+
+**RLS.** Semua tabel ber-`tenant_id`, `ENABLE` + `FORCE` + policy `tenant_isolation`. `pmb_selection_results` dan `nim_assignments` additionally di-`REVOKE UPDATE` untuk `sica_app` pada kolom `rank`/`nim` melalui `GRANT` kolom-terbatas (pola §16.5): angka rangking dan NIM tidak boleh disunting dari jalur aplikasi biasa. `pmb_documents` dan `pmb_appeals` ikut `attachments` sebagai pemilik berkas.
+
+**Status.** Kelas A: `pmb_application_state`, `pmb_document_state`, `pmb_appeal_state`, `nim_state` — dicerminkan ke §15.2 pada migrasi yang sama. Kelas C: `pmb_paths.code/name`, `pmb_documents.kind`, `pmb_reregistrations.funding_source_code` (kamus `funding_source`). **Penahan yang tidak hilang oleh DDL ini:** `nim_assignments` butuh `document_number_sequences` (`0020`, §23.1) dan `pmb_applications` butuh `external_organizations` (`0053`, §22.2.1); modul `pmb` tetap tidak boleh dijual sebelum keduanya ada (`P-10`).
+### 23.3 `0027_kelulusan_lanjutan.sql` — yudisium, tugas akhir, transkrip berversi
+
+```sql
+CREATE TYPE yudisium_batch_state AS ENUM ('DRAFT','REVIEWED','DECIDED','ANNOUNCED');
+CREATE TYPE thesis_state AS ENUM ('PROPOSED','APPROVED_TOPIC','IN_PROGRESS','DEPOSITED','SCHEDULED','DEFENDED','REVISION','PASSED','FAILED','WITHDRAWN');
+CREATE TYPE transcript_state AS ENUM ('DRAFT','SIGNED','ISSUED','SUPERSEDED','REVOKED');
+
+CREATE TABLE yudisium_batches (                             -- satu SK penetapan per sesi; nomor = dari sequence 0020
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  decree_number text NOT NULL,
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  state yudisium_batch_state NOT NULL DEFAULT 'DRAFT',
+  decided_on date NOT NULL,
+  requested_by uuid NOT NULL, approved_by uuid,             -- rektor/ketua menandatangani, bukan yang menyusun daftar
+  announced_at timestamptz,
+  document_id uuid REFERENCES documents(id),                -- SK sebagai dokumen terbit + berkasnya di attachments
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, decree_number),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (state IN ('DECIDED','ANNOUNCED') = (approved_by IS NOT NULL)),
+  CHECK (state <> 'ANNOUNCED' OR announced_at IS NOT NULL)
+);
+
+CREATE TABLE thesis_records (                               -- objek yang dirujuk `final_project_outputs.thesis_record_id` (§19.3) dan catatan lulus (§5)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  final_project_kind_id uuid NOT NULL REFERENCES final_project_kinds(id),  -- skripsi/proyek/karya/sertifikasi (Permen 53/2023, §19.3)
+  title text NOT NULL CHECK (char_length(title) BETWEEN 10 AND 500),
+  title_en text,
+  state thesis_state NOT NULL DEFAULT 'PROPOSED',
+  credits int NOT NULL CHECK (credits BETWEEN 1 AND 12),
+  proposed_at timestamptz NOT NULL DEFAULT now(),
+  approved_topic_at timestamptz,
+  deposited_at timestamptz, defended_at timestamptz, passed_at timestamptz,
+  similarity_run_id uuid,                                   -- milik engine_runs (0036); hasil cek kemiripan tidak disimpan sebagai angka telanjang di sini
+  rama_attachment_id uuid REFERENCES attachments(id),        -- naskah lengkap milik M-39/RAMA tetap satu berkas per versi
+  withdrawal_reason text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, student_id),                           -- satu karya puncak per mahasiswa per prodi pada satu waktu; pengulangan = state WITHDRAWN lebih dulu
+  CHECK (state <> 'PASSED' OR passed_at IS NOT NULL),
+  CHECK (state NOT IN ('DEPOSITED','SCHEDULED','DEFENDED','REVISION','PASSED') OR deposited_at IS NOT NULL),
+  CHECK (state <> 'WITHDRAWN' OR withdrawal_reason IS NOT NULL)
+);
+CREATE INDEX idx_thesis_state ON thesis_records(tenant_id, program_id, state, period_id);
+
+CREATE TABLE thesis_supervisors (                           -- BENCH-102: Feeder menuntut bulan awal/akhir per pembimbing
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  thesis_record_id uuid NOT NULL REFERENCES thesis_records(id) ON DELETE CASCADE,
+  role text NOT NULL CHECK (role IN ('PRIMARY','SECONDARY','CO_SUPERVISOR')),   -- kosakata jejak, bukan kelas C (§15.3)
+  staff_id uuid NOT NULL,                                   -- lecturers/staff (§11.3) adalah pemilik biodata; tidak ada salinan nama
+  start_month date NOT NULL CHECK (start_month = date_trunc('month', start_month)),
+  end_month   date NOT NULL CHECK (end_month   = date_trunc('month', end_month)),
+  sessions_logged int NOT NULL DEFAULT 0 CHECK (sessions_logged >= 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, thesis_record_id, role, staff_id),
+  CHECK (end_month >= start_month)
+);
+CREATE INDEX idx_thesis_sup_staff ON thesis_supervisors(tenant_id, staff_id, start_month, end_month);
+
+CREATE TABLE thesis_examiners (                             -- penugasan penguji + hasil sidang per orang, bukan satu nilai rata-rata
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  thesis_record_id uuid NOT NULL REFERENCES thesis_records(id) ON DELETE CASCADE,
+  staff_id uuid NOT NULL,
+  role text NOT NULL CHECK (role IN ('CHAIR','INTERNAL','EXTERNAL','PRACTITIONER')),
+  assigned_at timestamptz NOT NULL DEFAULT now(),
+  hearing_at timestamptz,
+  score numeric(5,2) CHECK (score IS NULL OR (score >= 0 AND score <= 100)),   -- numeric, bukan float (AGENTS §3.4)
+  verdict text CHECK (verdict IS NULL OR verdict IN ('ACCEPT','ACCEPT_WITH_REVISION','REJECT')),
+  notes text,
+  UNIQUE (tenant_id, thesis_record_id, staff_id),
+  CHECK (verdict IS NULL OR hearing_at IS NOT NULL),
+  CHECK (score IS NULL OR verdict IS NOT NULL)
+);
+CREATE INDEX idx_thesis_exam_hearing ON thesis_examiners(tenant_id, hearing_at);
+
+CREATE TABLE transcript_versions (                          -- transkrip = berversi; yang sudah terbit tidak pernah diedit
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  version int NOT NULL CHECK (version > 0),
+  language text NOT NULL DEFAULT 'id' CHECK (language IN ('id','en')),
+  state transcript_state NOT NULL DEFAULT 'DRAFT',
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  graduation_record_id uuid REFERENCES graduation_records(id),  -- transkrip definitif lahir dari kelulusan; transkrip sementara tidak
+  total_sks numeric(5,1) CHECK (total_sks IS NULL OR total_sks >= 0),
+  ipk numeric(3,2) CHECK (ipk IS NULL OR ipk BETWEEN 0 AND 4),
+  snapshot_hash bytea,                                      -- digest baris hasil; bukti arsip (BR-R12)
+  document_id uuid REFERENCES documents(id),
+  signed_by uuid, signed_at timestamptz,
+  superseded_by uuid REFERENCES transcript_versions(id),
+  UNIQUE (tenant_id, student_id, version, language),
+  CHECK (state NOT IN ('SIGNED','ISSUED') OR (signed_by IS NOT NULL AND snapshot_hash IS NOT NULL)),
+  CHECK (state <> 'ISSUED' OR document_id IS NOT NULL),
+  CHECK (superseded_by IS NULL OR superseded_by <> id)
+);
+
+CREATE TABLE transcript_lines (                             -- nama matakuliah DIPERSIST pada saat terbit (kewajiban arsip, BENCH-117)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  transcript_version_id uuid NOT NULL REFERENCES transcript_versions(id) ON DELETE CASCADE,
+  ordinal int NOT NULL CHECK (ordinal > 0),
+  course_code text NOT NULL, course_name text NOT NULL,     -- salinan nilai, bukan salinan tabel: baris ini beku pada saat terbit
+  academic_period_label text NOT NULL,
+  sks numeric(4,1) NOT NULL CHECK (sks > 0),
+  letter text NOT NULL, points numeric(3,1) NOT NULL CHECK (points BETWEEN 0 AND 4),
+  course_type text,                                        -- kamus `course_type` (§14.5), boleh NULL untuk baris transfer
+  equivalence_source text                                  -- MBKM/transfer: asal penyetaraan, bukan angka yang dihitung ulang
+);
+CREATE UNIQUE INDEX idx_transcript_lines_pos ON transcript_lines(tenant_id, transcript_version_id, ordinal);
+```
+
+**Kenapa barisnya begini.** `thesis_records` adalah jawaban atas foreign key yang menggantung: §19.3 menulis `final_project_outputs.thesis_record_id REFERENCES thesis_records(id)` dan §5 menulis bahwa field tugas akhir **tidak** dipindah ke `graduation_records` karena Feeder menuntut rentang bulan per pembimbing — tapi tabelnya belum pernah dibuat di mana pun. `thesis_supervisors.start_month/end_month` dipaksa ke awal bulan oleh CHECK karena Feeder membaca bulan, bukan tanggal; menyimpan tanggal sembarang akan membuat pengiriman menghasilkan angka yang berbeda dari yang dibaca kampus. `transcript_lines` menyalin `course_name` dan label periode **sengaja**: itu satu-satunya tempat di skema ini di mana menyalin kolom dibenarkan, karena transkrip yang terbit 2024 harus tetap terbaca sama setelah nama matakuliah diganti 2026 (BR-R12), dan view `security_invoker` tidak dapat merekonstruksi masa lalu.
+
+**RLS & kekebalan arsip.** Semua tabel ber-`tenant_id` dengan `ENABLE`+`FORCE`+`tenant_isolation`. `transcript_lines` dan `thesis_examiners.score/verdict` di-`REVOKE UPDATE, DELETE` dari `sica_app` dan dijaga pemicu `app.reject_mutation()` (pola CE-5.2): baris transkrip dan nilai sidang adalah arsip, koreksi = versi baru. `transcript_versions` boleh berpindah state hanya maju (`DRAFT→SIGNED→ISSUED→SUPERSEDED`); perpindahan mundur ditolak service dan diuji di §23.7 butir 5.
+
+**Status.** Kelas A: `yudisium_batch_state`, `thesis_state`, `transcript_state` (+ §15.2). Kelas A′/jejak: `thesis_supervisors.role`, `thesis_examiners.role`, `verdict` (kosakata penugasan, tertutup karena dibaca aturan). Kelas C: tidak ada di gugus ini — jenis karya puncak sudah dimiliki `final_project_kinds` (§19.3), dan menyalanya sebagai enum baru di sini adalah sumber kebenaran kedua.
+
+### 23.4 `0019_permohonan_kelulusan.sql` — permohonan, legalisir, dan sesi wisuda
+
+```sql
+CREATE TYPE graduation_application_state AS ENUM ('DRAFT','SUBMITTED','CLEARANCE_PENDING','ELIGIBLE','APPROVED','REJECTED','WITHDRAWN');
+CREATE TYPE legalisation_state AS ENUM ('REQUESTED','PAID','IN_PROGRESS','READY','DELIVERED','REJECTED','CANCELLED');
+CREATE TYPE commencement_state AS ENUM ('PLANNED','OPEN_REGISTRATION','CLOSED','HELD','PUBLISHED','CANCELLED');
+
+CREATE TABLE graduation_applications (                      -- gerbang masuk yudisium: tagihan, clearance, SKS, prasyarat
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  state graduation_application_state NOT NULL DEFAULT 'DRAFT',
+  sks_completed numeric(5,1) NOT NULL CHECK (sks_completed >= 0),
+  ipk_current numeric(3,2) NOT NULL CHECK (ipk_current BETWEEN 0 AND 4),
+  thesis_record_id uuid REFERENCES thesis_records(id),
+  clearance_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,     -- daftar dimensi + keadaan saat diajukan; bukan salinan tabel clearance
+  outstanding_billing boolean NOT NULL DEFAULT false,        -- boolean + sebab, nominal TIDAK dibaca peran akademik (§3.8 FIELD_RULES)
+  blocked_reason text,
+  submitted_at timestamptz, decided_by uuid, decided_at timestamptz,
+  yudisium_batch_id uuid REFERENCES yudisium_batches(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, student_id, period_id),
+  CHECK (state <> 'APPROVED' OR (decided_by IS NOT NULL AND yudisium_batch_id IS NOT NULL)),
+  CHECK (state NOT IN ('ELIGIBLE','APPROVED') OR thesis_record_id IS NOT NULL OR sks_completed < 1),  -- karya puncak wajib kecuali model prodi lain (§19.3)
+  CHECK (state <> 'REJECTED' OR blocked_reason IS NOT NULL)
+);
+CREATE INDEX idx_grad_apps_state ON graduation_applications(tenant_id, period_id, state);
+
+CREATE TABLE legalisation_requests (                        -- legalisir/SKL: jumlah, keperluan, biaya, status
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  request_number text NOT NULL,
+  student_id uuid NOT NULL REFERENCES students(id),
+  source_document_id uuid NOT NULL REFERENCES documents(id), -- yang dilegalisasi adalah dokumen terbit, bukan berkas lepas
+  copies int NOT NULL CHECK (copies BETWEEN 1 AND 50),
+  purpose text NOT NULL CHECK (char_length(purpose) BETWEEN 3 AND 300),
+  state legalisation_state NOT NULL DEFAULT 'REQUESTED',
+  fee_rupiah bigint NOT NULL DEFAULT 0 CHECK (fee_rupiah >= 0),
+  invoice_id uuid,                                          -- tagihan milik M-10; tidak ada kolom "sudah bayar" di sini
+  paid_at timestamptz, processed_by uuid, ready_at timestamptz, delivered_at timestamptz,
+  rejection_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, request_number),
+  CHECK (state NOT IN ('IN_PROGRESS','READY','DELIVERED') OR paid_at IS NOT NULL OR fee_rupiah = 0),
+  CHECK (state <> 'DELIVERED' OR ready_at IS NOT NULL),
+  CHECK (state <> 'REJECTED' OR rejection_reason IS NOT NULL)
+);
+CREATE INDEX idx_legalisation_state ON legalisation_requests(tenant_id, state, created_at);
+
+CREATE TABLE commencement_batches (                         -- sesi wisuda (dulu disebut "convocation" di API_SPEC §7.27 — nama objek tetap di sini)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, label text NOT NULL,
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  held_on date NOT NULL,
+  site_id uuid REFERENCES campus_sites(id),                 -- §19.1; wisuda lintas kampus = baris per site
+  state commencement_state NOT NULL DEFAULT 'PLANNED',
+  registration_opens_at timestamptz, registration_closes_at timestamptz,
+  seat_capacity int NOT NULL CHECK (seat_capacity > 0),     -- kapasitas kursi; penahanannya di Redis-Lua saat beban puncak (§3.7), bukan UPDATE per request
+  gown_issued_count int NOT NULL DEFAULT 0 CHECK (gown_issued_count >= 0),
+  decree_document_id uuid REFERENCES documents(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code),
+  CHECK (registration_closes_at IS NULL OR registration_opens_at IS NULL OR registration_closes_at > registration_opens_at),
+  CHECK (state <> 'PUBLISHED' OR held_on <= current_date)
+);
+```
+
+**Kenapa begini.** `graduation_applications.clearance_snapshot` disimpan sebagai JSON **berversi waktu**, bukan sebagai kolom boolean "lunas/clear": clearance punya dimensi milik modul lain (§5, `0009`), dan menyalin satu boolean akan membuat dua sumber kebenaran tentang keadaan yang sama — pola yang ditolak `RD-32`. Yang dibekukan di sini hanyalah daftar dimensi beserta keadaannya **pada saat permohonan diajukan**, supaya keputusan dapat direkonstruksi ketika salah satu dimensi berubah setelahnya. `legalisation_requests` **tidak** punya kolom "sudah bayar": ia menunjuk `invoice_id` dan memindahkan state saat M-10 mengonfirmasi pembayaran, karena jika kolomnya ada di sini maka status keuangan akan bisa dibaca benar di satu tempat dan salah di tempat lain. `seat_capacity` dibiarkan sebagai kolom biasa karena pengurangannya bukan `UPDATE ... FOR UPDATE` per pendaftar (`AGENTS §3.7`), melainkan lewat antrean + kunci atomik Redis; kolom `gown_issued_count` hanya pencatat hasil.
+
+**RLS.** `ENABLE`+`FORCE`+`tenant_isolation` untuk ketiganya; `graduation_applications` dan `legalisation_requests` diambil lewat service yang sama yang membaca `clearances` dan `invoices`, jadi tidak ada jalur baca langsung ke kolom uang. Tidak ada tabel alumni baru di gugus ini: alumni adalah baris `students` dengan `status_akademik='GRADUATED'` (vonis §22.4.2), dan membuat `alumni_profiles` akan menghasilkan dua kebenaran tentang satu orang.
+
+### 23.5 Sisa `0026_kemahasiswaan_skpi.sql` — empat objek, satu nama dikalah
+
+`student_activities` **tidak** dibuat: konsepnya sudah dimiliki `activity_participations` (`0064`, §22.6.1) yang punya DDL lengkap. Yang ditulis di bawah hanya empat objek lain yang didaftarkan pada nomor itu dan menjadi **pakan SKPI** (M-30) — sertifikat, publikasi, dan capaian yang tidak dimiliki modul lain.
+
+```sql
+CREATE TYPE certification_state AS ENUM ('DRAFT','ISSUED','REVOKED','EXPIRED');
+
+CREATE TABLE activity_kinds (                               -- kelas C: kampus menambah jenis kegiatan tanpa rilis kode
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind text NOT NULL DEFAULT 'kegiatan_mahasiswa',          -- selalu 'kegiatan_mahasiswa' untuk item kamus jenis; dipertahankan agar lookup §20 seragam
+  code text NOT NULL, name text NOT NULL, name_en text,
+  default_points int NOT NULL DEFAULT 0 CHECK (default_points >= 0),
+  is_skpi_visible boolean NOT NULL DEFAULT true,
+  is_active boolean NOT NULL DEFAULT true,
+  sort_order int NOT NULL DEFAULT 100,
+  UNIQUE (tenant_id, code)
+);
+
+CREATE TABLE achievement_levels (                           -- tingkat capaian: lokal/nasional/internasional + predikat (kamus, dengan bobot)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  multiplier_bp int NOT NULL CHECK (multiplier_bp BETWEEN 1000 AND 100000),  -- basis poin, bukan float: 10000 = 1,00x
+  rank_order int NOT NULL DEFAULT 100,
+  is_active boolean NOT NULL DEFAULT true,
+  UNIQUE (tenant_id, code)
+);
+
+CREATE TABLE certification_records (                        -- sertifikat non-kurikuler yang masuk SKPI; SIVIL tetap milik 0052
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  activity_kind_id uuid REFERENCES activity_kinds(id),
+  title text NOT NULL CHECK (char_length(title) BETWEEN 3 AND 200),
+  issuer text NOT NULL,
+  issued_on date NOT NULL, expires_on date,
+  certificate_number text,
+  attachment_id uuid NOT NULL REFERENCES attachments(id),
+  state certification_state NOT NULL DEFAULT 'ISSUED',
+  points_awarded int NOT NULL DEFAULT 0 CHECK (points_awarded >= 0),
+  verified_by uuid, verified_at timestamptz,                -- empat-mata: yang mengunggah bukan yang mengesahkan
+  revoked_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, attachment_id),
+  CHECK (state <> 'EXPIRED' OR expires_on IS NOT NULL),
+  CHECK (state <> 'REVOKED' OR revoked_reason IS NOT NULL),
+  CHECK (verified_by IS NULL OR verified_by <> student_id)
+);
+CREATE INDEX idx_certification_student ON certification_records(tenant_id, student_id, state, issued_on DESC);
+
+CREATE TABLE publication_records (                          -- baris pakan SKPI: ringkasan terbit, bukan pemilik artikel
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  author_student_id uuid NOT NULL REFERENCES students(id),
+  source_article_id uuid,                                   -- bila sudah ada di M-21 (§22.5.1), ini proyeksi baca-saja; NULL = publikasi yang belum masuk jurnal kampus
+  title text NOT NULL, venue text NOT NULL,
+  published_on date, indexing_status text,
+  doi text,
+  attachment_id uuid REFERENCES attachments(id),
+  verified_by uuid, verified_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (source_article_id IS NULL OR doi IS NULL OR length(doi) > 6)
+);
+```
+
+**Batas yang dijaga.** `publication_records` **bukan** pemilik artikel ilmiah: penulis dan status indeks yang sah ada di gugus M-21 (`journals`, artikel, HKI di §22.5). Yang boleh disimpan di sini hanya ringkasan yang diperlukan SKPI mahasiswa, dengan `source_article_id` sebagai penunjuk. Kalau kolom ini mulai menghitung ulang angka (mis. skor SINTA), gugus ini melanggar vonis tanggung-jawab-tunggal `PRD §5.13.1` dan temuannya adalah dua angka untuk satu artikel. `certification_records` juga tidak menyaingi `e_certificates` (`0052`): yang itu adalah sertifikat **verifikasi nasional** (SIVIL) dengan rantai hash, yang ini adalah sertifikat kegiatan yang dilaporkan di SKPI.
+
+### 23.6 Nomor baru: `0076_student_cards.sql` dan `0077_tracer_study.sql`
+
+Kedua gugus ini **belum pernah punya nomor** di register mana pun — `student_cards`/KTM tidak disebut di §14.7 dan `tracer_*` didaftarkan sebagai "modul ter-seed tanpa model data" (`P-10`, §14.8). Nomornya diambil dari ujung register: maksimum terukur saat ini `0075` (`MIGRATION_SOP §5.1` butir 1), sehingga `0076`/`0077` sah dan wajib naik ke register sebelum dieksekusi.
+
+```sql
+CREATE TYPE student_card_state AS ENUM ('REQUESTED','PRINTED','ACTIVE','BLOCKED','EXPIRED','RETURNED','LOST');
+CREATE TYPE tracer_wave_state AS ENUM ('DRAFT','OPEN','CLOSED','PUBLISHED','CANCELLED');
+
+CREATE TABLE student_cards (                                -- KTM: nomor kartu, masa berlaku, foto, keadaan
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  card_number text NOT NULL,
+  series text NOT NULL,                                     -- contoh '2024/2028' mengikuti masa studi; format dipakai dari document_number_sequences
+  state student_card_state NOT NULL DEFAULT 'REQUESTED',
+  issued_on date, valid_until date,
+  photo_attachment_id uuid REFERENCES attachments(id),      -- wajah = PII: kelas SPECIFIC, tidak pernah termask di log (§7 SECURITY)
+  rfid_seq text, magnetic_hash text,                        -- hash, bukan kunci telanjang; verifikasi = cocok/tidak
+  printed_by uuid, printed_at timestamptz,
+  replacement_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, card_number),
+  CHECK (valid_until IS NULL OR issued_on IS NULL OR valid_until > issued_on),
+  CHECK (state NOT IN ('ACTIVE','RETURNED','EXPIRED') OR (issued_on IS NOT NULL AND printed_at IS NOT NULL)),
+  CHECK (state NOT IN ('LOST','BLOCKED','RETURNED') OR replacement_reason IS NOT NULL),
+  CHECK (magnetic_hash IS NULL OR magnetic_hash ~ '^[a-f0-9]{64}$')
+);
+CREATE INDEX idx_cards_student ON student_cards(tenant_id, student_id, state);
+
+CREATE TABLE student_card_events (                          -- insert-only: satu kartu yang hilang & diganti harus dapat diceritakan ulang
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  card_id uuid NOT NULL REFERENCES student_cards(id) ON DELETE CASCADE,
+  event text NOT NULL CHECK (event IN ('REQUEST','PRINT','ACTIVATE','BLOCK','LOST','REISSUE','RETURN','EXPIRE')),
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  actor uuid, note text
+);
+
+CREATE TABLE tracer_survey_waves (                          -- M-27: gelombang survei tracer study per tahun kelulusan
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, label text NOT NULL,
+  graduation_year int NOT NULL CHECK (graduation_year BETWEEN 1950 AND 2100),
+  window_opens_at timestamptz NOT NULL, window_closes_at timestamptz NOT NULL,
+  state tracer_wave_state NOT NULL DEFAULT 'DRAFT',
+  target_population int NOT NULL DEFAULT 0 CHECK (target_population >= 0),
+  response_count int NOT NULL DEFAULT 0 CHECK (response_count >= 0),
+  published_at timestamptz,                                 -- IKU 1 menghitung dari yang DITERBITKAN, bukan dari yang mentah
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code),
+  CHECK (window_closes_at > window_opens_at),
+  CHECK (state <> 'PUBLISHED' OR published_at IS NOT NULL),
+  CHECK (response_count <= target_population)               -- dua-duanya dihitung ulang dari baris, bukan dipercaya dari body
+);
+
+CREATE TABLE tracer_questions (                             -- instrumen berversi; pertanyaan lama tidak pernah diedit setelah dibuka
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  wave_id uuid NOT NULL REFERENCES tracer_survey_waves(id) ON DELETE CASCADE,
+  ordinal int NOT NULL CHECK (ordinal > 0),
+  prompt text NOT NULL,
+  answer_type text NOT NULL CHECK (answer_type IN ('SINGLE','MULTI','NUMBER','DATE','TEXT','EMPLOYMENT_STATUS')),
+  is_required boolean NOT NULL DEFAULT true,
+  iku_mapping text,                                         -- pemetaan ke indikator IKU; NULL = pertanyaan pendukung
+  options jsonb NOT NULL DEFAULT '[]'::jsonb                -- HANYA label; pilihan berpilihan wajib menunjuk `reference_items` (§3.10), tidak boleh menciptakan kosakata baru
+);
+CREATE UNIQUE INDEX idx_tracer_questions_pos ON tracer_questions(tenant_id, wave_id, ordinal);
+
+CREATE TABLE tracer_responses (                             -- satu respons per alumni per gelombang; identitas alumni = baris students
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  wave_id uuid NOT NULL REFERENCES tracer_survey_waves(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  answered_at timestamptz NOT NULL DEFAULT now(),
+  consent_given boolean NOT NULL DEFAULT false,             -- tanpa consent: tidak boleh ditampilkan ke pemberi kerja (M-28)
+  answers jsonb NOT NULL DEFAULT '{}'::jsonb,               -- {question_id: value}; nilai tidak pernah masuk sebagai kolom dinamis
+  completeness_pct numeric(5,2) CHECK (completeness_pct IS NULL OR completeness_pct BETWEEN 0 AND 100)
+);
+CREATE UNIQUE INDEX idx_tracer_response_once ON tracer_responses(tenant_id, wave_id, student_id);
+
+CREATE TABLE tracer_employment_records (                    -- fakta kerja alumni; M-28 membaca ini, tidak menulis ulang (vonis 13)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  response_id uuid REFERENCES tracer_responses(id),
+  status text NOT NULL CHECK (status IN ('WORKED','NOT_WORKED','STUDYING','ENTREPRENEUR','UNAVAILABLE')),
+  started_on date, end_on date,
+  job_title text, job_sector text,
+  external_organization_id uuid REFERENCES external_organizations(id),  -- pemberi kerja adalah pihak ketiga; tidak ada nama perusahaan yang diketik bebas
+  salary_band_code text,                                    -- kamus `income_band`: rentang, bukan nominal (SoD gaji, §3.8)
+  verified_at timestamptz, verified_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (end_on IS NULL OR started_on IS NULL OR end_on >= started_on),
+  CHECK (status <> 'WORKED' OR job_title IS NOT NULL)
+);
+CREATE INDEX idx_tracer_employment ON tracer_employment_records(tenant_id, student_id, started_on DESC);
+```
+
+**Kenapa KTM butuh peristiwa dan tracer butuh consent.** `student_cards.state` sendirian tidak menjawab pertanyaan yang pasti muncul saat sengketa ("kartu ini kapan diblokir, siapa yang menyatakan hilang, dan kartu pengganti nomor berapa"), sehingga `student_card_events` dibuat insert-only dengan `REVOKE UPDATE, DELETE` (pola §16.3.3). `tracer_responses.consent_given` adalah syarat hukum, bukan kolom hiasan: tanpa consent, baris alumni tidak boleh keluar ke M-28 maupun ke laporan yang dapat diunduh, dan penolakan itu **dicatat** (`AGENTS §3.8`, `SECURITY §7`). `tracer_employment_records.external_organization_id` memaksa nama pemberi kerja tetap satu identitas di `0053`; kolom `job_title` bebas teks dibiarkan karena judul pekerjaan memang milik responden, tetapi **perusahaan** tidak.
+
+**Status.** Kelas A: `student_card_state`, `tracer_wave_state`. Kelas jejak: `student_card_events.event`, `tracer_questions.answer_type`, `tracer_employment_records.status` (kosakata pelaporan IKU, tertutup karena dibaca indikator). Kelas C: `activity_kinds`, `achievement_levels`, `income_band` (kamus), `tracer_questions.options` **hanya** label untuk kamus yang sudah terdaftar.
+
+### 23.7 Register, query verifikasi CI, dan sisa tagihan
+
+**Register nomor yang disentuh §23.**
+
+| Berkas | Isi | Prasyarat | Status |
+|---|---|---|---|
+| `0019` | `graduation_applications`, `legalisation_requests`, `commencement_batches` (`documents` **dihapus** dari baris ini, ralat 1) | `0020` (`documents`, `attachments`), `0027` (`thesis_records`, `yudisium_batches`), §5 `academic_periods` | DDL **ditulis di §23.4** — belum dieksekusi (`G-02`) |
+| `0020` | `attachments`, `document_number_sequences`, `documents`, `import_runs` | `0001`, `document_templates` (§17), `document_signatures` (§4.7) | DDL **ditulis di §23.1** — penahan backend objek |
+| `0021` | 10 objek PMB | `0020`, `0053` (`external_organizations`), `0036` (`btree_gist`), `academic_years`/`study_programs` | DDL **ditulis di §23.2** — `P-10` menahan penjualan modul `pmb` |
+| `0026` | `activity_kinds`, `achievement_levels`, `certification_records`, `publication_records`; `student_activities` **KALAH** | `0064` (`activity_participations`), `0020` | DDL **ditulis di §23.5** |
+| `0027` | `yudisium_batches`, `thesis_records`, `thesis_supervisors`, `thesis_examiners`, `transcript_versions`, `transcript_lines` | `0020`, `0019`(§5 `graduation_records`), `0036` (`engine_runs`), §19.3 `final_project_kinds` | DDL **ditulis di §23.3** |
+| `0076` | `student_cards`, `student_card_events` | `0020` (penomoran + foto), §5 `students` | **nomor baru lahir di sini** — wajib naik ke `MIGRATION_SOP §5` |
+| `0077` | `tracer_survey_waves`, `tracer_questions`, `tracer_responses`, `tracer_employment_records` | `0053`, §5 `students`, `reference_items` | **nomor baru lahir di sini** — wajib naik ke `MIGRATION_SOP §5` |
+
+**Query verifikasi CI (dijalankan di DB nyata, bukan dibaca sebagai prosa).** (1) `node .tools/fk-audit.mjs` → **0** target `REFERENCES` tanpa pembuat; (2) pemicu `app.assert_pmb_wave_path()` menolak `INSERT pmb_applications` dengan `path_id` berbeda dari gelombangnya (`42501`/`23514` sesuai implementasi, bukan "0 rows affected"); (3) `pmb_reregistrations.funding_source_code` yang tidak ada di `reference_items(kind='funding_source')` ditolak service **dan** query `LEFT JOIN reference_items … WHERE r.code IS NULL` menghasilkan **0 baris** setelah seed; (4) setiap tabel §23 diuji **dua-tenant silang = 0 baris bocor** (`AGENTS §3.2`); (5) `UPDATE`/`DELETE` pada `transcript_lines`, `thesis_examiners`, `student_card_events`, `import_runs` sebagai `sica_app` menghasilkan **error**, bukan senyap; (6) `EXCLUDE` pada `pmb_waves` menolak dua gelombang beririsan satu jalur; (7) `UNIQUE (tenant_id, nim)` menolak NIM dobel dan `recycle_allowed` menolak daur ulang NIM yang sudah `pddikti_reported_at`; (8) `documents` tidak boleh punya dua baris dengan `(doc_type, number)` sama walau `tenant_id` beda — sequence per-tenant dibuktikan, bukan diasumsikan; (9) `SELECT count(*) FROM pg_catalog.pg_prepared_statements` tetap 0 (`prepare=false`, `AGENTS §3.7`); (10) `tracer_responses.consent_given = false` tidak dapat dibaca melalui proyeksi M-28 (uji penolakan `403`, bukan uji filter).
+
+**Sisa tagihan setelah §23 (angka dihitung ulang, jangan dikutip sebagai ramalan).** `node .tools/ddl-gap.mjs` per siklus ini keluar dengan **45 nama pada 12 nomor**: `0013` (4), `0014` (2), `0015` (5), `0016` (5), `0017` (3), `0018` (5), `0022` (4), `0023` (2), `0024` (2), `0025` (1), `0028` (7), `0029` (5). Gugus yang tersisa itu bukan formalitas: `0022` adalah **kanal pembayaran & rekonsiliasi VA**, `0024` **jadwal ujian**, `0025` **kehadiran dosen (sumber BKD dan akreditasi)**, `0028` **jembatan Feeder**, `0029` **notifikasi dan impersonation**. Tidak satu pun boleh dinyatakan siap hanya karena nomornya sudah ada di register, dan tidak satu pun layar boleh dibuka sebagai tiket kode sebelum DDL-nya ditulis lebih dulu (`AGENTS §3.11`). Yang sudah selesai di bagian ini hanya menghilangkan dua kategori kegagalan: rujukan foreign key yang menggantung (terukur **0**) dan modul ter-seed tanpa tabel untuk jalur pendaftaran–kelulusan–dokumen.
+
+## 24. DDL dimensi yang belum berumah: geografi sesi real-time (peta GIS) dan jaminan sosial + EWMP (2026-10-21)
+
+**Kenapa bagian ini ada.** Permintaan pemilik menambah dua dimensi yang tidak pernah diukur penjaga mana pun: **peta sebaran login real-time** (GIS) dan **kepatuhan jaminan sosial + EWMP**. `node .tools/dimension-audit.mjs` (alat baru siklus ini, 38 dimensi dari brief dewan) mencetak yang tidak bisa disanggah: `GeoIP` **0** kemunculan di 20 berkas, `active session store` **0**, **`BPJS` 0**, **`EWMP` 0**, `Glassmorphism` 0. Empat yang pertama adalah lubang kontrak, bukan lubang gaya: tanpa baris ENV yang sah, pengembangan akan menaruh kunci MaxMind di kode; tanpa objek iuran, payroll hanya bisa menampung BPJS lewat `jsonb` tanpa penegakan; dan peta sebaran tanpa definisi sumber data akan dipenuhi angka dummy — justru yang dilarang brief.
+
+**Empat vonis arsitektur yang menentukan bentuk gugus ini.**
+1. **Peta membaca fakta, tidak memilikinya.** `sessions` dan `login_events` (§3) sudah pemilik `ip_hash` SHA-256 ber-pepper harian. Gugus ini **menambah** gejala geografi per sesi, tidak pernah menyimpan IP mentah, dan tidak membuat tabel sesi kedua.
+2. **Dua sumber koordinat, satu kolom, `source` wajib.** `GEOIP_DB` (perkiraan dari basis offline MaxMind GeoIP2) dan `CLIENT_GEO` (W3C Geolocation dengan consent + `accuracy_meters`) **tidak boleh dicampur tanpa label**; angka "presisi" yang datang dari GeoIP adalah klaim palsu. Yang tidak punya keduanya masuk sebagai `SITE_GEO` (koordinat kampus) atau `UNKNOWN`, bukan titik acak.
+3. **Jaminan sosial Indonesia adalah kelas B, bukan enum kampus.** Kode program (JHT/JKK/JKM/JP/PBU), tarif negara, dan kelas iuran ditetapkan pemerintah; kampus hanya memetakan peserta dan periode. Karena itu yang disimpan adalah **basis tarif dalam basis poin + `effective_from/to`**, bukan CHECK daftar string, dan **bukan** angka yang dikarang dokumen ini (sumbernya regulasi, dieksekusi sebagai data berversi).
+4. **EWMP belum diketahui bentuknya.** Muatan SISTER/EWMP ditandai `[VERIFIKASI-VENDOR]` — objeknya menampung identifier dan jejak sync, **bukan** field karangan. Ini norma yang sama dengan muatan Graph/Zoom di §21.10; mengarang kolom EWMP adalah `RD-05` bentuk lain.
+
+### 24.1 `0078_session_geography.sql` — fakta geografi sesi untuk peta eksekutif
+
+```sql
+CREATE TYPE geo_source AS ENUM ('GEOIP_DB','CLIENT_GEO','SITE_GEO','UNKNOWN');
+CREATE TYPE geo_surface AS ENUM ('WEB','MOBILE_APP','TABLET');
+
+CREATE TABLE session_geo_facts (                            -- satu baris per observasi lokasi sesi; sesi boleh punya >1 (pindah jaringan)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  session_id uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  login_event_id uuid REFERENCES login_events(id),
+  user_id uuid NOT NULL REFERENCES users(id),
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  source geo_source NOT NULL,
+  surface geo_surface NOT NULL,
+  country_code char(2),                                     -- ISO 3166-1 alpha-2; NULL bila basis GeoIP tidak memberi
+  region_code text, city text,
+  latitude  numeric(9,6)  CHECK (latitude  IS NULL OR (latitude  BETWEEN -90  AND 90)),
+  longitude numeric(10,6) CHECK (longitude IS NULL OR (longitude BETWEEN -180 AND 180)),
+  accuracy_meters int CHECK (accuracy_meters IS NULL OR accuracy_meters BETWEEN 1 AND 100000),
+  campus_site_id uuid REFERENCES campus_sites(id),           -- SITE_GEO: titik datang dari kampus, bukan dari perangkat
+  retention_days int NOT NULL DEFAULT 90 CHECK (retention_days BETWEEN 7 AND 730),
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((source = 'SITE_GEO') = (campus_site_id IS NOT NULL)),
+  CHECK (source <> 'CLIENT_GEO' OR accuracy_meters IS NOT NULL),
+  CHECK (source <> 'UNKNOWN' OR (latitude IS NULL AND longitude IS NULL)),
+  CHECK (expires_at > observed_at)
+);
+CREATE INDEX idx_geo_facts_window ON session_geo_facts(tenant_id, observed_at DESC) WHERE expires_at > now();
+CREATE INDEX idx_geo_facts_cluster ON session_geo_facts(tenant_id, country_code, region_code, observed_at DESC);
+
+CREATE VIEW session_geo_live_buckets                        -- satu fisik, satu view: agregasi 60 detik untuk peta (security_invoker WAJIB)
+WITH (security_invoker = true) AS
+SELECT tenant_id, country_code, region_code,
+       date_trunc('minute', observed_at) AS bucket_at,
+       source,
+       count(*) AS observations,
+       count(DISTINCT user_id) AS distinct_users
+FROM session_geo_facts
+WHERE expires_at > now()
+GROUP BY tenant_id, country_code, region_code, date_trunc('minute', observed_at), source;
+```
+
+**Kenapa begini.** `retention_days` + `expires_at` ada di baris, bukan hanya di kebijakan, karena peta sesi adalah **data pribadi lintas yurisdiksi**: satu baris yang tidak punya tanggal mati akan bertahan selamanya di tabel yang dibaca dashboard. `CHECK ((source = 'SITE_GEO') = (campus_site_id IS NOT NULL))` menutup pemalsuan paling murah — menaruh koordinat kampus sebagai "lokasi login mahasiswa" lalu menyebutnya real-time. `accuracy_meters` wajib untuk `CLIENT_GEO` karena tanpa akurasi, titik GPS tidak dapat dibedakan dari tebakan. View agregasi (`security_invoker = true`) dipakai karena peta tidak pernah butuh identitas individu; kalau view berjalan dengan hak pemiliknya, satu endpoint peta menembus RLS seluruh sesi (`AGENTS §3.10`).
+
+**RLS, retensi, dan apa yang TIDAK dilakukan.** `session_geo_facts` ber-`ENABLE` + `FORCE` + `tenant_isolation`, dan **insert-only**: `REVOKE UPDATE, DELETE` + pemicu `app.reject_mutation()` (pola CE-5.2); koreksi = baris baru. Tidak ada `user_id` di proyeksi view. IP mentah **tidak** menjadi kolom di mana pun (`ip_hash` tetap bytea di §3). Basis MaxMind adalah berkas offline berlisensi: **tidak ada panggilan jaringan ke pihak ketiga dari rute HTTP** (`AGENTS §3.9` nol-egress berlaku untuk data pribadi juga), dan `dimension-audit` menuntut nomor ENV yang sah sebelum kode ditulis.
+
+### 24.2 `0079_social_insurance.sql` — kepesertaan dan iuran jaminan sosial
+
+```sql
+CREATE TYPE remittance_state AS ENUM ('PENDING','REMAPPED','REMITTED','REJECTED');
+
+CREATE TABLE social_insurance_participations (              -- satu baris per orang per program per masa berlaku
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  staff_id uuid NOT NULL,                                   -- pegawai/dosen (§11.3) pemilik orang; tidak ada salinan nama
+  program text NOT NULL,                                    -- kelas B: JHT|JKK|JKM|JP|PBU — kodenya dari regulasi, nilainya Data berversi
+  dictionary_entry_id uuid,                                 -- menunjuk `reference_dictionary_entries` (`0028`, DDL ditulis §26.11 — berkasnya belum ada)
+  member_number_bidx bytea,                                 -- blind index nomor peserta (lookup), bukan nomor telanjang
+  member_number_encrypted bytea,                            -- amplop dua kunci (§16.3.4)
+  base_wage_rupiah bigint NOT NULL CHECK (base_wage_rupiah >= 0),
+  employer_rate_bp int NOT NULL CHECK (employer_rate_bp BETWEEN 0 AND 2500),   -- basis poin: 200 = 2,00 %
+  employee_rate_bp int NOT NULL CHECK (employee_rate_bp BETWEEN 0 AND 2500),
+  risk_class_code text,                                     -- kelas risiko kecelakaan kerja (JKK), dari regulasi
+  effective_from date NOT NULL, effective_to date,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (is_active = false OR effective_to IS NULL)
+);
+CREATE INDEX idx_si_participant ON social_insurance_participations(tenant_id, staff_id, program, effective_from DESC);
+CREATE UNIQUE INDEX idx_si_one_active ON social_insurance_participations(tenant_id, staff_id, program) WHERE is_active;
+
+CREATE TABLE social_insurance_contributions (               -- tagihan iuran per run gaji: tidak pernah dihitung dua kali
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  participation_id uuid NOT NULL REFERENCES social_insurance_participations(id),
+  payroll_run_id uuid NOT NULL,                             -- pemilik gaji (§22.2.2, `0054`); penunjuk keluar, bukan salinan
+  period_month date NOT NULL CHECK (period_month = date_trunc('month', period_month)),
+  employer_amount_rupiah bigint NOT NULL CHECK (employer_amount_rupiah >= 0),
+  employee_amount_rupiah bigint NOT NULL CHECK (employee_amount_rupiah >= 0),
+  state remittance_state NOT NULL DEFAULT 'PENDING',
+  voucher_number text, remitted_at timestamptz,
+  remittance_file_id uuid REFERENCES attachments(id),        -- bukti setor tetap satu pemilik berkas (§23.1)
+  recalculated_from uuid REFERENCES social_insurance_contributions(id),  -- REKONSILIASI membuat baris baru, tidak menimpa
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, participation_id, period_month),
+  CHECK (state <> 'REMITTED' OR (voucher_number IS NOT NULL AND remitted_at IS NOT NULL)),
+  CHECK (recalculated_from IS NULL OR recalculated_from <> id)
+);
+CREATE INDEX idx_si_contrib_period ON social_insurance_contributions(tenant_id, period_month, state);
+```
+
+**Kenapa tarif disimpan sebagai basis poin + masa berlaku.** Nominal iuran berubah oleh regulasi, dan perubahan itu harus dapat direkonstruksi untuk gaji bulan lalu (`BR-R12`). Menyimpan `rate numeric` akan memaksa `float` ke jalur uang (dilarang `AGENTS §3.4`), dan menaruh tarif di CHECK akan mengunci angka negara ke dalam kode kampus. Karena itu `*_rate_bp` (10 000 = 100 %) ber-`effective_from/to`, dan nominal hasil perkalian **tidak dihitung ulang saat dibaca** — baris kontribusi menyimpan hasil pada saat run, dengan `recalculated_from` sebagai rantai bila koreksi diperlukan.
+
+**Yang tidak dikarang.** Dokumen ini **tidak** menetapkan berapa persen JHT atau JP, berapa kelas PBU, atau ambang upat minimum: itu data kelas B (`reference_dictionary_entries`, nomor `0028` yang DDL-nya masih menjadi tagihan `CRD-6`). Kolom `dictionary_entry_id` sengaja boleh `NULL` sekarang dan wajib diisi saat `0028` terbit — CI §24.4 butir 2 menagihnya. Nomor peserta diperlakukan sebagai PII spesifik: **blind index + terenkripsi**, tidak pernah terbaca di log, dan proyeksi UI hanya menampilkan 4 digit terakhir.
+
+### 24.3 `0080_ewmp_sync.sql` — jejak sinkronisasi EWMP, tanpa field karangan
+
+```sql
+CREATE TYPE ewmp_sync_state AS ENUM ('QUEUED','RUNNING','SUCCEEDED','PARTIAL','FAILED');
+
+CREATE TABLE ewmp_sync_batches (                            -- bentuk muatan [VERIFIKASI-VENDOR]: identifier + jejak, bukan kolom tebakan
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  staff_id uuid NOT NULL,                                   -- dosen pemilik profil
+  sister_identity_ref text,                                 -- pointer ke `feeder_identities`/SISTER (`0028`/`0055`), bukan salinan
+  payload_digest char(64) NOT NULL CHECK (payload_digest ~ '^[a-f0-9]{64}$'),  -- SHA-256 muatan yang dikirim; isi TIDAK disimpan di DB
+  state ewmp_sync_state NOT NULL DEFAULT 'QUEUED',
+  engine_note text,                                          -- catatan degradasi/mode turun, tampil apa adanya
+  attempts int NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 3),
+  requested_by uuid NOT NULL, approved_by uuid,             -- kirim data nasional = aksi VALIDATE ber-empat-mata
+  queue_op_id uuid,                                          -- `queue_operations` (`0030`) pemilik antrean
+  succeeded_at timestamptz, failed_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (state <> 'SUCCEEDED' OR succeeded_at IS NOT NULL),
+  CHECK (state <> 'FAILED' OR failed_reason IS NOT NULL),
+  CHECK (state NOT IN ('SUCCEEDED','PARTIAL') OR approved_by IS NOT NULL),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+CREATE INDEX idx_ewmp_state ON ewmp_sync_batches(tenant_id, state, created_at DESC);
+CREATE UNIQUE INDEX idx_ewmp_one_per_staff_period ON ewmp_sync_batches(tenant_id, staff_id, payload_digest);
+```
+
+**Kenapa setipis ini, dan itu disengaja.** Tidak ada satu pun kolom seperti `jdaf`, `jabatan`, `riwayat_pengangkatan`, atau `skp` di tabel ini, karena bentuk resmi muatan EWMP belum diverifikasi terhadap dokumentasi SISTER yang berlaku. Yang bisa dijanjikan hari ini adalah: **digest muatan** (bukti apa yang dikirim), **state antrean**, **empat-mata**, dan **idempotensi** (`UNIQUE (tenant_id, staff_id, payload_digest)` mengirim muatan yang sama dua kali = satu batch). Saat spesifikasi vendor terverifikasi, fieldnya naik sebagai **Expand** (`0081`) di bagian ini, bukan sebagai `ALTER` diam-diam di migrasi lain. Ini pembeda antara "spesifikasi jujur" dan "spesifikasi yang terlihat selesai".
+
+### 24.4 Register, ambang, dan query CI gugus §24
+
+| Berkas | Isi | Prasyarat | Status |
+|---|---|---|---|
+| `0078_session_geography.sql` | enum `geo_source`/`geo_surface` + `session_geo_facts` + view `session_geo_live_buckets` | `0001` (`sessions`, `login_events`, `users`), `0044`/§19.1 (`campus_sites`), `0020` (`attachments` tidak dipakai tapi retensi konsisten) | DDL ditulis — **eksekusi menunggu jalur DB (`G-02`) + kunci ENV terdaftar** |
+| `0079_social_insurance.sql` | enum `remittance_state` + `social_insurance_participations` + `social_insurance_contributions` | `0001`, §11.3 (`staff`), `0054` (`payroll_runs`), `0020` (bukti setor), `0028` (kamus kelas B — masih `CRD-6`) | DDL ditulis — tarif **tidak** ditetapkan dokumen ini |
+| `0080_ewmp_sync.sql` | enum `ewmp_sync_state` + `ewmp_sync_batches` | `0001`, `0030` (`queue_operations`), `0028`/`0055` (identitas SISTER) | DDL ditulis — muatan `[VERIFIKASI-VENDOR]` |
+
+**Ambang yang ikut naik ke katalog parameter (§21.3).** Empat kunci, semuanya `source_of_truth='PARAM'` dan tidak ada yang menyimpan rahasia: `analytics.map.enabled` (BOOL, default `false` — peta tidak tampil sebelum basis GeoIP terpasang), `analytics.session.active_window_s` (SEC, 60–900, baku 300), `analytics.map.ip_retention_days` (DAY, 7–730, baku 90), `analytics.map.geo_source_priority` (ORDERED_LIST dalam JSON, urutan `CLIENT_GEO,GEOIP_DB,SITE_GEO`). Kelas risikonya `OPS` kecuali `ip_retention_days` yang `REGULATORY` (memendekkan retensi di bawah 7 hari = menghapus bukti; `min_value` menutupnya).
+
+**Query verifikasi CI.** (1) `SELECT count(*) FROM session_geo_facts WHERE source='SITE_GEO' AND campus_site_id IS NULL` → **0**; (2) `social_insurance_participations` dengan `dictionary_entry_id IS NULL` setelah `0028` terbit → **0**; (3) `social_insurance_contributions` dengan dua baris aktif `(participation_id, period_month)` → **0**; (4) uji dua-tenant: peta bucket tidak mengembalikan baris tenant lain (bocor = 0); (5) `UPDATE`/`DELETE` pada `session_geo_facts` dan `social_insurance_contributions` sebagai `sica_app` → **error**, bukan senyap; (6) view `session_geo_live_buckets` terbukti `security_invoker = true` di `pg_views`/`pg_class` (view `security_definer` menembus RLS — ditolak); (7) `ewmp_sync_batches` dengan `approved_by = requested_by` → **0**; (8) `dimension-audit` tidak lagi mencetak `GeoIP = 0`, `BPJS = 0`, `EWMP = 0`.
+
+**Penahan yang tidak dihapus bagian ini.** (a) **Lisensi & berkas GeoIP2** adalah urusan pengadaan: tanpa `GEOIP_DB_PATH` yang sah, `analytics.map.enabled` wajib `false` dan layar menampilkan **degradasi**, bukan titik kosong. (b) **Redis** belum menjadi dependensi nyata di `package.json` — "active session store" adalah spesifikasi, bukan keadaan; `AGENTS §3.8` mengecualikan sementara pola senada di KRS, dan pengecualian itu tidak boleh dipakai sebagai preseden di sini. (c) Nomor izin untuk `analytics.*`, `hris.insurance.*`, `sister.ewmp.*` **belum ber-nomor** (`CRD-5`), jadi tidak satu pun baris §24 boleh diruteni sebelum namanya diputus pemilik katalog. (d) Retensi data lokasi harus masuk `retention_rules` + DPIA sebelum baris pertama dihapus otomatis (`BR-R14`).
+
+## 25. DDL ALG-25 — temuan anomali multivariat dan label manusia (2026-10-21)
+
+**Kenapa bagian ini ada.** [ARCHITECTURE §12.21](file:///c:/SICA/docs/ARCHITECTURE.md) baru saja mendaftarkan `ALG-25 · Anomaly Detection Multivariat`, dan aturan mainnya jelas: keluaran engine hanya masuk tabel `*_results` miliknya sendiri dan menjadi resmi setelah `VALIDATE` manusia (`AGENTS §3.9`). Tanpa tabel, engine akan menulis ke `attendances`/`payments`/`invoices` — yaitu pelanggaran yang paling sering terjadi di proyek seperti ini. `node .tools/ai-params-audit.mjs` mengukur sebelum bagian ini ada: **0** tabel hasil anomali, **0** kemunculan `Isolation Forest`/`LOF` sebagai kode engine, **0** `TOGGLE_ACTIVE` di seluruh 20 berkas.
+
+### 25.1 `0081_anomaly_detection.sql`
+
+```sql
+CREATE TYPE anomaly_domain AS ENUM ('ATTENDANCE','FINANCE','TRAFFIC');
+CREATE TYPE anomaly_agreement AS ENUM ('BOTH_MODELS','IF_ONLY','LOF_ONLY');
+CREATE TYPE anomaly_verdict AS ENUM ('UNREVIEWED','TRUE_ANOMALY','FALSE_POSITIVE','NEEDS_CONTEXT');
+
+CREATE TABLE anomaly_findings (                              -- usulan mesin; vonis manusia tetap di tabel label
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES engine_runs(id),           -- harness milik §17 (`0036`), tidak dibuat kedua
+  domain anomaly_domain NOT NULL,
+  subject_entity text NOT NULL,                              -- 'attendance' | 'payment' | 'route_window' (kelas objek, bukan CHECK kampus)
+  subject_id uuid NOT NULL,                                  -- anti-IDOR: diselesaikan ke barisnya DI DALAM transaksi sebelum dibaca peran mana pun
+  period_id uuid REFERENCES academic_periods(id),
+  if_score  numeric(6,5) CHECK (if_score  IS NULL OR (if_score  BETWEEN 0 AND 1)),
+  lof_score numeric(6,5) CHECK (lof_score IS NULL OR (lof_score BETWEEN 0 AND 1)),
+  agreement anomaly_agreement NOT NULL,
+  severity smallint NOT NULL DEFAULT 3 CHECK (severity BETWEEN 1 AND 5),
+  feature_vector jsonb NOT NULL,                             -- hasil hitung fitur; TIDAK memuat NIK/NIP/IP mentah
+  explain jsonb NOT NULL,                                    -- kontribusi fitur + pembanding + seed + engine_version
+  degraded_mode text,                                        -- NO_PREREQ_DATA | PARTIAL_BUDGET_EXHAUSTED | FEATURE_DRIFT | NO_BASELINE | NO_FEEDBACK_LABELS | SINGLE_MODEL_AGREEMENT
+  model_version text NOT NULL, parameter_version int NOT NULL CHECK (parameter_version > 0),
+  detected_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, run_id, domain, subject_entity, subject_id),
+  CHECK (if_score IS NOT NULL OR lof_score IS NOT NULL),
+  CHECK (agreement = 'BOTH_MODELS' = (if_score IS NOT NULL AND lof_score IS NOT NULL)),
+  CHECK (degraded_mode IS NULL OR degraded_mode IN ('NO_PREREQ_DATA','PARTIAL_BUDGET_EXHAUSTED','FEATURE_DRIFT','NO_BASELINE','NO_FEEDBACK_LABELS','SINGLE_MODEL_AGREEMENT'))
+);
+CREATE INDEX idx_anomaly_queue ON anomaly_findings(tenant_id, domain, severity DESC, detected_at DESC);
+CREATE INDEX idx_anomaly_subject ON anomaly_findings(tenant_id, subject_entity, subject_id);
+
+CREATE TABLE anomaly_feedback_labels (                       -- insert-only; verdict lama tidak pernah ditimpa
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  finding_id uuid NOT NULL REFERENCES anomaly_findings(id) ON DELETE CASCADE,
+  verdict anomaly_verdict NOT NULL,
+  reason text NOT NULL CHECK (char_length(reason) BETWEEN 10 AND 1000),
+  labelled_by uuid NOT NULL, labelled_at timestamptz NOT NULL DEFAULT now(),
+  parameter_version_applied int CHECK (parameter_version_applied IS NULL OR parameter_version_applied > 0),
+  UNIQUE (tenant_id, finding_id, labelled_by)                -- satu verdict per pemeriksa; beda pemeriksa = baris baru
+);
+
+CREATE TABLE anomaly_domain_settings (                       -- rumah keadaan AKTIF/TIDAK per domain (ini jawaban TOGGLE_ACTIVE, §25.3)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  domain anomaly_domain NOT NULL,
+  is_active boolean NOT NULL DEFAULT false,                  -- mati secara baku: fitur tidak menyala sebelum data prasyarat cukup
+  contamination_bp int NOT NULL DEFAULT 50 CHECK (contamination_bp BETWEEN 10 AND 200),
+  min_score_bp int NOT NULL DEFAULT 7000 CHECK (min_score_bp BETWEEN 5000 AND 9900),
+  review_role text NOT NULL,                                 -- kamus `role_code` yang bertugas menelaah domain ini
+  effective_from date NOT NULL DEFAULT current_date, effective_to date,
+  requested_by uuid NOT NULL, approved_by uuid,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, domain, effective_from),
+  CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CHECK (is_active = false OR approved_by IS NOT NULL),      -- menyalakan deteksi = aksi berwenang, bukan default
+  CHECK (approved_by IS NULL OR approved_by <> requested_by)
+);
+```
+
+**Kenapa begini.** `agreement` dan `CHECK (agreement = 'BOTH_MODELS' = (if_score IS NOT NULL AND lof_score IS NOT NULL))` ada karena layar eksekutif akan bertanya "kenapa dua angka berbeda": temuan yang hanya dihasilkan satu detektor **tidak boleh** terlihat sama kuatnya dengan temuan yang disepakati dua model. `feature_vector` dan `explain` disimpan per temuan supaya seorang auditor dapat mereproduksi alasan sebuah flag setahun kemudian tanpa menjalankan ulang engine; keduanya hanya berisi fitur hasil hitung, bukan pengenal pribadi mentah. `anomaly_domain_settings.is_active` **baku `false`**: deteksi keuangan yang menyala tanpa data prasyarat akan membanjiri pemeriksa dengan `NO_PREREQ_DATA`, dan itu bukan kegagalan model melainkan ketiadaan bukti.
+
+**RLS & kekebalan.** Ketiga tabel ber-`tenant_id` dengan `ENABLE` + `FORCE` + `tenant_isolation`; `anomaly_findings` dan `anomaly_feedback_labels` di-`REVOKE UPDATE, DELETE` dari `sica_app` dan dijaga pemicu `app.reject_mutation()` (pola §16.3.3): temuan dan verdict adalah jejak, koreksi = run baru dengan `parameter_version` baru. Tidak ada kolom yang menyimpan skor hasil hitung perangkat: **perangkat tidak pernah menulis ke tabel ini** (`ARCHITECTURE §12.22`).
+
+### 25.2 Tiga parameter baru (§21.3 baris 34–36) dan hubungannya dengan kolom
+
+`ai.anomaly.contamination_bp` (BP, 10–200, baku 50, kelas `TECHNICAL`) · `ai.anomaly.min_score_bp` (BP, 5000–9900, baku 7000, `TECHNICAL`) · `ai.anomaly.enabled_domains` (JSON list, anggota `ATTENDANCE`/`FINANCE`/`TRAFFIC`, baku `[]`, kelas `SECURITY` — menuntut penyetuju kedua + MFA). **Batasnya tegas:** kolom `contamination_bp`/`min_score_bp` di `anomaly_domain_settings` adalah **bayangan per-domain** dari parameter ini; nilai di sel tidak pernah boleh keluar dari rentang `CHECK` DB, dan `ai.anomaly.*` tidak dapat melonggarkan ambang keamanan apa pun (`AGENTS §3.10`, `RBAC §4.7`). Kalau keduanya berbeda, parameter yang menang dan sel hanya menampilkan keadaan efektif — bukan dua kebenaran.
+
+### 25.3 `TOGGLE_ACTIVE` sebagai aksi: bukan verba ketujuh, melainkan `UPDATE` yang terdaftar
+
+Permintaan pemilik menuliskan `TOGGLE_ACTIVE` di daftar CRUD penuh. Katalog izin sudah memvonis **enam verba kanonik** (`READ · INSERT · UPDATE · DELETE · VALIDATE · OTHER`, `RBAC §4.2`, FR-IDT-04), dan menambah verba ketujuh akan membelah kosakata. Vonisnya: **`TOGGLE_ACTIVE` = `UPDATE` pada kolom `is_active`**, dengan tiga syarat yang menempel: (1) **bukan** sunting biasa — menyalakan/mematikkan kamus, parameter, atribut kustom, atau domain deteksi selalu menulis riwayat (`master_system_parameter_history`, `reference_item_history`, `anomaly_feedback_labels` untuk domain) ; (2) objek kelas `REGULATORY`/`SECURITY` menuntut **empat-mata + MFA** (`requested_by <> approved_by` ditegakkan `CHECK` DB, bukan UI); (3) di layar, toggle adalah **konfirmasi berdampak** (menampilkan apa yang berhenti bekerja), bukan switch tanpa umpan balik. Dengan vonis ini, seluruh gugus §20 (kamus & atribut), §21 (parameter), §24 (peta/jaminan sosial), dan §25 (domain deteksi) sudah punya jalur CRUD penuh — `is_active` + `toggle` + riwayat — tanpa menambah verba dan tanpa menambah tempat sampah boolean.
+
+**Query verifikasi CI §25.** (1) `anomaly_findings` dengan `agreement='BOTH_MODELS'` dan salah satu skor `NULL` → **0**; (2) `SELECT count(*) FROM anomaly_findings f LEFT JOIN engine_runs r ON r.id=f.run_id WHERE r.id IS NULL` → **0**; (3) `anomaly_domain_settings` `is_active=true` dengan `approved_by IS NULL` → **0** (sisi DB dari aturan, bukan sisi service); (4) uji dua-tenant: dua tenant dengan `subject_id` yang sama tidak saling melihat temuan (bocor = **0**); (5) `UPDATE anomaly_feedback_labels` sebagai `sica_app` → **error**; (6) **golden vector**: run atas snapshot beku yang sama menghasilkan `if_score`/`lof_score` identik sampai 5 desimal dan `input_snapshot_hash` sama (diuji, bukan diasumsikan); (7) **paritas numerik** TS↔Dart untuk `explain` yang dirender preview: selisih nol; (8) `dimension-audit`/`ai-params-audit` tidak lagi mencetak `anomaly engine = TANPA KODE` dan `TOGGLE_ACTIVE = 0`.
+
+## 26. DDL objek yang terdaftar tapi belum pernah ditulis (ralat `ddl-gap`, 2026-10-21)
+
+**Kenapa bagian ini ada.** `node .tools/ddl-gap.mjs` membandingkan nama objek yang **sudah punya nomor migrasi** di register `MIGRATION_SOP §5` dengan `CREATE TABLE/VIEW` yang benar-benar tertulis di dokumen ini. Sebelum siklus ini alat mencetak **45 tanpa DDL dari 49 nama**. Itu bukan kekurangan alat: nama seperti `time_slots` muncul **7 kali**, `virtual_accounts` **6 kali**, `attendance_appeals` **5 kali**, dan `reference_dictionary_entries` **24 kali** di dokumen ini — setiap rujukan itu adalah janji yang belum ditepati, dan `fk-audit` tidak bisa melihatnya karena ia hanya memeriksa panah `REFERENCES` yang terarah ke objek bernama, bukan nama yang ditunggu-tunggu.
+
+**Angka bagian ini tidak dikunci di dokumen.** Denominator alat sudah bergerak tiga kali dalam siklus yang sama (`49 → 111 → 120`), dan setiap perpindahan adalah **cacat alat yang diperbaiki**, bukan kemajuan atau kemunduran spesifikasi: `RD-96` mengganti penyebut per-gugus-yang-punyalubang menjadi seluruh nama ter-registrasi, dan `RD-97` mengganti daftar pengecualian kolom berupa set menjadi aturan sufiks (`_id`/`_ref`/`_at`/`_bp`/`_ok`) setelah alat menuduh baris `0013` berlubang hanya karena menyebut kolom `concentration_ref`. Yang boleh dikutip dari sini hanyalah **verdict** (`TANPA DDL = 0` / HIJAU) dan nama yang disebut alat; jumlah nama ter-registrasi dibaca dari keluaran alat, tidak disalin ke dokumen mana pun (`RD-55`).
+
+**Tiga keputusan yang membentukannya, bukan sekadar menulis SQL.**
+1. **Empat nama dinyatakan KALAH, bukan ditulis.** `concentrations` sudah punya pemilik: `concentration_preferences` dan `concentration_placements` menyimpan `concentration_ref text` yang menunjuk `reference_items(kind='konsentrasi')` — membuat tabel `concentrations` kedua adalah persis pola `RD-32` yang dilawan `AGENTS §3.10`. `laboratories` kalah ke `rooms(room_type='LAB')` + `lab_resource_capabilities(room_id)` + `lab_allocation_items(room_id)`. `learning_products` kalah ke `course_outcomes`/`program_outcomes` (OBE) dan `final_project_outputs` (luaran bentuk lain). `payment_plans` kalah ke `invoice_installments(invoice_id, seq, due_on, amount_rupiah)` yang sudah memegang termin + jumlah. Keempatnya dicatat di `§22.10` dan dikecualikan oleh alat dengan alasan, bukan diam-diam.
+2. **Yang ditulis adalah realisasi `§14.7`, bukan karangan.** Setiap baris di bawah mengerjakan "kunci/ikat yang tidak boleh hilang" yang sudah diputuskan `§14.7` (mis. `UNIQUE (bank_code, va_number)` **global antar-tenant**, `EXCLUDE USING gist` untuk bentrok ruang ujian, `semester_results` turunan yang tidak dapat diedit manual). Tidak ada kolom baru yang tidak diminta di sana.
+3. **Nomor lama tetap dipakai.** Berkas `0013`–`0029` sudah terdaftar; bagian ini tidak memperkenalkan nomor baru kecuali untuk dua objek turunan yang memang belum pernah disebut (`survey_responses`, `krs_package_lines` → didaftarkan sebagai `0018a`/`0023a` di register).
+
+**RLS untuk seluruh bagian ini (satu norma, tidak diulang per tabel).** Setiap tabel baru di §26 wajib `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` + policy `tenant_isolation` dengan pola `AGENTS §3.2`; tabel yang ber-`PARTITION BY` memakai `PRIMARY KEY (id, occurred_at)` (§16.3); yang ditandai *insert-only* memakai `REVOKE UPDATE, DELETE` + pemicu `app.reject_mutation()` (§16.3.1) karena RLS saja tidak menghentikan `sica_owner`.
+
+### 26.1 `0013_institution_gaps.sql` — slot waktu dan gedung (kelembagaan)
+
+```sql
+CREATE TYPE slot_kind AS ENUM ('LECTURE','PRACTICE','EXAM','MEETING','MAINTENANCE');
+
+CREATE TABLE time_slots (                                  -- katalog slot; kelas A-prime: bentuknya mesin jadwal, labelnya kampus
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  campus_site_id uuid REFERENCES campus_sites(id),          -- slot boleh berlaku per kampus, bukan hanya per tenant
+  code text NOT NULL, name text NOT NULL,
+  day_of_week smallint CHECK (day_of_week IS NULL OR day_of_week BETWEEN 1 AND 7),  -- NULL = berlaku setiap hari
+  start_time time NOT NULL, end_time time NOT NULL,
+  kind slot_kind NOT NULL DEFAULT 'LECTURE',
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (end_time > start_time),
+  UNIQUE (tenant_id, code)
+);
+CREATE INDEX idx_time_slots_window ON time_slots(tenant_id, kind, day_of_week, start_time);
+
+CREATE TABLE buildings (                                   -- vonis §14.7 A: `rooms.building` text berhenti jadi sumber kebenaran
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  campus_site_id uuid NOT NULL REFERENCES campus_sites(id),
+  code text NOT NULL, name text NOT NULL,
+  floors smallint CHECK (floors IS NULL OR floors > 0),
+  address text, accessibility jsonb,                        -- lift/ramp/kursi roda: laporan akreditasi membutuhkannya sebagai data, bukan sebagai teks bebas
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, code)
+);
+ALTER TABLE rooms ADD COLUMN building_id uuid REFERENCES buildings(id);
+ALTER TABLE rooms ADD COLUMN floor_number smallint CHECK (floor_number IS NULL OR floor_number > 0);
+CREATE INDEX idx_rooms_building ON rooms(tenant_id, building_id);
+```
+
+**Kenapa begini.** `rooms.building text` tetap ada satu rilis sebagai kolom baca-saja dan **tidak pernah** ditulis ulang: migrasi mengisi `building_id` dari pencocokan teks lalu pemicu menolak perbedaan (`building_id IS NOT NULL AND building <> (select name…)`). Dua kolom yang boleh berbeda = dua sumber kebenaran, dan `time_slots` dibuat karena `class_schedules` dan `lab_allocation_items` hari ini menyimpan `day_of_week + menit` sendiri-sendiri — artinya tidak ada tempat mendaftarkan "slot 07:00–08:40" sekali dan memakainya di semua mesin (ALG-2 menuntutnya).
+
+### 26.2 `0014_obe_curriculum.sql` — rencana evaluasi mata kuliah
+
+```sql
+CREATE TYPE evaluation_scope AS ENUM ('COURSE','CLASS','PROGRAM');
+CREATE TYPE evaluation_plan_state AS ENUM ('DRAFT','PUBLISHED','CLOSED','ARCHIVED');
+
+CREATE TABLE course_evaluation_plans (                     -- instrumen evaluasi yang DIJADWALKAN, bukan kuesioner bebas (milik `surveys` §26.6)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  course_id uuid REFERENCES courses(id), class_id uuid REFERENCES classes(id),
+  program_id uuid REFERENCES study_programs(id),
+  scope evaluation_scope NOT NULL,
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  title text NOT NULL, instrument jsonb NOT NULL DEFAULT '[]'::jsonb,  -- pertanyaan + skala; kelas C: teks pertanyaan adalah data
+  state evaluation_plan_state NOT NULL DEFAULT 'DRAFT',
+  opens_at timestamptz, closes_at timestamptz,
+  is_anonymous boolean NOT NULL DEFAULT true,
+  requires_response boolean NOT NULL DEFAULT false,         -- gerbang KRS/KHS membaca ini, tidak menghapal ambang
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((scope = 'COURSE')  = (course_id  IS NOT NULL)),
+  CHECK ((scope = 'CLASS')   = (class_id   IS NOT NULL)),
+  CHECK ((scope = 'PROGRAM') = (program_id IS NOT NULL)),
+  CHECK (closes_at IS NULL OR opens_at IS NULL OR closes_at > opens_at)
+);
+```
+
+**Kenapa `instrument jsonb` dan bukan tabel pertanyaan.** Kuesioner evaluasi adalah kelas C (kampus menambah/menamai ulang pertanyaan), tetapi ia tidak punya umur state machine dan tidak pernah di-join — menaruh 1 tabel + 1 pemicu + 1 layar CRUD untuk pertanyaan yang hidup-mati tiap periode adalah biaya tanpa manfaat, jadi bentuknya `jsonb` bervalidasi Zod di kontrak (`AGENTS §3.3`) dan **bukan** EAV. Untuk kuesioner yang jawabannya harus dianonimkan permanen, rumahnya tetap `surveys` + `survey_responses` (§26.6), dan itu bedanya: rencana evaluasi = terjadwal + terikat kelas; survei = instrumen dengan respons yang tidak dapat ditaut ke identitas.
+
+### 26.3 `0015_finance_enterprise.sql` — diskon, kanal, rekonsiliasi, aturan gerbang
+
+```sql
+CREATE TYPE discount_basis AS ENUM ('PERCENT','FLAT_RUPIAH','FIXED_TUITION');
+CREATE TYPE discount_state AS ENUM ('PROPOSED','APPROVED','REJECTED','REVOKED');
+CREATE TYPE channel_kind AS ENUM ('VA','BILLING','EWALLET','CASH','TRANSFER','QUOTING');
+CREATE TYPE channel_state AS ENUM ('ACTIVE','PAUSED','RETIRED');
+CREATE TYPE recon_state AS ENUM ('RUNNING','CLEAN','DIFF_FOUND','FAILED');
+CREATE TYPE gate_action AS ENUM ('KRS_SUBMIT','KRS_VIEW','EXAM_CARD','GRADUATION','KHS_RELEASE','ENROLLMENT');
+CREATE TYPE gate_effect AS ENUM ('WARN','BLOCK');
+
+CREATE TABLE tuition_discounts (                           -- kelas D: skema diskon kampus/pemerintah, bukan konstanta kode
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  basis discount_basis NOT NULL,
+  percent_bp int CHECK (percent_bp IS NULL OR percent_bp BETWEEN 0 AND 10000),   -- basis poin: 1500 = 15 %
+  flat_rupiah bigint CHECK (flat_rupiah IS NULL OR flat_rupiah >= 0),
+  fixed_tuition_rupiah bigint CHECK (fixed_tuition_rupiah IS NULL OR fixed_tuition_rupiah >= 0),
+  eligibility jsonb NOT NULL DEFAULT '{}'::jsonb,           -- syarat terbaca-manusia (jalur, prodi, income_band, IPK min)
+  state discount_state NOT NULL DEFAULT 'PROPOSED',
+  effective_from date NOT NULL, effective_to date,
+  requested_by uuid NOT NULL REFERENCES users(id),
+  approved_by uuid REFERENCES users(id), approved_at timestamptz,
+  attachment_id uuid REFERENCES attachments(id),            -- bukti kelayakan (mis. SK tunggakan/penghasilan)
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (requested_by <> approved_by),                      -- empat-mata ditegakkan DB, bukan niat (AGENTS §3.9)
+  CHECK (state = 'PROPOSED' OR approved_by IS NOT NULL),
+  CHECK (basis <> 'PERCENT' OR percent_bp IS NOT NULL),
+  CHECK (basis <> 'FLAT_RUPIAH' OR flat_rupiah IS NOT NULL),
+  CHECK (basis <> 'FIXED_TUITION' OR fixed_tuition_rupiah IS NOT NULL),
+  CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  UNIQUE (tenant_id, code)
+);
+
+CREATE TABLE payment_channels (                            -- kanal pembayaran institution-wide (BENCH-19/20)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  bank_code text NOT NULL,                                  -- kode PT/agen nasional; kelas B bila ditetapkan negara
+  name text NOT NULL, kind channel_kind NOT NULL,
+  state channel_state NOT NULL DEFAULT 'ACTIVE',
+  credential_ref text NOT NULL,                             -- SELALU referensi ENV/vault; nilai rahasia dilarang jadi kolom (§21.2)
+  prefix_pattern text,                                      -- pola nomor VA yang dikeluarkan kanal ini
+  fee_percent_bp int CHECK (fee_percent_bp IS NULL OR fee_percent_bp BETWEEN 0 AND 10000),
+  supported_va boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz,
+  UNIQUE (tenant_id, bank_code, name)
+);
+
+CREATE TABLE reconciliation_runs (                         -- rekonsiliasi bank/kanal vs `payments`; append-only
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  channel_id uuid NOT NULL REFERENCES payment_channels(id),
+  period_from date NOT NULL, period_to date NOT NULL,
+  source_attachment_id uuid REFERENCES attachments(id),      -- berkas mutasi yang diunggah (bukti, bukan angka karangan)
+  state recon_state NOT NULL,
+  rows_source int NOT NULL CHECK (rows_source >= 0), rows_local int NOT NULL CHECK (rows_local >= 0),
+  diff_count int NOT NULL DEFAULT 0 CHECK (diff_count >= 0),
+  matched_rupiah bigint NOT NULL DEFAULT 0 CHECK (matched_rupiah >= 0),
+  started_by uuid NOT NULL REFERENCES users(id), started_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz, last_error_code text,
+  CHECK (period_to >= period_from),
+  CHECK (finished_at IS NULL OR started_at IS NULL OR finished_at >= started_at)
+);
+-- *insert-only*: REVOKE UPDATE, DELETE + pemicu `app.reject_mutation()`; koreksi = run baru.
+
+CREATE TABLE billing_gate_rules (                          -- aturan "kondisi tagihan → gerbang aksi"; mesin membaca, manusia menyetujui
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  applies_to gate_action NOT NULL,
+  effect gate_effect NOT NULL DEFAULT 'BLOCK',
+  condition jsonb NOT NULL,                                 -- mis. {"outstanding_min_rupiah":1000000,"age_days_min":30}
+  clearance_dimension clearance_dimension,                  -- FK ke enum §15: `blockades.dimension` sudah ada, gerbang tidak menciptakan dimensi kedua
+  grace_days int NOT NULL DEFAULT 0 CHECK (grace_days BETWEEN 0 AND 365),
+  is_active boolean NOT NULL DEFAULT true,
+  priority int NOT NULL DEFAULT 100,                        -- aturan menang berdasar prioritas deterministik, bukan urutan UUID
+  requested_by uuid NOT NULL REFERENCES users(id),
+  approved_by uuid REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (requested_by <> approved_by),
+  CHECK (effect <> 'BLOCK' OR clearance_dimension IS NOT NULL),
+  UNIQUE (tenant_id, code)
+);
+```
+
+**Yang sengaja tidak dilakukan.** Tidak ada `payment_plans` di sini: `invoice_installments` sudah memegang termin, `due_on`, dan jumlah per termin, dan `§14.7` menuntut "jumlah termin = nilai induk" — aturan itu sekarang ditegakkan oleh **pemicu** di sisi `invoice_installments` — `CHECK` tidak mungkin memuat agregat maupun subquery, jadi "jumlah termin = nilai induk" adalah pekerjaan pemicu AFTER INSERT/UPDATE yang membandingkan `SUM(amount_rupiah)` dengan `invoices.amount_rupiah`. Menambahkan tabel plans kedua adalah pola `RD-32`. Nomor/secret kanal tidak pernah menjadi kolom: `credential_ref` adalah satu-satunya jalan (`AGENTS §3.12`).
+
+### 26.4 `0016_krs_mbkm.sql` — pembimbing, perubahan KRS, kartu ujian, perpindahan, peringatan
+
+```sql
+CREATE TYPE advisement_state AS ENUM ('ACTIVE','ENDED','REASSIGNED');
+CREATE TYPE amendment_state AS ENUM ('REQUESTED','APPROVED','REJECTED','APPLIED','VOIDED');
+CREATE TYPE exam_card_state AS ENUM ('ELIGIBLE','ISSUED','PRINTED','VOIDED');
+CREATE TYPE transfer_kind AS ENUM ('IN_PROGRAM','CROSS_PROGRAM','CROSS_INSTITUTION','RPL');
+CREATE TYPE transfer_state AS ENUM ('REQUESTED','UNDER_REVIEW','APPROVED','REJECTED','APPLIED');
+CREATE TYPE warning_level AS ENUM ('INFO','WARNING','CRITICAL','DO_CANDIDATE');
+CREATE TYPE warning_state AS ENUM ('OPEN','ACKNOWLEDGED','CLEARED','ESCALATED');
+
+CREATE TABLE advisement_assignments (                      -- pemilik hak perwalian per periode; bukan label peran global (AGENTS §3.8)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  adviser_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  student_id uuid NOT NULL REFERENCES students(id),
+  program_id uuid REFERENCES study_programs(id),
+  state advisement_state NOT NULL DEFAULT 'ACTIVE',
+  valid_from date NOT NULL, valid_to date,
+  assigned_by uuid NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (valid_to IS NULL OR valid_to >= valid_from)
+);
+-- "satu mahasiswa satu pembimbing aktif per periode" = indeks unik PARSIAL; riwayat setelah
+-- penggantian (state ENDED/REASSIGNED) harus tetap boleh tersimpan sebagai baris baru.
+CREATE UNIQUE INDEX uq_advisement_active ON advisement_assignments(tenant_id, period_id, student_id) WHERE state = 'ACTIVE';
+CREATE INDEX idx_advisement_adviser ON advisement_assignments(tenant_id, adviser_membership_id, period_id);
+
+CREATE TABLE krs_amendments (                              -- perubahan KRS setelah submit: riwayat, tidak pernah in-place (§14.7 C)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  enrollment_id uuid NOT NULL REFERENCES enrollments(id),
+  student_id uuid NOT NULL REFERENCES students(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
+  action text NOT NULL CHECK (action IN ('ADD','DROP','CHANGE_SECTION','CHANGE_MODALITY')),
+  before_snapshot jsonb NOT NULL, after_snapshot jsonb NOT NULL,
+  reason text NOT NULL CHECK (length(reason) >= 5),
+  state amendment_state NOT NULL DEFAULT 'REQUESTED',
+  requested_by uuid NOT NULL REFERENCES users(id),
+  approved_by uuid REFERENCES users(id), approved_at timestamptz,
+  applied_at timestamptz,                                   -- hanya boleh diisi oleh service domain, bukan pemohon
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (requested_by <> approved_by),
+  CHECK (state NOT IN ('APPROVED','APPLIED') OR approved_by IS NOT NULL)
+);
+CREATE INDEX idx_krs_amend_student ON krs_amendments(tenant_id, student_id, period_id, created_at DESC);
+
+CREATE TABLE exam_cards (                                  -- kartu ujian; terikat gerbang presensi BR-A15, tidak memutuskan sendiri
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  exam_schedule_id uuid,                                    -- diisi setelah §26.9 (`exam_schedules`) terbit; FK ditambahkan di migrasi yang sama
+  number text NOT NULL,
+  state exam_card_state NOT NULL DEFAULT 'ELIGIBLE',
+  eligibility_basis jsonb NOT NULL DEFAULT '{}'::jsonb,     -- {"attendance_pct":83,"gate_rules":["blockades"],"cleared_at":"…"}
+  issued_at timestamptz, printed_at timestamptz, voided_at timestamptz, void_reason text,
+  digest_sha256 char(64) CHECK (digest_sha256 IS NULL OR digest_sha256 ~ '^[0-9a-f]{64}$'),  -- verifikasi QR (§23 documents pola sama)
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (state NOT IN ('ISSUED','PRINTED') OR issued_at IS NOT NULL),
+  CHECK (state <> 'VOIDED' OR void_reason IS NOT NULL),
+  UNIQUE (tenant_id, number)
+);
+-- satu kartu per (mahasiswa, periode, jadwal ujian): indeks unik PARSIAL, bukan UNIQUE biasa,
+-- karena `exam_schedule_id` boleh NULL sebelum penjadwalan dan UNIQUE PostgreSQL memperlakukan NULL sebagai berbeda.
+CREATE UNIQUE INDEX uq_exam_card_schedule ON exam_cards(tenant_id, period_id, student_id, exam_schedule_id) WHERE exam_schedule_id IS NOT NULL;
+
+CREATE TABLE student_transfers (                           -- pindah prodi/instansi/RPL; keputusan, bukan catatan bebas
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id),
+  kind transfer_kind NOT NULL, state transfer_state NOT NULL DEFAULT 'REQUESTED',
+  from_program_id uuid REFERENCES study_programs(id), to_program_id uuid REFERENCES study_programs(id),
+  from_institution text, to_institution text, from_nim text,
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  recognized_sks int NOT NULL DEFAULT 0 CHECK (recognized_sks >= 0),
+  decision_note text,                                       -- alasan keputusan, terbaca manusia (BR-R12)
+  requested_by uuid NOT NULL REFERENCES users(id),
+  first_approved_by uuid REFERENCES users(id), second_approved_by uuid REFERENCES users(id),
+  decided_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (kind <> 'IN_PROGRAM' OR from_program_id IS DISTINCT FROM to_program_id),  -- "pindah dalam prodi" harus berarti sesuatu
+  CHECK (first_approved_by IS NULL OR first_approved_by <> requested_by),            -- SoD tiga orang (pola mbkm_conversions §16.2)
+  CHECK (second_approved_by IS NULL OR second_approved_by <> first_approved_by),
+  CHECK (state NOT IN ('APPROVED','APPLIED') OR (first_approved_by IS NOT NULL AND second_approved_by IS NOT NULL))
+);
+
+CREATE TABLE study_warnings (                              -- peringatan akademik dini (DO/EWS); hasil bisa berasal dari ALG-10, manusia yang memutuskan
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
+  level warning_level NOT NULL, state warning_state NOT NULL DEFAULT 'OPEN',
+  triggers jsonb NOT NULL DEFAULT '[]'::jsonb,              -- [{"rule":"ipk<2.00"},{"rule":"sks_terkumpul<12"},{"rule":"presensi<60%"}]
+  ipk_at numeric(4,3) CHECK (ipk_at IS NULL OR ipk_at BETWEEN 0 AND 4),
+  engine_run_id uuid REFERENCES engine_runs(id),            -- usulan mesin; NULL bila keputusan manual
+  proposal_only boolean NOT NULL DEFAULT true,              -- AGENTS §3.9: mesin mengusulkan, aksi VALIDATE manusia yang menaikkan status
+  issued_by uuid NOT NULL REFERENCES users(id), issued_at timestamptz NOT NULL DEFAULT now(),
+  acknowledged_at timestamptz, cleared_at timestamptz, clearance_note text,
+  meeting_attachment_id uuid REFERENCES attachments(id),    -- bukti pendampingan, bukan teks bebas
+  CHECK (state <> 'CLEARED' OR clearance_note IS NOT NULL)
+);
+CREATE INDEX idx_warnings_open ON study_warnings(tenant_id, state, level) WHERE state IN ('OPEN','ACKNOWLEDGED');
+```
+
+**Kenapa `proposal_only` ada di tabel, bukan hanya di dokumentasi.** `study_warnings` adalah objek yang paling mudah salah dibuat: engine menulis baris `level=DO_CANDIDATE` lalu UI menampilkannya sebagai vonis. Flag itu + `engine_run_id` membuat jalur tulis engine vs aksi manusia bisa **dibuktikan** (`AGENTS §3.9` "mesin mengusulkan, manusia menyetujui"), dan gerbang CI bisa menuntut `proposal_only = false` hanya lewat service penilaian.
+
+### 26.5 `0017_teaching_attendance.sql` — jurnal sesi, banding presensi, pemesanan ruang
+
+```sql
+CREATE TYPE journal_state AS ENUM ('DRAFT','SUBMITTED','APPROVED','AMENDED');
+CREATE TYPE appeal_state AS ENUM ('PENDING','APPROVED','REJECTED','WITHDRAWN');
+CREATE TYPE reservation_state AS ENUM ('REQUESTED','CONFIRMED','RELEASED','CANCELLED','NO_SHOW');
+
+CREATE TABLE session_journals (                            -- catatan dosen per sesi; 1:1 dengan class_sessions (vonis §14.7 D)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  class_session_id uuid NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
+  author_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  material_covered text NOT NULL CHECK (length(material_covered) BETWEEN 5 AND 4000),
+  activities text, student_questions text, follow_up text,
+  state journal_state NOT NULL DEFAULT 'DRAFT',
+  submitted_at timestamptz, approved_by uuid REFERENCES users(id), approved_at timestamptz,
+  amended_from_id uuid REFERENCES session_journals(id),    -- AMENDED = baris baru; jurnal rujukan tidak pernah ditimpa
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (state <> 'DRAFT' OR submitted_at IS NULL),
+  CHECK (state NOT IN ('SUBMITTED','APPROVED','AMENDED') OR submitted_at IS NOT NULL),
+  CHECK (state <> 'APPROVED' OR approved_by IS NOT NULL),
+  CHECK (amended_from_id IS NULL OR state = 'AMENDED'),
+  UNIQUE (tenant_id, class_session_id)
+);
+CREATE INDEX idx_journals_class ON session_journals(tenant_id, submitted_at DESC);
+
+CREATE TABLE attendance_appeals (                          -- pemilik tunggal jalur banding; 0074 dan bukti kanal menunjuk ke sini
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  attendance_id uuid REFERENCES attendances(id), class_session_id uuid REFERENCES class_sessions(id),
+  student_id uuid NOT NULL REFERENCES students(id),
+  claimed_state attendance_status NOT NULL,                -- enum §15 yang sama: banding tidak menciptakan kosakata hadir kedua
+  reason text NOT NULL CHECK (length(reason) BETWEEN 10 AND 2000),
+  evidence_attachment_id uuid REFERENCES attachments(id),
+  state appeal_state NOT NULL DEFAULT 'PENDING',
+  requested_at timestamptz NOT NULL DEFAULT now(), window_ends_at timestamptz NOT NULL,
+  decided_by uuid REFERENCES users(id), decided_at timestamptz, decision_note text,
+  CHECK (requested_at <= window_ends_at),
+  CHECK (state NOT IN ('APPROVED','REJECTED') OR (decided_by IS NOT NULL AND decided_at IS NOT NULL)),
+  CHECK (state <> 'APPROVED' OR decision_note IS NOT NULL),
+  CHECK (attendance_id IS NOT NULL OR class_session_id IS NOT NULL)
+);
+CREATE UNIQUE INDEX uq_appeal_open ON attendance_appeals(tenant_id, attendance_id)
+  WHERE state = 'PENDING' AND attendance_id IS NOT NULL;
+CREATE INDEX idx_appeals_window ON attendance_appeals(tenant_id, state, window_ends_at);
+
+CREATE TABLE room_reservations (                           -- pemesanan ruang di luar jadwal kelas
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  room_id uuid NOT NULL REFERENCES rooms(id),
+  reserved_for date NOT NULL, start_time time NOT NULL, end_time time NOT NULL,
+  purpose text NOT NULL CHECK (length(purpose) >= 5),
+  organizer_membership_id uuid REFERENCES tenant_memberships(id), event_id uuid REFERENCES events(id),
+  state reservation_state NOT NULL DEFAULT 'REQUESTED',
+  expected_attendees int CHECK (expected_attendees IS NULL OR expected_attendees > 0),
+  requires_setup boolean NOT NULL DEFAULT false, setup_note text,
+  approved_by uuid REFERENCES users(id), approved_at timestamptz,
+  released_at timestamptz, no_show_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (end_time > start_time),
+  CHECK (state <> 'CONFIRMED' OR approved_by IS NOT NULL),
+  CHECK (state NOT IN ('RELEASED','CANCELLED') OR released_at IS NOT NULL),
+  CHECK (state <> 'NO_SHOW' OR no_show_at IS NOT NULL)
+);
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+ALTER TABLE room_reservations ADD CONSTRAINT excl_room_double_book
+  EXCLUDE USING gist (tenant_id WITH =, room_id WITH =,
+                      tsrange(reserved_for + start_time, reserved_for + end_time, '[)') WITH &&)
+  WHERE (state IN ('REQUESTED','CONFIRMED'));
+
+```
+
+**Kenapa `EXCLUDE` dan bukan aplikasi.** Dua organisasi bisa memesan ruang yang sama dan yang menang adalah siapa yang selesai lebih dulu; `AGENTS §3.7` melarang kunci baris per-permintaan di jalur panas, jadi penjagalnya `EXCLUDE USING gist` di DB. `WHERE (state IN (...))` penting: riwayat `RELEASED`/`CANCELLED` tidak boleh menghalangi pemesanan baru. GiST memperlakukan NULL sebagai tidak-bentrok, sehingga `room_id` yang di sini `NOT NULL` sudah cukup — tidak perlu `coalesce` maupun `uuid_nil()`.
+
+**Yang tidak dibuat di gugus ini.** Tidak ada tabel banding kedua. `0074` hanya menulis penanda pada `attendances`; rumahnya tetap `attendance_appeals`, dan kolom `appeal_id` pada bukti kanal menunjuk ke tabel ini.
+
+
+### 26.6 `0018_assessment_publish.sql` — skor per komponen, status publikasi, reset massal, hasil semester, survei
+
+```sql
+CREATE TYPE publish_state AS ENUM ('HIDDEN','DRAFTED','ANNOUNCED','PUBLISHED','LOCKED');
+CREATE TYPE blanket_reset_state AS ENUM ('REQUESTED','APPROVED','APPLIED','REVERSED','REJECTED');
+CREATE TYPE survey_kind AS ENUM ('EVALUASI_KULIAH','KEPUASAN_LAYANAN','TRACER_RINGAN','SURVEI_OTHER');
+CREATE TYPE survey_state AS ENUM ('DRAFT','OPEN','CLOSED','ARCHIVED');
+
+CREATE TABLE grade_component_scores (                      -- fakta skor; grade_components adalah definisinya, bukan faktanya (BENCH-88)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  grade_id uuid NOT NULL REFERENCES grades(id) ON DELETE CASCADE,
+  component_id uuid NOT NULL REFERENCES grade_components(id) ON DELETE CASCADE,
+  raw_value numeric(12,4),
+  scaled_value numeric(7,4) CHECK (scaled_value IS NULL OR scaled_value BETWEEN 0 AND 100),
+  weight_used_bp int NOT NULL CHECK (weight_used_bp BETWEEN 0 AND 10000),  -- bobot yang DIPAKAI saat hitung, disalin
+  is_absent boolean NOT NULL DEFAULT false,
+  is_final boolean NOT NULL DEFAULT false,                 -- false = draf guru; true = ikut menghitung huruf
+  formula_version_id uuid REFERENCES grade_formula_versions(id),
+  entered_by uuid NOT NULL REFERENCES users(id), entered_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (is_absent OR raw_value IS NOT NULL OR scaled_value IS NOT NULL),
+  UNIQUE (grade_id, component_id)
+);
+CREATE INDEX idx_gcs_component ON grade_component_scores(tenant_id, component_id, is_final);
+
+CREATE TABLE grade_publish_states (                        -- FR-AKA-18 / SM-4: umumkan dan kunci adalah dua hal berbeda
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  class_id uuid NOT NULL REFERENCES classes(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
+  state publish_state NOT NULL DEFAULT 'HIDDEN',
+  announced_by uuid REFERENCES users(id), announced_at timestamptz,
+  published_by uuid REFERENCES users(id), published_at timestamptz,
+  locked_by uuid REFERENCES users(id), locked_at timestamptz, lock_reason text,
+  unlocked_by uuid REFERENCES users(id), unlocked_at timestamptz, unlock_reason text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (state <> 'ANNOUNCED' OR announced_at IS NOT NULL),
+  CHECK (state <> 'PUBLISHED' OR (published_at IS NOT NULL AND announced_at IS NOT NULL)),
+  CHECK (state <> 'LOCKED' OR (locked_by IS NOT NULL AND lock_reason IS NOT NULL)),
+  CHECK (unlock_reason IS NULL OR locked_at IS NOT NULL),  -- membuka kunci hanya mungkin jika pernah dikunci
+  UNIQUE (tenant_id, class_id)
+);
+
+CREATE TABLE grade_blanket_resets (                        -- BENCH-87: reset massal wajib beralasan, ber-VALIDATE, reversibel
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  class_id uuid NOT NULL REFERENCES classes(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
+  scope jsonb NOT NULL,                                    -- {"components":["UTS"],"students":[...]} — tidak pernah "semua" tanpa isi
+  default_when_blank text NOT NULL CHECK (default_when_blank IN ('KEEP','ABSENT','ZERO','MINIMAL')),
+  reason text NOT NULL CHECK (length(reason) >= 15),
+  affected_count int NOT NULL CHECK (affected_count >= 0),
+  state blanket_reset_state NOT NULL DEFAULT 'REQUESTED',
+  requested_by uuid NOT NULL REFERENCES users(id), requested_at timestamptz NOT NULL DEFAULT now(),
+  approved_by uuid REFERENCES users(id), approved_at timestamptz,
+  applied_at timestamptz, reversal_of_id uuid REFERENCES grade_blanket_resets(id), reversed_at timestamptz,
+  snapshot_before jsonb NOT NULL,                          -- tanpa ini "reversibel" hanya janji
+  CHECK (requested_by <> approved_by),                     -- SoD: pemohon bukan penyetuju (BR-K2/BR-G4)
+  CHECK (state NOT IN ('APPROVED','APPLIED') OR approved_by IS NOT NULL),
+  CHECK (state <> 'REVERSED' OR (reversal_of_id IS NOT NULL AND reversed_at IS NOT NULL))
+);
+
+CREATE TABLE semester_results (                            -- BENCH-98 / keputusan P-8: turunan yang dibekukan, bukan tempat mengedit angka
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES students(id), period_id uuid NOT NULL REFERENCES academic_periods(id),
+  ip_semester numeric(4,3) NOT NULL CHECK (ip_semester BETWEEN 0 AND 4),
+  sks_semester numeric(6,2) NOT NULL CHECK (sks_semester >= 0),
+  cumulative_sks numeric(7,2) NOT NULL CHECK (cumulative_sks >= 0),
+  ipk_cumulative numeric(4,3) CHECK (ipk_cumulative IS NULL OR ipk_cumulative BETWEEN 0 AND 4),
+  count_subjects int NOT NULL DEFAULT 0 CHECK (count_subjects >= 0),
+  is_current boolean NOT NULL DEFAULT true,
+  computation_run_id uuid REFERENCES engine_runs(id),
+  inputs_digest char(64) NOT NULL CHECK (inputs_digest ~ '^[0-9a-f]{64}$'),
+  computed_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX uq_semresult_current ON semester_results(tenant_id, student_id, period_id) WHERE is_current;
+-- turunan immutable: REVOKE UPDATE, DELETE + pemicu app.reject_mutation() (§16.3).
+-- Hitung ulang = baris baru; penurunan is_current lama hanya lewat service penilaian.
+
+CREATE TABLE surveys (                                     -- gerbang require_survey_before_khs memeriksa baris ini
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, title text NOT NULL, kind survey_kind NOT NULL,
+  state survey_state NOT NULL DEFAULT 'DRAFT',
+  questions jsonb NOT NULL DEFAULT '[]'::jsonb,            -- kelas C: pertanyaan dan skala adalah data kampus
+  anon_key bytea,                                          -- token pseudonim responden; tidak pernah nama atau NIM
+  period_id uuid REFERENCES academic_periods(id), class_id uuid REFERENCES classes(id),
+  program_id uuid REFERENCES study_programs(id),
+  opens_at timestamptz, closes_at timestamptz,
+  blocks_khs boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (closes_at IS NULL OR opens_at IS NULL OR closes_at > opens_at),
+  UNIQUE (tenant_id, code)
+);
+
+CREATE TABLE survey_responses (                            -- objek pendamping, ikut didaftarkan sebagai 0018a
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  survey_id uuid NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+  respondent_anon char(64) NOT NULL CHECK (respondent_anon ~ '^[0-9a-f]{64}$'),  -- hash ber-pepper; tanpa FK ke users oleh desain
+  answers jsonb NOT NULL,
+  submitted_at timestamptz NOT NULL DEFAULT now(),
+  duration_seconds int CHECK (duration_seconds IS NULL OR (duration_seconds >= 0 AND duration_seconds < 86400)),
+  UNIQUE (survey_id, respondent_anon)
+);
+
+```
+
+**Kenapa `weight_used_bp` disalin, bukan dibaca ulang.** Bobot komponen adalah kelas D yang dapat diubah kampus untuk semester berikutnya. Kalau fakta nilai hanya menyimpan `component_id`, nilai satu angkatan berubah setiap bobot disunting — pelanggaran jejak berversi `AGENTS §3.9` dan membuat transkrip lama tidak dapat direkonstruksi (BR-R12). Skor karenanya menyimpan bobot **yang dipakai saat hitung**.
+
+**Kenapa `semester_results` tabel, bukan view.** Angka ini dibekukan untuk laporan akreditasi dan transkrip; view akan bergerak setiap data sumber berubah, sehingga bukti yang dikirim ke BAN-PT tidak dapat direproduksi. Yang mencegahnya diedit tangan adalah `REVOKE UPDATE, DELETE` + pemicu insert-only (§16.3), bukan niat. Karena itu juga `P-8` memilih nama ini: `academic_results` dan `transcripts` adalah ejaan lama yang sudah punya pemilik lain (§11.5).
+
+**Anonimitas yang bisa dibuktikan.** `survey_responses` tidak punya kolom identitas sama sekali — yang disimpan hanya `respondent_anon` (hash ber-pepper). Bila nanti ada yang menuntut "siapa yang belum mengisi", jawabannya bukan menambah FK ke `users`, melainkan tabel keanggotaan terpisah yang berisi token tanpa jawaban (`survey_invitations`), dan itu keputusan yang harus diambil manusia lebih dulu.
+
+
+### 26.7 `0022_finance_channels_receipts.sql` — VA, jendela jatuh tempo, alokasi, tanda terima
+
+```sql
+CREATE TYPE va_state AS ENUM ('ISSUED','USED','CANCELLED','EXPIRED');
+CREATE TYPE due_basis AS ENUM ('INVOICE','PERIOD','INSTALLMENT','CUSTOM');
+CREATE TYPE receipt_state AS ENUM ('DRAFT','ISSUED','VOIDED');
+
+CREATE TABLE virtual_accounts (                            -- BENCH-19/20/34: VA ber-nyawa, bukan kolom di invoice
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  channel_id uuid NOT NULL REFERENCES payment_channels(id),
+  bank_code text NOT NULL, va_number text NOT NULL,
+  invoice_id uuid REFERENCES invoices(id),
+  student_id uuid NOT NULL REFERENCES students(id),
+  amount_rupiah bigint CHECK (amount_rupiah IS NULL OR amount_rupiah > 0),
+  state va_state NOT NULL DEFAULT 'ISSUED',
+  issued_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz,
+  used_at timestamptz, cancelled_at timestamptz, cancelled_by uuid REFERENCES users(id),
+  close_to_expiry_reminded_at timestamptz,
+  CHECK (expires_at IS NULL OR expires_at > issued_at),
+  CHECK (state <> 'CANCELLED' OR (cancelled_at IS NOT NULL AND cancelled_by IS NOT NULL)),
+  CHECK (state <> 'USED' OR used_at IS NOT NULL),
+  UNIQUE (bank_code, va_number)                            -- IKAT KERAS BENCH-34: GLOBAL antar-tenant, bukan per tenant
+);
+CREATE INDEX idx_va_tenant_state ON virtual_accounts(tenant_id, state, expires_at);
+CREATE INDEX idx_va_invoice ON virtual_accounts(tenant_id, invoice_id) WHERE invoice_id IS NOT NULL;
+
+CREATE TABLE payment_windows (                             -- BENCH-21: satu-satunya sumber preseden due_at
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  code text NOT NULL, name text NOT NULL,
+  basis due_basis NOT NULL,
+  starts_on date NOT NULL, ends_on date NOT NULL,
+  late_fee_bp int NOT NULL DEFAULT 0 CHECK (late_fee_bp BETWEEN 0 AND 10000),
+  precedence int NOT NULL DEFAULT 100,                     -- dua jendela cocok -> precedence terkecil menang; deterministik, bukan urutan UUID
+  applies_to jsonb NOT NULL DEFAULT '{}'::jsonb,          -- {"tariff_groups":[...],"paths":[...]} — kelas D
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (ends_on >= starts_on),
+  UNIQUE (tenant_id, period_id, code)
+);
+
+CREATE TABLE payment_allocations (                         -- BENCH-24: satu transfer untuk banyak invoice, overpay bisa dipecah
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  payment_id uuid NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+  invoice_id uuid NOT NULL REFERENCES invoices(id),
+  amount_rupiah bigint NOT NULL CHECK (amount_rupiah > 0),
+  method text NOT NULL DEFAULT 'FIFO' CHECK (method IN ('FIFO','MANUAL','VA_MATCH')),
+  allocated_by uuid NOT NULL REFERENCES users(id), allocated_at timestamptz NOT NULL DEFAULT now(),
+  note text,
+  UNIQUE (payment_id, invoice_id)
+);
+CREATE INDEX idx_alloc_invoice ON payment_allocations(tenant_id, invoice_id);
+-- "jumlah alokasi tidak melebihi nilai pembayaran" ditegakkan pemicu AFTER (CHECK tidak boleh berisi agregat).
+
+CREATE TABLE receipts (                                    -- BENCH-33: kuitansi bernomor urut per tenant + digest verifikasi
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  number text NOT NULL,                                    -- diambil dari document_number_sequences (§23), tidak pernah MAX()+1
+  payment_id uuid NOT NULL REFERENCES payments(id),
+  invoice_id uuid REFERENCES invoices(id),
+  student_id uuid NOT NULL REFERENCES students(id),
+  amount_rupiah bigint NOT NULL CHECK (amount_rupiah >= 0),
+  state receipt_state NOT NULL DEFAULT 'DRAFT',
+  issued_at timestamptz, voided_at timestamptz, void_reason text, voided_by uuid REFERENCES users(id),
+  digest_sha256 char(64) CHECK (digest_sha256 IS NULL OR digest_sha256 ~ '^[0-9a-f]{64}$'),
+  attachment_id uuid REFERENCES attachments(id),
+  created_by uuid NOT NULL REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (state <> 'ISSUED' OR (issued_at IS NOT NULL AND digest_sha256 IS NOT NULL)),
+  CHECK (state <> 'VOIDED' OR (voided_at IS NOT NULL AND void_reason IS NOT NULL AND voided_by IS NOT NULL)),
+  UNIQUE (tenant_id, number)
+);
+
+```
+
+**Tiga hal yang tidak boleh salah di gugus ini.** (1) `UNIQUE (bank_code, va_number)` **tanpa** `tenant_id` adalah satu-satunya bentuk yang benar untuk BENCH-34: keunikan per-tenant membiarkan dua kampus menerbitkan nomor VA yang sama dan rekonsiliasi bank menjadi mustahil. (2) `payment_allocations` tidak menyimpan saldo invoice — sisa tagihan tetap turunan dari `invoices` dikurangi alokasi, supaya tidak ada dua sumber kebenaran. (3) Nomor kuitansi tidak pernah dihitung `MAX()+1` (kompetisi saat beban puncak); ia dari `document_number_sequences` yang sama dengan gugus dokumen (§23).
+
+
+### 26.8 `0023_krs_visibility.sql` — sebaran kelas dan paket KRS mahasiswa baru
+
+```sql
+CREATE TYPE distribution_state AS ENUM ('DRAFT','PUBLISHED','WITHDRAWN');
+CREATE TYPE package_state AS ENUM ('DRAFT','PUBLISHED','ARCHIVED');
+
+CREATE TABLE class_distributions (                         -- BENCH-35/41 + invariance I-12: tanpa sebaran, kelas tidak muncul di KRS
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  class_id uuid NOT NULL REFERENCES classes(id),
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  scheme_id uuid REFERENCES enrollment_schemes(id),
+  group_code text,                                         -- nama kelompok buatan kampus: kamus, bukan enum
+  concentration_ref text,                                  -- merujuk kamus konsentrasi (keputusan 1 pembuka §26), BUKAN FK ke tabel concentrations
+  entry_year_from int NOT NULL CHECK (entry_year_from >= 1900),
+  entry_year_to int NOT NULL CHECK (entry_year_to >= entry_year_from),
+  modalities text[],                                       -- subset learningModality yang boleh mengambil; NULL = semua
+  max_seats int CHECK (max_seats IS NULL OR max_seats > 0),
+  state distribution_state NOT NULL DEFAULT 'DRAFT',
+  published_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (state <> 'PUBLISHED' OR published_at IS NOT NULL),
+  UNIQUE (tenant_id, class_id, program_id, group_code, entry_year_from, entry_year_to)
+);
+CREATE INDEX idx_distribution_lookup ON class_distributions(tenant_id, program_id, state, entry_year_from, entry_year_to);
+
+CREATE TABLE krs_packages (                                -- FR-AKA-16; packed_sks adalah nilai paket, plafon efektif tetap BR-R2 per periode
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  entry_year_from int NOT NULL CHECK (entry_year_from >= 1900),
+  entry_year_to int NOT NULL CHECK (entry_year_to >= entry_year_from),
+  code text NOT NULL, name text NOT NULL,
+  state package_state NOT NULL DEFAULT 'DRAFT',
+  version int NOT NULL DEFAULT 1 CHECK (version > 0),
+  packed_sks int NOT NULL CHECK (packed_sks BETWEEN 0 AND 24),  -- batas struktural; service menolak >20 sem 1–2 / >9 semester antara (BR-R2)
+  is_auto_fill boolean NOT NULL DEFAULT true,
+  created_by uuid NOT NULL REFERENCES users(id),
+  requested_by uuid NOT NULL REFERENCES users(id),             -- penulis versi DRAFT saat ini
+  approved_by uuid REFERENCES users(id), approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  published_at timestamptz,
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
+  CHECK (state <> 'PUBLISHED' OR (packed_sks > 0 AND published_at IS NOT NULL AND approved_by IS NOT NULL AND approved_at IS NOT NULL)),
+  UNIQUE (tenant_id, program_id, period_id, entry_year_from, entry_year_to, code, version)
+);
+
+CREATE TABLE krs_package_lines (                           -- objek pendamping, ikut didaftarkan sebagai 0023a
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  package_id uuid NOT NULL REFERENCES krs_packages(id) ON DELETE CASCADE,
+  class_id uuid NOT NULL REFERENCES classes(id),
+  seq int NOT NULL CHECK (seq > 0),
+  is_required boolean NOT NULL DEFAULT true,
+  sks_snapshot numeric(4,1) NOT NULL CHECK (sks_snapshot > 0),  -- salinan SKS saat paket disusun (BR-R12)
+  UNIQUE (package_id, class_id), UNIQUE (package_id, seq)
+);
+
+```
+
+**Kenapa `concentration_ref text` dan bukan FK.** Konsekuensi keputusan 1 di pembuka §26: pemilik nama konsentrasi adalah kamus `reference_items(kind = konsentrasi)`, dan `concentration_preferences`/`concentration_placements` yang sudah ada juga menyimpan `concentration_ref`. Kalau suatu saat konsentrasi butuh struktur sendiri (syarat kelulusan per konsentrasi), vonisnya diubah **di §22.10 lebih dulu**, bukan dengan menambah FK diam-diam di sini.
+
+**I-12 punya gigi.** Service KRS membaca `class_distributions` sebagai gerbang: kelas tanpa baris sebaran yang cocok dengan prodi, angkatan, dan modus mahasiswa tidak muncul di daftar. Tidak ada jalan pintas "tampilkan semua" untuk peran akademik mana pun — penyaringan ini bukan kenyamanan UI, tetapi invariance yang diuji (BLUEPRINT §7).
+
+
+### 26.9 `0024_exam_scheduling.sql` — jadwal ujian dan pesertanya
+
+```sql
+CREATE TYPE exam_kind AS ENUM ('UTS','UAS','SUSULAN','UKOM','CIMOS','PRA_UJIAN');
+CREATE TYPE exam_part_state AS ENUM ('ASSIGNED','WITHDRAWN','EXCUSED');
+
+CREATE TABLE exam_schedules (                              -- BENCH-60/84; ujian bukan lagi teks bebas di class_sessions
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  period_id uuid NOT NULL REFERENCES academic_periods(id),
+  program_id uuid NOT NULL REFERENCES study_programs(id),
+  course_id uuid NOT NULL REFERENCES courses(id),
+  kind exam_kind NOT NULL,
+  group_code text,
+  exam_date date NOT NULL, start_time time NOT NULL, end_time time NOT NULL,
+  room_id uuid REFERENCES rooms(id),
+  supervisor_membership_id uuid REFERENCES tenant_memberships(id),
+  provider conference_provider,                            -- NULL = luring; bila daring, kanal dari enum §21.10, bukan teks
+  capacity int CHECK (capacity IS NULL OR capacity > 0),
+  notes text, created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (end_time > start_time)
+);
+CREATE INDEX idx_exam_calendar ON exam_schedules(tenant_id, period_id, exam_date, start_time);
+-- BENCH-52/53: bentrok ruang ujian dijaga database. GiST mengabaikan NULL, jadi WHERE membatasi pada baris ber-ruang.
+ALTER TABLE exam_schedules ADD CONSTRAINT excl_exam_room
+  EXCLUDE USING gist (tenant_id WITH =, room_id WITH =,
+                      tsrange(exam_date + start_time, exam_date + end_time, '[)') WITH &&)
+  WHERE room_id IS NOT NULL;
+
+CREATE TABLE exam_participants (                           -- BENCH-84: tiga tanggal berbeda, satu kolom tidak cukup
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  exam_schedule_id uuid NOT NULL REFERENCES exam_schedules(id) ON DELETE CASCADE,
+  enrollment_id uuid NOT NULL REFERENCES enrollments(id),
+  student_id uuid NOT NULL REFERENCES students(id),
+  state exam_part_state NOT NULL DEFAULT 'ASSIGNED',
+  print_window_start date NOT NULL, print_window_end date NOT NULL, exam_date date NOT NULL,
+  seat_code text,
+  excuse_reason text, excused_by uuid REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (print_window_end >= print_window_start),
+  CHECK (exam_date >= print_window_start),
+  CHECK (state <> 'EXCUSED' OR (excuse_reason IS NOT NULL AND excused_by IS NOT NULL)),
+  UNIQUE (exam_schedule_id, enrollment_id)
+);
+
+-- janji §26.4 ditunaikan di sini: kartu ujian boleh dibuat tanpa jadwal, tapi tidak pernah menunjuk jadwal yang salah prodi.
+ALTER TABLE exam_cards ADD CONSTRAINT fk_exam_card_schedule
+  FOREIGN KEY (exam_schedule_id) REFERENCES exam_schedules(id);
+
+```
+
+**Dua hal yang sengaja tidak dibuat penjaga ganda.** (1) `exam_participants.exam_date` disamakan dengan `exam_schedules.exam_date` oleh pemicu, bukan dibiarkan sebagai dua kolom yang boleh berbeda — BENCH-84 menuntut tiga tanggal (cetak mulai, cetak akhir, hari-H) pada **peserta**, bukan kebebasan menuliskan hari-H yang berbeda dari jadwalnya. (2) Bentrok pengawas tidak dijaga `EXCLUDE` di sini karena satu pengawas boleh menjaga dua ruang paralel di kampus berbeda; yang dilarang (satu orang di dua waktu) sudah dijaga `lecturer_availability` + `timetabling_constraint_defs` (§18.2).
+
+
+### 26.10 `0025_teaching_records.sql` — kehadiran dosen (sumber BKD dan akreditasi)
+
+```sql
+CREATE TYPE lecturer_mark_status AS ENUM ('PRESENT','ABSENT','SICK','PERMIT','ON_LEAVE','UNRECORDED');
+
+CREATE TABLE lecturer_attendances (                        -- BENCH-66/74: tanpa ini "Rekap Absen Dosen" tidak punya tabel
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  class_session_id uuid NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
+  lecturer_membership_id uuid NOT NULL REFERENCES tenant_memberships(id),
+  status lecturer_mark_status NOT NULL,
+  source text NOT NULL DEFAULT 'MANUAL' CHECK (source IN ('MANUAL','SCAN','LMS_ACTIVITY','IMPORT')),
+  marked_by uuid NOT NULL REFERENCES users(id), marked_at timestamptz NOT NULL DEFAULT now(),
+  corrected_from_id uuid REFERENCES lecturer_attendances(id),
+  note text,
+  CHECK (corrected_from_id IS NULL OR note IS NOT NULL)    -- koreksi butuh alasan, bukan penimpaan
+);
+CREATE UNIQUE INDEX uq_lecturer_session ON lecturer_attendances(class_session_id, lecturer_membership_id);
+CREATE INDEX idx_lecturer_mark ON lecturer_attendances(tenant_id, lecturer_membership_id, marked_at DESC);
+
+```
+
+**Satu penanda per sesi per dosen, dan koreksi sebagai baris baru.** BKD menjumlahkan jam: dua baris untuk sesi yang sama berarti jam ganda di laporan akreditasi, jadi keunikannya ditegakkan DB. `corrected_from_id` + `note` membuat koreksi terlihat sebagai riwayat, bukan sebagai penggantian nilai — pola yang sama dengan `session_journals` dan `grade_change_logs` (§16.3).
+
+
+### 26.11 `0028_feeder_bridge.sql` — jembatan PDDikti, antrean kirim, dan kamus kelas B berversi
+
+```sql
+CREATE TYPE bridge_state AS ENUM ('REGISTERED','VERIFIED','DEGRADED','RETIRED');
+CREATE TYPE credential_purpose AS ENUM ('READ','WRITE','BOTH');
+CREATE TYPE credential_state AS ENUM ('STAGED','ACTIVE','ROTATING','REVOKED');
+CREATE TYPE feeder_env_kind AS ENUM ('DEV','SANDBOX','PRODUCTION');
+CREATE TYPE job_direction AS ENUM ('PUSH','PULL');
+CREATE TYPE job_state AS ENUM ('QUEUED','RUNNING','RETRY','DONE','FAILED','ABANDONED');
+CREATE TYPE identity_source AS ENUM ('FEEDER_RESPONSE','MANUAL_VERIFIED','IMPORT');
+CREATE TYPE dict_version_state AS ENUM ('STAGED','PUBLISHED','SUPERSEDED','RECALLED');
+
+#### 26.11.1 Jembatan kirim & kredensial (M-34)
+
+CREATE TABLE feeder_environments (                         -- BENCH-135: kredensial sandbox tidak boleh bisa memanggil endpoint produksi
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, name text NOT NULL,
+  kind feeder_env_kind NOT NULL,
+  base_url text NOT NULL CHECK (base_url ~ '^https://'),  -- egress hanya HTTPS; ditolak database, bukan hanya validasi aplikasi
+  pdid_version text,                                       -- versi skema PDID lingkungan ini; NULL = belum diverifikasi vendor
+  pdid_version_verified_at timestamptz,                    -- [VERIFIKASI-VENDOR]: tanpa tanggal ini kolomnya tidak boleh dipakai untuk klaim kepatuhan
+  is_production_ready boolean NOT NULL DEFAULT false,
+  last_probe_at timestamptz, last_probe_ok boolean,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (kind <> 'PRODUCTION' OR is_production_ready),
+  CHECK (last_probe_ok IS NULL OR last_probe_at IS NOT NULL),
+  UNIQUE (tenant_id, code)
+);
+
+CREATE TABLE feeder_credentials (                          -- yang disimpan HANYA referensi; nilai rahasia tidak pernah jadi kolom (AGENTS 3.12)
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  environment_id uuid NOT NULL REFERENCES feeder_environments(id) ON DELETE CASCADE,
+  label text NOT NULL,
+  credential_ref text NOT NULL,                            -- env:FEEDER_TOKEN_REF atau path vault, bukan token
+  purpose credential_purpose NOT NULL,
+  state credential_state NOT NULL DEFAULT 'STAGED',
+  key_version int NOT NULL DEFAULT 1 CHECK (key_version > 0),
+  staged_at timestamptz NOT NULL DEFAULT now(), activated_at timestamptz,
+  rotated_at timestamptz, rotate_after date,                -- umur maksimum kredensial adalah data, bukan asumsi kode
+  revoked_at timestamptz, revoked_by uuid REFERENCES users(id), revoke_reason text,
+  checked_in_by uuid REFERENCES users(id),                  -- empat mata untuk mengaktifkan kredensial tulis
+  CHECK (purpose <> 'WRITE' OR checked_in_by IS NOT NULL),
+  CHECK (state <> 'ACTIVE' OR activated_at IS NOT NULL),
+  CHECK (state <> 'REVOKED' OR (revoked_at IS NOT NULL AND revoked_by IS NOT NULL AND revoke_reason IS NOT NULL)),
+  UNIQUE (tenant_id, environment_id, label)
+);
+CREATE UNIQUE INDEX uq_credential_active ON feeder_credentials(tenant_id, environment_id, purpose) WHERE state = 'ACTIVE';
+
+CREATE TABLE feeder_bridges (                              -- pasangan {lingkungan, kredensial} yang dipakai modul feeder
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  environment_id uuid NOT NULL REFERENCES feeder_environments(id),
+  credential_id uuid REFERENCES feeder_credentials(id),
+  name text NOT NULL, version text,
+  state bridge_state NOT NULL DEFAULT 'REGISTERED',
+  last_seen_at timestamptz, last_error_code text,
+  throttle_rps int CHECK (throttle_rps IS NULL OR throttle_rps > 0),  -- laju institusi dibaca worker, bukan rute HTTP
+  created_by uuid NOT NULL REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(),
+  retired_at timestamptz,
+  CHECK (state <> 'RETIRED' OR retired_at IS NOT NULL),
+  CHECK (state <> 'VERIFIED' OR version IS NOT NULL),       -- klaim versi hanya bila bridge benar-benar terverifikasi
+  UNIQUE (tenant_id, name)
+);
+
+CREATE TABLE feeder_jobs (                                 -- BENCH-129: resume parsial tidak boleh menghasilkan baris ganda
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  bridge_id uuid NOT NULL REFERENCES feeder_bridges(id) ON DELETE CASCADE,
+  run_id uuid REFERENCES pddikti_sync_runs(id),
+  domain pddikti_domain NOT NULL,                           -- enum §15 yang sama; tidak ada kosakata domain kedua
+  direction job_direction NOT NULL,
+  record_key text NOT NULL,                                 -- kunci lokal satu baris data (NIM, id kelas, dan sejenisnya)
+  idempotency_key char(64) NOT NULL CHECK (idempotency_key ~ '^[0-9a-f]{64}$'),
+  state job_state NOT NULL DEFAULT 'QUEUED',
+  attempt int NOT NULL DEFAULT 0 CHECK (attempt BETWEEN 0 AND 8),
+  next_retry_at timestamptz, last_error_code text, last_error_at timestamptz,
+  resume_offset int NOT NULL DEFAULT 0 CHECK (resume_offset >= 0),
+  resume_limit int CHECK (resume_limit IS NULL OR resume_limit > 0),
+  payload_digest char(64) CHECK (payload_digest IS NULL OR payload_digest ~ '^[0-9a-f]{64}$'),  -- isi dibaca dari staging, tidak disimpan di sini
+  enqueued_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz,
+  CHECK (direction <> 'PUSH' OR run_id IS NOT NULL),         -- kirim wajib berasal dari run staging yang tercatat
+  CHECK (state NOT IN ('RUNNING','DONE','FAILED','ABANDONED') OR started_at IS NOT NULL),
+  CHECK (state NOT IN ('DONE','FAILED','ABANDONED') OR finished_at IS NOT NULL),
+  CHECK (state <> 'RETRY' OR next_retry_at IS NOT NULL)
+);
+CREATE UNIQUE INDEX uq_feeder_job_record ON feeder_jobs(tenant_id, idempotency_key);
+CREATE INDEX idx_feeder_job_queue ON feeder_jobs(bridge_id, state, next_retry_at, enqueued_at);
+
+CREATE TABLE feeder_identities (                           -- I-14: feeder_id hanya boleh terisi dari respons bridge
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  entity_type pddikti_domain NOT NULL,
+  local_id uuid NOT NULL,                                   -- id baris di tabel sumber (enrollments, grades, dan sejenisnya)
+  feeder_id text CHECK (feeder_id IS NULL OR length(feeder_id) BETWEEN 4 AND 64),
+  source identity_source NOT NULL,
+  confidence_bp int CHECK (confidence_bp IS NULL OR confidence_bp BETWEEN 0 AND 10000),
+  confirmed_by uuid REFERENCES users(id), confirmed_at timestamptz,
+  first_seen_job_id uuid REFERENCES feeder_jobs(id),        -- bukti bahwa id pusat datang dari respons, bukan karangan
+  superseded_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (feeder_id IS NULL OR source = 'FEEDER_RESPONSE' OR (confirmed_by IS NOT NULL AND confirmed_at IS NOT NULL)),
+  CHECK (source <> 'MANUAL_VERIFIED' OR (confirmed_by IS NOT NULL AND confirmed_at IS NOT NULL)),
+  UNIQUE (tenant_id, entity_type, local_id)
+);
+-- entity_type memilih tabel sumber (polimorfik), jadi tidak ada FK ke tabel induk; kepemilikan baris dibuktikan
+-- service di dalam transaksi, sama seperti pola outcome_id di §16.2 dan alasan yang sama: satu bentuk untuk banyak pemilik.
+
+#### 26.11.2 Kamus nasional kelas B berversi — M-02 pemilik kode, M-34 pemakai
+
+CREATE TABLE reference_dictionary_versions (               -- kamus NASIONAL kelas B; platform-global oleh desain, bukan per tenant
+  id uuid PRIMARY KEY,
+  domain reference_domain NOT NULL,
+  version text NOT NULL,                                    -- contoh bentuk 'PDID-2024-01'; penomoran milik sumber, bukan kita
+  effective_from date NOT NULL, effective_to date,
+  source text NOT NULL,                                     -- penerbit resmi (Kemendikbudristek / PUSDATA / BNPA)
+  source_url text,
+  checksum char(64) CHECK (checksum IS NULL OR checksum ~ '^[0-9a-f]{64}$'),
+  row_count int NOT NULL DEFAULT 0 CHECK (row_count >= 0),
+  attachment_id uuid REFERENCES attachments(id),            -- berkas sumber yang diunduh, agar kode tidak dikarang
+  state dict_version_state NOT NULL DEFAULT 'STAGED',
+  imported_by uuid NOT NULL REFERENCES users(id), imported_at timestamptz NOT NULL DEFAULT now(),
+  published_by uuid REFERENCES users(id), published_at timestamptz,
+  recall_reason text,
+  CHECK (published_by IS NULL OR published_by <> imported_by),  -- yang mengimpor bukan yang menerbitkan
+  CHECK (state <> 'PUBLISHED' OR published_at IS NOT NULL),
+  CHECK (state <> 'RECALLED' OR recall_reason IS NOT NULL),
+  CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  UNIQUE (domain, version)
+);
+
+CREATE TABLE reference_dictionary_entries (                -- isi kamus nasional; tenant hanya memetakan label, tidak mengubah kode
+  id uuid PRIMARY KEY,
+  version_id uuid NOT NULL REFERENCES reference_dictionary_versions(id) ON DELETE CASCADE,
+  code text NOT NULL, label text NOT NULL, label_alt text,
+  parent_code text,                                         -- hierarki ditahan sebagai kode, bukan UUID, supaya salinan antarversi stabil
+  feeder_code text,                                         -- kode yang benar-benar dikirim ke PDID, boleh berbeda dari kode lokal
+  is_active boolean NOT NULL DEFAULT true,
+  extra jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (version_id, code)
+);
+-- PLATFORM-GLOBAL (pengecualian yang dinyatakan, bukan kelalaian): tabel ini dan versi di atasnya sengaja tanpa tenant_id.
+-- SELECT untuk semua peran aplikasi; INSERT/UPDATE/DELETE direvoke dari sica_app dan penolakannya DIUJI (TESTING_STRATEGY),
+-- karena alasan Agentic vonis AGENTS 3.2: tabel ini bukan data bisnis institusi, dan memilikinya per-tenant = data ganda.
+```
+
+**Kenapa `reference_dictionary_entries` tanpa `tenant_id`.** Ini satu-satunya jenis tabel di §26 yang tidak mengikuti `AGENTS §3.2`, dan itu dinyatakan, bukan lupa: isinya ditetapkan lembaga nasional, jadi menyimpannya per-tenant memberi setiap kampus kode wilayah sendiri — itu data ganda, bukan isolasi. Yang dimiliki tenant hanyalah pemetaan label, dan rumahnya tetap `reference_items.extra` (kamus kelas C, §20). Ini juga penutup `CRD-6` untuk sisi kamus: 24 rujukan ke nama ini di dokumen lain akhirnya menunjuk ke sesuatu yang punya bentuk.
+
+**I-14 dapat bentuk, bukan hanya norma.** `feeder_identities` tidak dapat mengisi `feeder_id` dari tangan tanpa `confirmed_by` + `confirmed_at`, dan `first_seen_job_id` menunjuk job yang menghasilkan id pusat itu. Pertanyaan "id ini datang dari mana" terjawab di skema, sementara `pddikti_staging_*` (§16.4) tetap tidak punya kolom `feeder_id` — satu tempat satu tanggung jawab. `feeder_credentials` dengan `purpose = WRITE` menuntut `checked_in_by`: kredensial tulis adalah kunci untuk mengubah catatan pusat, jadi empat matanya ditegakkan `CHECK`, bukan checklist.
+
+**Yang tidak ditulis di sini.** Isi muatan CP1/CP2, bentuk berkas SISTER/EWMP, dan nomor error kanonik Feeder tetap `[VERIFIKASI-VENDOR]` (`PRD §5.20` penanda `VERIFIKASI-VENDOR`). Tabel ini hanya menampung identifiers, status, dan jejak; tidak ada satu pun kolom yang saya karang dari dugaan bentuk payload.
+
+### 26.12 `0029_notifications_impersonation.sql` — templat, preferensi, kotak masuk, usaha kirim, impersonation
+
+```sql
+CREATE TYPE notify_channel AS ENUM ('IN_APP','EMAIL','SMS','WHATSAPP','PUSH');
+CREATE TYPE notify_priority AS ENUM ('TRANSACTIONAL','IMPORTANT','INFORMATIONAL');
+CREATE TYPE template_state AS ENUM ('DRAFT','ACTIVE','RETIRED');
+CREATE TYPE notify_state AS ENUM ('UNREAD','READ','ARCHIVED','DISMISSED');
+CREATE TYPE delivery_state AS ENUM ('QUEUED','SENT','BOUNCED','FAILED','SUPPRESSED','CANCELLED');
+CREATE TYPE imperson_state AS ENUM ('REQUESTED','GRANTED','ACTIVE','ENDED','EXPIRED','REVOKED');
+
+CREATE TABLE notification_templates (                      -- isi pesan adalah data kampus (kelas C), bukan string di kode
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  code text NOT NULL, locale text NOT NULL DEFAULT 'id' CHECK (locale IN ('id','en')),
+  channel notify_channel NOT NULL, category text NOT NULL,
+  subject text, body text NOT NULL,                         -- placeholder isi nama variabel, dilarang berisi data pribadi literal
+  variables jsonb NOT NULL DEFAULT '[]'::jsonb,             -- daftar variabel yang boleh diisi: whitelist, bukan bebas
+  priority notify_priority NOT NULL DEFAULT 'INFORMATIONAL',
+  requires_consent boolean NOT NULL DEFAULT false,           -- kanal mengganggu wajib consent (AGENTS 3.5; UU ITE ps.25 bila komersial)
+  state template_state NOT NULL DEFAULT 'DRAFT',
+  version int NOT NULL DEFAULT 1 CHECK (version > 0),
+  requested_by uuid NOT NULL REFERENCES users(id),
+  approved_by uuid REFERENCES users(id), approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz,
+  CHECK (requested_by <> approved_by),
+  CHECK (state <> 'ACTIVE' OR approved_by IS NOT NULL),
+  CHECK (channel NOT IN ('SMS','WHATSAPP','PUSH') OR requires_consent),
+  UNIQUE (tenant_id, code, locale, channel, version)
+);
+
+CREATE TABLE notification_preferences (                     -- hak pengguna atas kanalnya sendiri; default aman
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  category text NOT NULL,
+  channel notify_channel NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  quiet_from time, quiet_to time,
+  consent_at timestamptz, consent_source text CHECK (consent_source IS NULL OR consent_source IN ('USER','POLICY','IMPORT')),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (enabled = false OR channel IN ('IN_APP','EMAIL') OR consent_at IS NOT NULL),
+  CHECK (quiet_from IS NULL OR quiet_to IS NOT NULL),
+  UNIQUE (tenant_id, user_id, category, channel)
+);
+
+CREATE TABLE notifications (                                -- kotak masuk; isi disalin saat terbit, tidak dirujuk ke templat
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  recipient_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  template_id uuid REFERENCES notification_templates(id),
+  template_version int CHECK (template_version IS NULL OR template_version > 0),
+  category text NOT NULL, channel notify_channel NOT NULL,
+  subject text, body text NOT NULL, link text,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  state notify_state NOT NULL DEFAULT 'UNREAD',
+  priority notify_priority NOT NULL DEFAULT 'INFORMATIONAL',
+  created_at timestamptz NOT NULL DEFAULT now(), read_at timestamptz, archived_at timestamptz,
+  expires_at timestamptz,                                    -- retensi pesan: tanpa tanggal mati kotak masuk jadi arsip tak terkelola
+  dedupe_key char(64) CHECK (dedupe_key IS NULL OR dedupe_key ~ '^[0-9a-f]{64}$'),
+  CHECK (state <> 'READ' OR read_at IS NOT NULL),
+  CHECK (expires_at IS NULL OR expires_at > created_at)
+);
+CREATE INDEX idx_notify_inbox ON notifications(tenant_id, recipient_user_id, state, created_at DESC);
+CREATE UNIQUE INDEX uq_notify_dedupe ON notifications(tenant_id, recipient_user_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
+
+CREATE TABLE notification_deliveries (                       -- usaha kirim per kanal; append-only dan bisa dihitung SLA-nya
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  notification_id uuid NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  channel notify_channel NOT NULL, provider text NOT NULL,
+  credential_ref text NOT NULL,                              -- kredensial penyedia tetap di ENV/vault (§21.2)
+  recipient_hash char(64) NOT NULL CHECK (recipient_hash ~ '^[0-9a-f]{64}$'),  -- alamat tujuan tidak pernah disimpan telanjang
+  state delivery_state NOT NULL DEFAULT 'QUEUED',
+  attempts int NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
+  next_retry_at timestamptz, sent_at timestamptz, bounced_at timestamptz,
+  provider_message_id text, last_error_code text, last_error_at timestamptz, suppressed_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (state <> 'SENT' OR sent_at IS NOT NULL),
+  CHECK (state <> 'SUPPRESSED' OR suppressed_reason IS NOT NULL),
+  CHECK (state NOT IN ('BOUNCED','FAILED') OR last_error_code IS NOT NULL)
+);
+-- INSERT-ONLY: REVOKE UPDATE, DELETE + pemicu app.reject_mutation() (§16.3). Usaha ulang = baris baru, bukan attempts yang ditimpa.
+CREATE INDEX idx_delivery_queue ON notification_deliveries(tenant_id, state, next_retry_at);
+
+CREATE TABLE impersonation_grants (                          -- FR-ADM-13: masuk sebagai orang lain harus terbatas, beralasan, ber-MFA
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  -- Vonis RD-32: `platform_support_grants` KALAH sebagai tabel kedua. Satu mekanisme, satu tabel;
+  -- pembedanya kolom ini. Grant platform (`PLATFORM_SUPPORT`) tetap ber-TTL ≤30 menit, beralasan,
+  -- ber-MFA, dan diaudit dua identitas — sama ketatnya dengan impersonation tenant (R-1, 2026-10-23).
+  grant_kind text NOT NULL DEFAULT 'TENANT_IMPERSONATION'
+    CHECK (grant_kind IN ('PLATFORM_SUPPORT','TENANT_IMPERSONATION')),
+  actor_user_id uuid NOT NULL REFERENCES users(id),
+  target_user_id uuid NOT NULL REFERENCES users(id),
+  reason text NOT NULL CHECK (length(reason) >= 15),
+  ticket_id uuid,                                  -- FK → helpdesk_tickets DITANGGUH (ralat 2026-10-23):
+  --   `0051` (helpdesk) belum ditulis, sedangkan R-1/Fase 1A membutuhkan tabel ini sekarang.
+  --   Expand-and-contract: 0083 membuat kolom telanjang, `0051` menyusul dengan
+  --   `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY (ticket_id) REFERENCES helpdesk_tickets(id)`.
+  scope text NOT NULL DEFAULT 'READ_ONLY' CHECK (scope IN ('READ_ONLY','HELPDESK_REPAIR')),
+  mfa_verified_at timestamptz NOT NULL,
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  granted_by uuid REFERENCES users(id), granted_at timestamptz,
+  starts_at timestamptz, expires_at timestamptz NOT NULL,
+  ended_at timestamptz, end_reason text,
+  state imperson_state NOT NULL DEFAULT 'REQUESTED',
+  last_seen_at timestamptz,
+  CHECK (actor_user_id <> target_user_id),
+  CHECK (expires_at > requested_at),
+  CHECK (state NOT IN ('GRANTED','ACTIVE') OR (granted_by IS NOT NULL AND granted_at IS NOT NULL)),
+  CHECK (state <> 'ACTIVE' OR starts_at IS NOT NULL),
+  CHECK (state <> 'ENDED' OR (ended_at IS NOT NULL AND end_reason IS NOT NULL))
+);
+CREATE INDEX idx_imperson_active ON impersonation_grants(tenant_id, state, expires_at) WHERE state IN ('GRANTED','ACTIVE');
+```
+
+**Tiga keputusan yang membuat gugus ini bukan sekadar CRUD.** (1) Alamat tujuan tidak pernah disimpan telanjang: `recipient_hash` yang ada, alamat disusun saat kirim — kotak notifikasi adalah data pribadi yang bisa membocorkan daftar kontak kalau alamatnya ikut tersimpan. (2) Isi pesan **disalin** ke `notifications` saat terbit (`subject`, `body`, `template_version`), karena templat akan disunting dan kotak masuk orang tidak boleh berubah bentuk setelah dibacanya. (3) Kanal yang mengganggu (SMS/WA/PUSH) tidak dapat aktif tanpa `consent_at`, dan itu ditegakkan `CHECK` di `notification_preferences`, bukan oleh tombol yang bisa lupa dipasang UI.
+
+**Kenapa `mfa_verified_at NOT NULL`.** Grant impersonation adalah satu-satunya objek di §26 yang memberi hak membaca data orang lain atas nama akun lain. Menuntut MFA di kolom (bukan di alur aplikasi) berarti tidak ada kode yang bisa membuat grant "masuk sebagai pimpinan" tanpa bukti MFA — sama seperti `fee_components.rate_bp` di §21.4: bentuk kolom adalah tempat kewenangan itu diletakkan. `scope HELPDESK_REPAIR` tetap satu tingkat di atas baca-saja, dan itu sebabnya `end_reason` wajib saat berakhir.
 

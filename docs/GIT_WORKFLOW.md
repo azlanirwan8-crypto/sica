@@ -19,6 +19,10 @@
 
 ## 1. Aturan Branching Strategy
 
+**Batas fakta dan rancangan (audit 2026-10-23).** Struktur branch, proteksi remote, deployment otomatis dan hook di bawah adalah **standar target**; keberadaannya harus dibuktikan pada remote/runner, bukan dari diagram. Perubahan `/docs` tidak mengaktifkan modul, menerapkan migrasi, mengubah grant atau menerbitkan rilis. Commit dan push hanya dilakukan setelah diminta secara eksplisit; jangan memasukkan perubahan kerja milik sesi lain.
+
+Untuk sinkronisasi Fase 1, review harus mengikat FR/AC → DDL/register migrasi → permission berstatus normatif → DTO → UI → roadmap. Jalankan `node .tools/gate-run.mjs`, tetapi kelulusan alat bukan bukti seluruh kontrak semantik benar. PR rilis wajib menyertakan bukti RLS/SoD/IDOR, uji UI per peran, migrasi staging, failover dan rollback sesuai lingkupnya; usulan izin dan hasil uji yang belum dijalankan tidak boleh dilabeli selesai. Lima sudut pandang audit internal bukan persetujuan lima pakar eksternal.
+
 Struktur percabangan repositori SICA diatur secara hierarkis guna menjamin stabilitas deployment multi-tenant:
 
 ```

@@ -7,6 +7,7 @@ import {
   LoginResponseDataSchema,
 } from '@sica/contracts';
 import { authenticate, type AuthRuntimeConfig } from '@/modules/auth/services/auth.service';
+import { devMfaBypassEnabled } from '@/lib/dev-flags';
 
 const LoginEnvelope = createSuccessEnvelope(LoginResponseDataSchema);
 
@@ -25,6 +26,7 @@ function buildConfig(): { config: AuthRuntimeConfig | null; missing: string[] } 
       audience: process.env['JWT_AUDIENCE'] ?? 'sica-web',
       accessTtlSec: Number(process.env['JWT_ACCESS_TOKEN_TTL_SEC'] ?? 900),
       refreshTtlSec: Number(process.env['JWT_REFRESH_TOKEN_TTL_SEC'] ?? 604800),
+      devMfaBypass: devMfaBypassEnabled(),
     },
     missing,
   };

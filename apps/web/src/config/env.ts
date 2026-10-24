@@ -54,6 +54,10 @@ const ServerEnvSchema = z.object({
   STORAGE_ACCESS_KEY_ID: z.string().min(10),
   STORAGE_SECRET_ACCESS_KEY: z.string().min(20),
   STORAGE_PUBLIC_CDN_URL: z.string().url(),
+
+  // 8. Bendera development (`RD-173`) — dibaca lewat `src/lib/dev-flags.ts`.
+  // Hanya '1' yang mengaktifkan; nilai lain (termasuk 'true') berarti MATI.
+  SICA_DEV_MFA_BYPASS: z.enum(['0', '1']).default('0'),
 });
 
 const ClientEnvSchema = z.object({
@@ -70,6 +74,14 @@ export type ClientEnv = z.infer<typeof ClientEnvSchema>;
 function validateEnv(): ServerEnv & ClientEnv {
   // Hanya validasi client env jika di browser
   const isServer = typeof window === 'undefined';
+
+  // Pagar `RD-173` yang berdiri SEBELUM validasi skema: development sengaja boleh
+  // berjalan dengan env server tidak lengkap (`§2` di bawah), jadi mengandalkan
+  // `z.enum` saja tidak cukup — bendera dev tidak boleh hidup di production
+  // dalam kondisi validasi apa pun.
+  if (process.env['NODE_ENV'] === 'production' && process.env['SICA_DEV_MFA_BYPASS'] === '1') {
+    throw new Error('SICA_DEV_MFA_BYPASS dilarang pada NODE_ENV=production. Hapus bendera itu.');
+  }
 
   const clientParsed = ClientEnvSchema.safeParse({
     NEXT_PUBLIC_APP_ENV: process.env['NEXT_PUBLIC_APP_ENV'],

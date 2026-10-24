@@ -1,0 +1,42 @@
+/**
+ * Titik masuk tema SICA: Bootstrap terpilih + kerangka Velzon (UI_UX_DESIGN §2.6).
+ *
+ * Prioritas diatur oleh native cascade layer, bukan oleh urutan bundel. Yang
+ * terbukti di pipeline ini (Next.js 15 + webpack + Tailwind 3.4.19, diukur
+ * 2026-10-24 pada `/_next/static/css/app/layout.css` nyata):
+ *
+ *   1. `globals.css` selalu keluar LEBIH DULU daripada `theme.scss` walaupun
+ *      `theme.scss` diimpor lebih dulu di `app/layout.tsx` — urutan impor TIDAK
+ *      menentukan urutan CSS di sini. Jadi "yang belakangan menang" tidak bisa
+ *      dipakai sebagai mekanisme; tanpa layer, `.card-body` Bootstrap (baris
+ *      9612) mengalahkan kelas aplikasi sendiri (baris 608) dan 45 kartu di
+ *      aplikasi berubah bentuk diam-diam.
+ *   2. Deklarasi TANPA layer selalu mengalahkan deklarasi BER-LAYER, berapa
+ *      pun spesifikitasnya. Preflight Tailwind adalah `*` tanpa layer, sehingga
+ *      setiap `padding`/`margin` di dalam `@layer bootstrap`/`@layer velzon`
+ *      dinolkan olehnya. Bukti: `.auth-fluid-sidebg` = `0px` sementara `gap`
+ *      pada elemen yang sama = `40px` — panel kiri layar login terpotong di
+ *      tepi layar.
+ *
+ * Keduanya didamaikan di `globals.css`: `@tailwind base` (preflight, termasuk
+ * reset `*`) diikat ke `@layer reset` yang berperingkat PALING RENDAH, lalu
+ * `@layer bootstrap` < `@layer velzon` di bawah ini, dan seluruh kelas aplikasi
+ * + utilitas Tailwind tetap TANPA layer sehingga selalu menang. Kontraknya:
+ * layar lama tidak berubah sampai kelasnya benar-benar dipindah, dan kerangka
+ * Velzon boleh memakai `padding`/`margin` sungguhan.
+ *
+ * Urutan pendaftaran layer (`@layer reset, bootstrap, velzon;`) hidup di
+ * `globals.css` karena berkas itu yang lebih dulu dilihat bundel; nama layer di
+ * sini harus tetap sama.
+ */
+
+/* nested @import: terverifikasi dikompilasi dart-sass 1.83.4.
+   Ganti ke @use hanya bersama Bootstrap 6. */
+@layer bootstrap {
+  @import 'bootstrap-parts';
+}
+
+@layer velzon {
+  @import 'velzon-skeleton';
+  @import 'velzon-auth';
+}

@@ -125,19 +125,18 @@ export async function submitGrading(tenantId: string, userId: string, input: Gra
       pointValue: Number(b.pointValue),
       isPassing: b.isPassing,
     }));
-    const pointByLetter = new Map<string, number>(bands.map((b) => [b.letterCode, Number(b.pointValue)]));
 
     const status: 'DRAFT' | 'SUBMITTED' = input.action === 'SUBMIT_FINAL' ? 'SUBMITTED' : 'DRAFT';
     let processedCount = 0;
 
     for (const e of input.entries) {
-      let letter = e.letterCode ?? null;
+      // SERVER_ONLY (SEC-02): grades.letterCode/pointValue hanya diturunkan server
+      // dari band skala kelas — tidak pernah diterima dari body klien.
+      let letter: string | null = null;
       let point: number | null = null;
       const raw = e.rawScore ?? null;
 
-      if (letter) {
-        point = pointByLetter.get(letter) ?? null;
-      } else if (raw !== null && bandPoints.length > 0) {
+      if (raw !== null && bandPoints.length > 0) {
         const resolved = resolveLetterGrade(raw, bandPoints);
         if (resolved) {
           letter = resolved.letterCode;

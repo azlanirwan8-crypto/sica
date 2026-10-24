@@ -10,17 +10,18 @@
  * Response: Standard Envelope + enrollment results + quotaSummary
  */
 import type { NextRequest } from 'next/server';
-import { KrsSubmitRequestSchema } from '@sica/contracts';
+import { KrsSubmitRequestSchema, PERM } from '@sica/contracts';
 import {
   extractRequestContext,
   successResponse,
   validationFailed,
-  unauthorized,
   badRequest,
   conflict,
   internalError,
 } from '@/lib/api-response';
 import { submitKrs } from '@/modules/academic/services/krs.service';
+import { requireDataPrincipal } from '@/modules/authz/rbac-repository';
+import { ensureModuleActive } from '@/lib/module-gate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,10 +29,17 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest): Promise<Response> {
   const ctx = extractRequestContext(request);
 
+  // Gerbang entitlement (SEC-09): modul enrollment wajib ACTIVE/TRIAL.
+  const moduleDenied = await ensureModuleActive('enrollment')(ctx);
+  if (moduleDenied) return moduleDenied;
+
   try {
-    if (!ctx.tenantId || !ctx.userId) {
-      return unauthorized(ctx);
-    }
+    // L3 (SEC-10): hak dibaca dari tabel user_role_assignments — tanpa penugasan
+    // aktif ditolak. Jendela OW, plafon SKS, prasyarat, gerbang tagihan & cekal
+    // tetap ditegakkan di service.
+    const access = await requireDataPrincipal(ctx, PERM.enrollmentKrsSubmit);
+    if (!access.granted) return access.response;
+    const { tenantId, userId } = access.principal;
 
     const body: unknown = await request.json();
     const parsed = KrsSubmitRequestSchema.safeParse(body);
@@ -46,7 +54,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     const { periodId, classIds } = parsed.data;
-    const result = await submitKrs(ctx.tenantId, ctx.userId, { periodId, classIds });
+    const result = await submitKrs(tenantId, userId, { periodId, classIds });
 
     if (!result.ok) {
       switch (result.kind) {

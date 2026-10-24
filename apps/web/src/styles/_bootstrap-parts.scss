@@ -1,0 +1,118 @@
+/**
+ * Parsial Bootstrap yang diizinkan untuk kerangka Velzon SICA.
+ *
+ * Yang SENGAJA tidak diimpor (TECH_CONVENTIONS §6 aturan 6):
+ *   reboot  → reset tetap milik Tailwind preflight (satu reset, dua reset = layout bergeser)
+ *   type    → tipografi diatur globals.css §11.2 (plus pelindung 800/900)
+ *   grid    → `.row/.col-*` bertabrakan namanya dengan utilitas Tailwind yang dipakai 34 berkas
+ *   utilities/api → `.p-3/.text-primary/.bg-primary` versi Bootstrap vs versi Tailwind
+ *   bootstrap.js  → perilaku interaktif tetap primitif React kita (aturan 8)
+ *
+ * Semua keluaran di bawah dibungkus `@layer bootstrap` oleh `theme.scss`, sehingga
+ * aturan aplikasi yang tidak ber-layer tetap menang — itu yang membuat migrasi
+ * per layar aman (§2.6 "Preferensi lapisan CSS").
+ */
+
+@import 'bootstrap/scss/functions';
+@import 'velzon-config';
+@import 'bootstrap/scss/variables';
+@import 'bootstrap/scss/variables-dark';
+@import 'bootstrap/scss/maps';
+@import 'bootstrap/scss/mixins';
+@import 'bootstrap/scss/utilities';
+
+@import 'bootstrap/scss/root';
+@import 'bootstrap/scss/images';
+@import 'bootstrap/scss/containers';
+@import 'bootstrap/scss/tables';
+@import 'bootstrap/scss/forms';
+@import 'bootstrap/scss/buttons';
+@import 'bootstrap/scss/dropdown';
+@import 'bootstrap/scss/nav';
+@import 'bootstrap/scss/navbar';
+@import 'bootstrap/scss/card';
+@import 'bootstrap/scss/badge';
+@import 'bootstrap/scss/alert';
+@import 'bootstrap/scss/progress';
+@import 'bootstrap/scss/list-group';
+@import 'bootstrap/scss/close';
+@import 'bootstrap/scss/modal';
+@import 'bootstrap/scss/pagination';
+
+/**
+ * Kosakata Velzon `bg-*-subtle` / `text-*-emphasis` / `border-*-subtle`.
+ * Bootstrap 5.3 menghasilkan kelas ini dari `utilities/api` yang sengaja tidak
+ * kita impor, jadi dicetak di sini mengacu ke variabel yang SUDAH diterbitkan
+ * `root` + `variables-dark` — akibatnya kelasnya ikut tema tanpa utilitas ganda.
+ */
+@each $color, $value in $theme-colors-bg-subtle {
+  .bg-#{$color}-subtle {
+    background-color: var(--bs-#{$color}-bg-subtle);
+  }
+}
+
+/* 5.3.6 tidak punya peta `$theme-colors-text-emphasis` (nilainya variabel per
+   warna, dirakit `root.scss` menjadi `--bs-*-text-emphasis`), jadi kuncinya
+   diambil dari `$theme-colors`. */
+@each $color, $value in $theme-colors {
+  .text-#{$color}-emphasis {
+    color: var(--bs-#{$color}-text-emphasis);
+  }
+}
+
+@each $color, $value in $theme-colors-border-subtle {
+  .border-#{$color}-subtle {
+    border-color: var(--bs-#{$color}-border-subtle);
+  }
+}
+
+/**
+ * Proyeksi palet: `--bs-*` mengikuti `--sica-*`, bukan menjadi palet kedua.
+ * Pemblokiran ini ditulis DUA kali (`:root` dan `[data-bs-theme='dark']`) karena
+ * blok gelap bawaan Bootstrap punya spesificitas lebih tinggi daripada `:root`;
+ * tanpa blok kedua, komponen Bootstrap kembali ke warna build-time dan berhenti
+ * ikut pengalih tema. Nilai `--sica-*` sudah terbalik sendiri per tema, jadi
+ * kedua blok memakai daftar yang sama.
+ */
+@mixin sica-projection {
+  --bs-body-font-family: var(--sica-font-sans);
+  --bs-body-color: var(--sica-text-body);
+  --bs-emphasis-color: var(--sica-text-heading);
+  --bs-secondary-color: var(--sica-text-muted);
+  --bs-tertiary-color: var(--sica-text-subtle);
+  --bs-body-bg: var(--sica-surface-canvas);
+  --bs-secondary-bg: var(--sica-surface-inset);
+  --bs-tertiary-bg: var(--sica-surface-hover);
+
+  --bs-primary: var(--sica-primary);
+  --bs-secondary: var(--sica-secondary);
+  --bs-success: var(--sica-success);
+  --bs-info: var(--sica-info);
+  --bs-warning: var(--sica-warning);
+  --bs-danger: var(--sica-danger);
+
+  --bs-border-color: var(--sica-border-color);
+  --bs-border-color-translucent: var(--sica-divider);
+  --bs-link-color: var(--sica-primary);
+  --bs-link-hover-color: var(--sica-primary-hover);
+
+  --bs-border-radius-sm: var(--sica-radius-sm);
+  --bs-border-radius: var(--sica-radius-md);
+  --bs-border-radius-lg: var(--sica-radius-lg);
+  --bs-border-radius-xl: var(--sica-radius-xl);
+  --bs-border-radius-2xl: var(--sica-radius-2xl);
+  --bs-border-radius-pill: var(--sica-radius-full);
+
+  --bs-box-shadow-xs: var(--sica-shadow-xs);
+  --bs-box-shadow-sm: var(--sica-shadow-sm);
+  --bs-box-shadow: var(--sica-shadow-card);
+  --bs-box-shadow-lg: var(--sica-shadow-raised);
+}
+
+:root {
+  @include sica-projection;
+}
+
+[data-bs-theme='dark'] {
+  @include sica-projection;
+}

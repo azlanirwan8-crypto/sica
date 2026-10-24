@@ -1,8 +1,16 @@
 'use client';
 
 import React, { useState } from 'react';
+import { BadgeCheck, BookOpen, ChevronDown, Printer, TrendingUp, Trophy } from 'lucide-react';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardDescription, CardFooter, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
+import { Select } from '@/components/ui/input';
+import { MetaRow, PageHeader } from '@/components/ui/page-header';
+import { Progress } from '@/components/ui/progress';
 import { StatCard } from '@/components/ui/stat-card';
-import { VelzonDataGrid, type ColumnDef } from '@/components/ui/velzon-data-grid';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { VelzonChart } from '@/components/ui/velzon-chart';
 import {
   generateKhsPrintHtml,
   printDocument,
@@ -175,6 +183,22 @@ const SAMPLE_KHS_DATA: Record<
   },
 };
 
+/** Ambang nilai lulus — mengikuti predikat lama (`A/B+/B`), bukan menebak warna baru. */
+const PASSING_GRADES: readonly string[] = ['A', 'B+', 'B'];
+
+const gradeTone = (letterGrade: string): NonNullable<BadgeProps['tone']> =>
+  PASSING_GRADES.includes(letterGrade) ? 'success' : 'warning';
+
+const STATUS_LABEL: Record<KhsGradeRow['status'], string> = {
+  LULUS: 'Lulus',
+  TIDAK_LULUS: 'Tidak Lulus',
+};
+
+const SEMESTER_OPTIONS: readonly { readonly value: string; readonly label: string }[] = [
+  { value: 'sem-5', label: 'Semester 5 (Ganjil 2025/2026)' },
+  { value: 'sem-4', label: 'Semester 4 (Genap 2024/2025)' },
+];
+
 export default function KhsPage() {
   const [selectedSemesterKey, setSelectedSemesterKey] = useState<string>('sem-5');
   const currentKhs = SAMPLE_KHS_DATA[selectedSemesterKey] ?? SAMPLE_KHS_DATA['sem-5']!;
@@ -212,226 +236,196 @@ export default function KhsPage() {
     printDocument(html);
   };
 
-  const columns: ColumnDef<KhsGradeRow>[] = [
-    {
-      key: 'no',
-      header: 'NO',
-      width: '60px',
-      align: 'center',
-      render: (item) => <span>{item.no}</span>,
-    },
-    {
-      key: 'courseCode',
-      header: 'KODE MK',
-      width: '110px',
-      render: (item) => (
-        <span style={{ fontWeight: 600, color: 'var(--sica-color-primary)' }}>
-          {item.courseCode}
-        </span>
-      ),
-    },
-    {
-      key: 'courseName',
-      header: 'NAMA MATA KULIAH',
-      render: (item) => (
-        <span style={{ fontWeight: 600, color: 'var(--sica-text-heading)' }}>
-          {item.courseName}
-        </span>
-      ),
-    },
-    {
-      key: 'sks',
-      header: 'SKS',
-      width: '70px',
-      align: 'center',
-      render: (item) => <span>{item.sks}</span>,
-    },
-    {
-      key: 'letterGrade',
-      header: 'NILAI HURUF',
-      width: '110px',
-      align: 'center',
-      render: (item) => {
-        const isGood = ['A', 'B+', 'B'].includes(item.letterGrade);
-        return (
-          <span
-            style={{
-              padding: '3px 12px',
-              borderRadius: 'var(--sica-radius-sm)',
-              fontWeight: 700,
-              fontSize: '13px',
-              backgroundColor: isGood ? 'var(--sica-color-success-light)' : 'var(--sica-color-warning-light)',
-              color: isGood ? 'var(--sica-color-success)' : 'var(--sica-color-warning)',
-            }}
-          >
-            {item.letterGrade}
-          </span>
-        );
-      },
-    },
-    {
-      key: 'pointValue',
-      header: 'BOBOT',
-      width: '80px',
-      align: 'center',
-      render: (item) => <span>{item.pointValue.toFixed(2)}</span>,
-    },
-    {
-      key: 'qualityScore',
-      header: 'MUTU (K x N)',
-      width: '110px',
-      align: 'center',
-      render: (item) => (
-        <span style={{ fontWeight: 700, color: 'var(--sica-text-heading)' }}>
-          {item.qualityScore.toFixed(2)}
-        </span>
-      ),
-    },
-    {
-      key: 'status',
-      header: 'STATUS',
-      width: '100px',
-      align: 'center',
-      render: (item) => (
-        <span
-          style={{
-            fontSize: '11px',
-            fontWeight: 600,
-            color: 'var(--sica-color-success)',
-          }}
-        >
-          ✓ {item.status}
-        </span>
-      ),
-    },
-  ];
+  const allPassed = currentKhs.rows.every((row) => row.status === 'LULUS');
+  const sksRatio = currentKhs.totalSks > 0 ? (currentKhs.passedSks / currentKhs.totalSks) * 100 : 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Page Title & Selector */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '12px',
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              fontSize: '20px',
-              fontWeight: 700,
-              color: 'var(--sica-text-heading)',
-              margin: 0,
-            }}
-          >
-            Kartu Hasil Studi (KHS)
-          </h1>
-          <p
-            style={{
-              fontSize: '13px',
-              color: 'var(--sica-text-muted)',
-              margin: '4px 0 0 0',
-            }}
-          >
-            Laporan Prestasi Akademik Mahasiswa per Semester
-          </p>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <select
-            value={selectedSemesterKey}
-            onChange={(e) => setSelectedSemesterKey(e.target.value)}
-            style={{
-              height: '36px',
-              padding: '0 12px',
-              borderRadius: 'var(--sica-radius-md)',
-              border: '1px solid var(--sica-border-color)',
-              backgroundColor: 'var(--sica-surface-card)',
-              color: 'var(--sica-text-heading)',
-              fontSize: '13px',
-              fontWeight: 600,
-              outline: 'none',
-            }}
-          >
-            <option value="sem-5">Semester 5 (Ganjil 2025/2026)</option>
-            <option value="sem-4">Semester 4 (Genap 2024/2025)</option>
-          </select>
-
-          <button
-            onClick={handlePrintPdf}
-            style={{
-              height: '36px',
-              padding: '0 16px',
-              backgroundColor: 'var(--sica-color-secondary)',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: 'var(--sica-radius-md)',
-              fontSize: '13px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}
-          >
-            <span>🖨️</span>
-            <span>Cetak KHS (PDF)</span>
-          </button>
-        </div>
-      </div>
-
-      {/* KPI Cards */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '16px',
-        }}
-      >
-        <StatCard
-          title="Indeks Prestasi Semester"
-          value={currentKhs.ips.toFixed(2)}
-          subtitle="Semester Ini"
-          icon="📈"
-          variant="primary"
-          trend={{ value: '0.07 vs sem. lalu', isPositive: true }}
-        />
-        <StatCard
-          title="Indeks Prestasi Kumulatif"
-          value={currentKhs.ipk.toFixed(2)}
-          subtitle="Kumulatif s.d. Semester Ini"
-          icon="🏆"
-          variant="success"
-        />
-        <StatCard
-          title="SKS Semester Ini"
-          value={`${currentKhs.totalSks} SKS`}
-          subtitle="100% SKS Lulus"
-          icon="📘"
-          variant="info"
-        />
-        <StatCard
-          title="Status Kelulusan"
-          value="LULUS SEMUA"
-          subtitle="Tidak Ada Mata Kuliah Mengulang"
-          icon="🎖️"
-          variant="success"
-        />
-      </div>
-
-      {/* Grade Table */}
-      <VelzonDataGrid
-        title={`Rincian Hasil Studi — ${currentKhs.semesterLabel}`}
-        subtitle="Daftar seluruh nilai mata kuliah resmi yang telah diterbitkan oleh Program Studi."
-        columns={columns}
-        data={currentKhs.rows}
-        keyExtractor={(row) => row.courseCode}
-        searchable={false}
-        pagination={false}
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Kartu Hasil Studi (KHS)"
+        description="Laporan Prestasi Akademik Mahasiswa per Semester"
+        crumbs={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Akademik' }, { label: 'KHS' }]}
+        actions={
+          <>
+            <span className="relative inline-flex items-center">
+              <Select
+                aria-label="Pilih semester"
+                value={selectedSemesterKey}
+                onChange={(event) => setSelectedSemesterKey(event.target.value)}
+                className="w-56 sm:w-64"
+              >
+                {SEMESTER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+              <ChevronDown
+                size={15}
+                strokeWidth={2}
+                aria-hidden
+                className="pointer-events-none absolute right-3.5 text-slate-400"
+              />
+            </span>
+            <Button onClick={handlePrintPdf}>
+              <Printer size={15} strokeWidth={2} aria-hidden />
+              Cetak KHS (PDF)
+            </Button>
+          </>
+        }
       />
+
+      <section aria-label="Indikator hasil studi" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Indeks Prestasi Semester"
+          value={currentKhs.ips.toFixed(2)}
+          hint="Semester Ini"
+          trend="up"
+          trendValue="0.07 vs sem. lalu"
+          trendSemantic="good-when-up"
+          icon={<TrendingUp size={16} strokeWidth={2} aria-hidden />}
+        />
+        <StatCard
+          label="Indeks Prestasi Kumulatif"
+          value={currentKhs.ipk.toFixed(2)}
+          hint="Kumulatif s.d. Semester Ini"
+          icon={<Trophy size={16} strokeWidth={2} aria-hidden />}
+        />
+        <StatCard
+          label="SKS Semester Ini"
+          value={`${currentKhs.totalSks} SKS`}
+          hint={`${currentKhs.passedSks} dari ${currentKhs.totalSks} SKS lulus`}
+          icon={<BookOpen size={16} strokeWidth={2} aria-hidden />}
+        />
+        <StatCard
+          label="Status Kelulusan"
+          value={allPassed ? 'Lulus Semua' : 'Ada Mengulang'}
+          hint={allPassed ? 'Tidak Ada Mata Kuliah Mengulang' : 'Sebagian mata kuliah perlu diulang'}
+          icon={<BadgeCheck size={16} strokeWidth={2} aria-hidden />}
+        />
+      </section>
+
+      <section aria-label="Tren dan ringkasan" className="grid gap-6 xl:grid-cols-[1.6fr_1fr]">
+        <Card>
+          <CardHeader>
+            <CardHeading>
+              <CardTitle>Bobot Nilai per Mata Kuliah</CardTitle>
+              <CardDescription>
+                Skala 0 – 4,00 berdasarkan nilai poin resmi semester berjalan.
+              </CardDescription>
+            </CardHeading>
+            <Badge tone="secondary" look="label">
+              {currentKhs.rows.length} mata kuliah
+            </Badge>
+          </CardHeader>
+          <div className="card-body">
+            <VelzonChart
+              height={236}
+              series={[
+                {
+                  name: 'Nilai poin',
+                  points: currentKhs.rows.map((row) => ({ label: row.courseCode, value: row.pointValue })),
+                },
+              ]}
+              valueFormat={(value) => value.toFixed(2)}
+            />
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardHeading>
+              <CardTitle>Ringkasan Semester</CardTitle>
+              <CardDescription>{currentKhs.academicYear}</CardDescription>
+            </CardHeading>
+          </CardHeader>
+          <div className="card-body flex flex-col gap-5">
+            <MetaRow
+              items={[
+                { label: 'IPS', value: currentKhs.ips.toFixed(2) },
+                { label: 'IPK', value: currentKhs.ipk.toFixed(2) },
+                { label: 'Total SKS', value: `${currentKhs.totalSks}` },
+              ]}
+            />
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-4">
+                <span className="section-label">SKS diselesaikan</span>
+                <span className="text-[13px] font-semibold tabular text-[color:var(--sica-text-heading)]">
+                  {currentKhs.passedSks} / {currentKhs.totalSks}
+                </span>
+              </div>
+              <Progress
+                value={sksRatio}
+                tone={sksRatio >= 100 ? 'success' : 'warning'}
+                label="Rasio SKS yang diselesaikan"
+              />
+            </div>
+          </div>
+          <CardFooter className="flex items-center justify-between gap-4">
+            <span className="text-[12.5px] text-[color:var(--sica-text-muted)]">
+              Nilai yang belum tuntas dapat ditempuh pada semester berikutnya.
+            </span>
+            <Badge tone={allPassed ? 'success' : 'warning'} look="label" className="shrink-0">
+              {allPassed ? 'Lulus Semua' : 'Ada Mengulang'}
+            </Badge>
+          </CardFooter>
+        </Card>
+      </section>
+
+      <Card>
+        <CardHeader>
+          <CardHeading>
+            <CardTitle>Rincian Hasil Studi — {currentKhs.semesterLabel}</CardTitle>
+            <CardDescription>
+              Daftar seluruh nilai mata kuliah resmi yang telah diterbitkan oleh Program Studi.
+            </CardDescription>
+          </CardHeading>
+        </CardHeader>
+
+        <Table>
+          <THead>
+            <TH align="center" className="w-[56px]">No</TH>
+            <TH className="w-[112px]">Kode MK</TH>
+            <TH>Nama Mata Kuliah</TH>
+            <TH align="center" className="w-[72px]">SKS</TH>
+            <TH align="center" className="w-[112px]">Nilai Huruf</TH>
+            <TH align="center" className="w-[88px]">Bobot</TH>
+            <TH align="center" className="w-[120px]">Mutu (K x N)</TH>
+            <TH align="center" className="w-[124px]">Status</TH>
+          </THead>
+          <TBody>
+            {currentKhs.rows.map((row) => (
+              <TR key={row.courseCode}>
+                <TD align="center" className="text-[13px] tabular text-[color:var(--sica-text-muted)]">
+                  {row.no}
+                </TD>
+                <TD className="text-[12.5px] font-semibold tabular text-primary-hover">{row.courseCode}</TD>
+                <TD className="text-[13.5px] font-medium text-[color:var(--sica-text-heading)]">
+                  {row.courseName}
+                </TD>
+                <TD align="center" className="text-[13px] tabular">{row.sks}</TD>
+                <TD align="center">
+                  <Badge tone={gradeTone(row.letterGrade)} look="label">
+                    {row.letterGrade}
+                  </Badge>
+                </TD>
+                <TD align="center" className="text-[13px] tabular">{row.pointValue.toFixed(2)}</TD>
+                <TD align="center" className="text-[13px] font-semibold tabular text-[color:var(--sica-text-heading)]">
+                  {row.qualityScore.toFixed(2)}
+                </TD>
+                <TD align="center">
+                  <Badge
+                    tone={row.status === 'LULUS' ? 'success' : 'danger'}
+                    look="soft"
+                  >
+                    {STATUS_LABEL[row.status]}
+                  </Badge>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      </Card>
     </div>
   );
 }

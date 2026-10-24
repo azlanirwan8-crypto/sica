@@ -1,13 +1,866 @@
-@tailwind base;
+@layer reset, bootstrap, velzon;
+
+@layer reset {
+  @tailwind base;
+}
 @tailwind components;
 @tailwind utilities;
 
-@import '../styles/velzon-theme.css';
+/* ============================================================================
+   DESIGN SYSTEM VELZON - token, lima tema, primitif kelas.
 
+   Bagian ini dulu tinggal di src/styles/velzon-theme.css dan di-import dari sini.
+   Digabung 2026-10-19 karena pipeline CSS Next.js memproses tiap berkas CSS
+   sebagai modul berdiri sendiri: postcss.config.mjs tidak memuat plugin
+   postcss-import, sehingga layer base/components di berkas yang di-import
+   tidak pernah melihat direktif tailwind base pasangannya dan build gagal
+   dengan pesan "at-layer base is used but no matching tailwind base directive".
+   Tailwind CLI - yang saya pakai sebagai pemeriksa awal - men-inline import
+   sendiri, sehingga cacat ini lolos dari alat verifikasi. Pelajarannya dicatat
+   di PROGRESS_REPORT 5.34: alat verifikasi wajib memakai pipeline yang sama
+   dengan produksi, bukan yang paling mudah dijalankan.
+   ========================================================================== */
+
+/**
+ * SICA — Velzon Design System: satu sumber kebenaran token.
+ *
+ * Aturan main (dijaga oleh §2 UI_UX_DESIGN.md):
+ *  1. Komponen TIDAK boleh menulis hexa. Yang boleh hanya token di bawah.
+ *  2. Tema tidak mengubah kelas komponen — ia hanya menimpa variabel di root
+ *     element (`data-bs-theme` / `data-topbar` / `data-layout-style` /
+ *     `data-layout-width`, kosakata Velzon — lihat UI_UX_DESIGN §2.6). Karena itu
+ *     `bg-slate-50/50` ikut gelap tanpa perlu `dark:` di setiap komponen.
+ *  3. Kanal RGB (`--sica-rgb-*`) dipakai Tailwind untuk modifier opasitas
+ *     (`<alpha-value>`); bentuk hex (`--sica-*`) dipakai CSS biasa. Keduanya
+ *     harus berubah bersamaan — kalau tidak, badge soft dan border tidak sepadan.
+ *
+ * Putusan merek 2026-10-19: PRIMARY = teal Velzon `#0ab39c` (satu-satunya).
+ * `success` memakai hue yang sama dengan sengaja (status "lunas/setuju" memang
+ * aksi utama SICA); pembeda status dilakukan pada INFO/WARNING/DANGER/SECONDARY.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ── Brand & status ───────────────────────────────────────────────────── */
+  --sica-primary: #0ab39c;
+  --sica-primary-hover: #089e85;
+  --sica-primary-active: #078b76;
+  --sica-primary-soft: #e6f7f5;
+  --sica-on-primary: #ffffff;
+  --sica-rgb-primary: 10 179 156;
+
+  --sica-secondary: #405189;
+  --sica-secondary-hover: #344270;
+  --sica-secondary-soft: #eceef6;
+  --sica-on-secondary: #ffffff;
+  --sica-rgb-secondary: 64 81 137;
+
+  --sica-success: #0ab39c;
+  --sica-success-soft: #e6f7f5;
+  --sica-rgb-success: 10 179 156;
+
+  --sica-info: #299cdb;
+  --sica-info-hover: #1f87c1;
+  --sica-info-soft: #e8f5fc;
+  --sica-on-info: #ffffff;
+  --sica-rgb-info: 41 156 219;
+
+  --sica-warning: #f7b84b;
+  --sica-warning-hover: #dd9f31;
+  --sica-warning-soft: #fdf4e6;
+  --sica-on-warning: #4a3410;
+  --sica-rgb-warning: 247 184 75;
+
+  --sica-danger: #f06548;
+  --sica-danger-hover: #d94c30;
+  --sica-danger-soft: #fdeee9;
+  --sica-on-danger: #ffffff;
+  --sica-rgb-danger: 240 101 72;
+
+  /* Isian SOLID yang menampung teks putih + teks berwarna. Velzon upstream   */
+  /* memakai primary #0ab39c dan danger #f06548 untuk fill; teks putih di      */
+  /* atasnya hanya 2,64:1 dan 3,15:1 — gagal AA untuk label 13 px. Karena itu  */
+  /* fill solid diturunkan ke versi gelap pada hue yang sama (k = 0,745 dan     */
+  /* 0,820) sementara --sica-primary tetap dipakai untuk aksen, cincin fokus,  */
+  /* border, chart dan progres. Menolak satu variabel di bawah ini sudah        */
+  /* mengembalikan tampilan lama — konsekuensinya lalu dicatat sebagai          */
+  /* pengecualian kontras, bukan sebagai keadaan yang tidak diketahui.         */
+  --sica-primary-solid: #078574;        /* putih di atasnya = 4.53:1 */
+  --sica-primary-solid-hover: #067061;
+  --sica-primary-solid-active: #04574c;
+  --sica-primary-ink: #046c5a;          /* teks: 6.39:1 di atas kartu, 5.76:1 di atas soft */
+  --sica-danger-solid: #c04a32;         /* putih di atasnya = 4.71:1 */
+  --sica-danger-solid-hover: #a83e29;
+  --sica-info-solid: #1e78a8;           /* putih di atasnya = 4.72:1 */
+  --sica-info-solid-hover: #1a6d99;
+  --sica-danger-ink: #c1442b;           /* teks galat pada permukaan terang */
+
+  /* ── Teks DI ATAS latar "soft" ────────────────────────────────────────── */
+  /* Hanya untuk kelas badge-soft, btn-soft, badge-label dan eyebrow. Nilai   */
+  /* ini hasil ukur WCAG, bukan selera: badge dan eyebrow memakai teks        */
+  /* 10 sampai 11 pixel, sehingga butuh rasio minimal 4.5 banding 1. Varian   */
+  /* on-* solid tidak dipakai di sini karena ia dirancang untuk latar penuh.  */
+  --sica-on-primary-soft: #046c5a;   /* 5.76:1 di atas #e6f7f5 */
+  --sica-on-success-soft: #046c5a;   /* 5.76:1 */
+  --sica-on-info-soft: #1668a0;      /* 5.37:1 */
+  --sica-on-warning-soft: #7a5514;   /* 6.14:1 */
+  --sica-on-danger-soft: #a83216;    /* 5.93:1 */
+  --sica-on-secondary-soft: #344270; /* 9.58:1 */
+  --sica-on-neutral-soft: #475569;   /* 6.92:1 */
+
+  /* Fokus & seleksi — mengikuti primary, jangan pernah hardcode biru */
+  --sica-ring: rgb(var(--sica-rgb-primary) / 0.16);
+  --sica-ring-strong: rgb(var(--sica-rgb-primary) / 0.32);
+  --sica-border-focus: var(--sica-primary);
+
+  /* ── Netral (ramp yang bisa dibalik per tema) ─────────────────────────── */
+  --sica-rgb-slate-50: 248 250 252;
+  --sica-rgb-slate-100: 241 245 249;
+  --sica-rgb-slate-200: 226 232 240;
+  --sica-rgb-slate-300: 203 213 225;
+  --sica-rgb-slate-400: 148 163 184;
+  --sica-rgb-slate-500: 100 116 139;
+  --sica-rgb-slate-600: 71 85 105;
+  --sica-rgb-slate-700: 51 65 85;
+  --sica-rgb-slate-800: 30 41 59;
+  --sica-rgb-slate-900: 15 23 42;
+  --sica-rgb-slate-950: 8 11 18;
+
+  /* ── Permukaan & teks ─────────────────────────────────────────────────── */
+  --sica-surface-canvas: #f4f6fa;
+  --sica-surface-card: #ffffff;
+  --sica-surface-raised: #ffffff;
+  --sica-surface-header: rgb(255 255 255 / 0.86);
+  --sica-surface-inset: #f7f9fc;
+  --sica-surface-hover: #f1f4f9;
+  --sica-surface-selected: var(--sica-primary-soft);
+  --sica-surface-sidebar: var(--sica-secondary);
+  --sica-surface-input: #fbfcfe;
+  --sica-surface-skeleton: #eef1f6;
+  --sica-skeleton-sheen: rgb(255 255 255 / 0.72);
+  --sica-backdrop: rgb(15 23 42 / 0.4);
+
+  --sica-text-heading: rgb(var(--sica-rgb-slate-900));
+  --sica-text-body: rgb(var(--sica-rgb-slate-600));
+  --sica-text-muted: #6b6f82;
+  --sica-text-subtle: #98a1b3;
+  --sica-text-inverse: #ffffff;
+  --sica-text-sidebar: #c3cbe8;
+  --sica-text-sidebar-active: #ffffff;
+
+  --sica-border-color: #e9ebec;
+  --sica-border-strong: rgb(var(--sica-rgb-slate-200));
+  --sica-divider: rgb(var(--sica-rgb-slate-100));
+
+  /* ── Elevasi (layering, bukan garis keras) ────────────────────────────── */
+  --sica-shadow-xs: 0 1px 1px rgb(30 41 59 / 0.04);
+  --sica-shadow-sm: 0 1px 2px rgb(30 41 59 / 0.06), 0 1px 3px rgb(30 41 59 / 0.04);
+  --sica-shadow-card: 0 1px 2px rgb(56 65 74 / 0.06), 0 4px 16px rgb(56 65 74 / 0.05);
+  --sica-shadow-raised: 0 2px 4px rgb(56 65 74 / 0.06), 0 12px 28px rgb(56 65 74 / 0.08);
+  --sica-shadow-dropdown: 0 12px 32px rgb(30 32 37 / 0.14), 0 2px 6px rgb(30 32 37 / 0.06);
+  --sica-shadow-modal: 0 24px 60px -12px rgb(15 23 42 / 0.28);
+  --sica-shadow-focus: 0 0 0 4px var(--sica-ring);
+  --sica-glass: saturate(140%) blur(12px);
+
+  /* ── Grafik ───────────────────────────────────────────────────────────── */
+  --sica-chart-1: var(--sica-primary);
+  --sica-chart-2: var(--sica-info);
+  --sica-chart-3: var(--sica-warning);
+  --sica-chart-4: var(--sica-secondary);
+  --sica-chart-5: var(--sica-danger);
+  --sica-chart-grid: rgb(var(--sica-rgb-slate-200) / 0.7);
+  --sica-chart-axis: rgb(var(--sica-rgb-slate-400));
+  --sica-chart-area-from: rgb(var(--sica-rgb-primary) / 0.15);
+  --sica-chart-area-to: rgb(var(--sica-rgb-primary) / 0);
+  --sica-chart-tooltip-bg: rgb(255 255 255 / 0.82);
+  --sica-chart-tooltip-border: rgb(255 255 255 / 0.6);
+
+  /* ── Tipografi ────────────────────────────────────────────────────────── */
+  --sica-font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --sica-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  --sica-tracking-display: -0.021em;
+  --sica-tracking-wide: 0.06em;
+  --sica-leading-loose: 1.7;
+
+  /* ── Ritme & radius ───────────────────────────────────────────────────── */
+  --sica-space-1: 4px;
+  --sica-space-2: 8px;
+  --sica-space-3: 12px;
+  --sica-space-4: 16px;
+  --sica-space-5: 20px;
+  --sica-space-6: 24px;
+  --sica-space-8: 32px;
+  --sica-space-10: 40px;
+  --sica-space-12: 48px;
+  --sica-space-16: 64px;
+
+  --sica-radius-sm: 4px;
+  --sica-radius-md: 8px;
+  --sica-radius-lg: 12px;
+  --sica-radius-xl: 16px;
+  --sica-radius-2xl: 20px;
+  --sica-radius-full: 9999px;
+
+  --sica-transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --sica-transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --sica-transition-smooth: 320ms cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ── Layout chrome ────────────────────────────────────────────────────── */
+  --sica-header-height: 64px;
+  /* Baris menu kerja (Velzon horizontal dua baris, §2.6). Hanya tinggi baris kedua;
+     tingginya lebih kecil dari header supaya hierarki "identitas / navigasi" terbaca. */
+  --sica-menu-row-height: 46px;
+  --sica-content-max: 1440px;
+  --sica-page-pad: 24px;
+}
+
+/* ── Dark (Enterprise Night) ─────────────────────────────────────────────── */
+[data-bs-theme='dark'] {
+  color-scheme: dark;
+
+  --sica-primary-soft: rgb(10 179 156 / 0.14);
+  --sica-secondary-soft: rgb(124 141 201 / 0.16);
+  --sica-success-soft: rgb(10 179 156 / 0.14);
+  --sica-info-soft: rgb(41 156 219 / 0.16);
+  --sica-warning-soft: rgb(247 184 75 / 0.16);
+  --sica-danger-soft: rgb(240 101 72 / 0.16);
+  --sica-on-warning: #4a3410;
+
+  /* Teks di atas latar soft versi gelap — soft menjadi translucent di atas   */
+  /* kartu gelap, sehingga warna teks harus terang dan jenuh, bukan hover tone. */
+  --sica-on-primary-soft: #5eead4;   /* 8.71:1 */
+  --sica-on-success-soft: #5eead4;   /* 8.71:1 */
+  --sica-on-info-soft: #93c5fd;      /* 6.96:1 */
+  --sica-on-warning-soft: #fcd34d;   /* 7.80:1 */
+  --sica-on-danger-soft: #fca5a5;    /* 6.79:1 */
+  --sica-on-secondary-soft: #c7d2fe; /* 8.47:1 */
+  --sica-on-neutral-soft: #b0bccd;   /* 8.52:1 */
+
+  /* Teks berwarna di atas kartu gelap. Fill solid TIDAK ikut diubah — putih   */
+  /* di atas #078574/#c5533b tetap lolos di kedua tema.                        */
+  --sica-primary-ink: #5eead4;
+  --sica-danger-ink: #f8826e;
+
+  --sica-rgb-slate-50: 23 27 33;
+  --sica-rgb-slate-100: 27 32 38;
+  --sica-rgb-slate-200: 40 47 56;
+  --sica-rgb-slate-300: 55 65 77;
+  --sica-rgb-slate-400: 100 116 139;
+  --sica-rgb-slate-500: 148 163 184;
+  --sica-rgb-slate-600: 176 188 205;
+  --sica-rgb-slate-700: 203 213 225;
+  --sica-rgb-slate-800: 226 232 240;
+  --sica-rgb-slate-900: 241 245 249;
+  --sica-rgb-slate-950: 248 250 252;
+
+  --sica-surface-canvas: #14171a;
+  --sica-surface-card: #1e2227;
+  --sica-surface-raised: #23282e;
+  --sica-surface-header: rgb(30 34 39 / 0.86);
+  --sica-surface-inset: #1a1e23;
+  --sica-surface-hover: #262b32;
+  --sica-surface-selected: rgb(10 179 156 / 0.16);
+  --sica-surface-sidebar: #171a1e;
+  --sica-surface-input: #21262c;
+  --sica-surface-skeleton: #262b32;
+  --sica-skeleton-sheen: rgb(255 255 255 / 0.05);
+  --sica-backdrop: rgb(4 6 9 / 0.62);
+
+  --sica-text-muted: #9aa1b1;
+  --sica-text-subtle: #74788d;
+  --sica-text-sidebar: #878a99;
+
+  --sica-border-color: #292e35;
+  --sica-divider: rgb(255 255 255 / 0.06);
+
+  --sica-shadow-xs: 0 1px 1px rgb(0 0 0 / 0.3);
+  --sica-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.36);
+  --sica-shadow-card: 0 2px 4px rgb(0 0 0 / 0.36), 0 8px 24px rgb(0 0 0 / 0.28);
+  --sica-shadow-raised: 0 4px 8px rgb(0 0 0 / 0.4), 0 18px 40px rgb(0 0 0 / 0.36);
+  --sica-shadow-dropdown: 0 12px 32px rgb(0 0 0 / 0.52);
+  --sica-shadow-modal: 0 24px 60px -12px rgb(0 0 0 / 0.66);
+
+  --sica-chart-grid: rgb(255 255 255 / 0.08);
+  --sica-chart-area-from: rgb(var(--sica-rgb-primary) / 0.22);
+  --sica-chart-tooltip-bg: rgb(35 40 46 / 0.86);
+  --sica-chart-tooltip-border: rgb(255 255 255 / 0.08);
+}
+
+/* ── Baris atas gelap (Velzon `data-topbar="dark"`, dahulu mode "semi-dark") ─ */
+/* Knob IN HANYA mengganti chrome. Kanvas & border tetap milik `data-bs-theme`:
+   blok "semi-dark" lama ikut menulis `--sica-surface-canvas` dan
+   `--sica-border-color`, sehingga memaksakan konten terang meski temanya gelap. */
+[data-topbar='dark'] {
+  --sica-surface-header: #23282f;
+  --sica-text-sidebar: #98a1b3;
+  --sica-text-sidebar-active: #ffffff;
+}
+
+[data-topbar='dark'] .navbar-header {
+  --sica-text-heading: #f3f6f9;
+  --sica-text-body: #ced4da;
+  --sica-border-color: rgb(255 255 255 / 0.08);
+}
+
+/* ── Gradient: canvas & aksen berlapis, bukan warna mentah ───────────────── */
+[data-layout-style='gradient'] {
+  --sica-surface-canvas: #f2f4fb;
+  --sica-canvas-paint:
+    radial-gradient(1200px 480px at 8% -10%, rgb(var(--sica-rgb-primary) / 0.12), transparent 60%),
+    radial-gradient(900px 420px at 92% 0%, rgb(var(--sica-rgb-secondary) / 0.12), transparent 62%),
+    linear-gradient(180deg, #f6f8fd 0%, #eef1f8 100%);
+  --sica-header-underline: rgb(255 255 255 / 0.7);
+}
+
+[data-layout-style='gradient'][data-bs-theme='dark'] {
+  --sica-canvas-paint:
+    radial-gradient(1200px 480px at 8% -10%, rgb(var(--sica-rgb-primary) / 0.16), transparent 62%),
+    radial-gradient(900px 420px at 92% 0%, rgb(var(--sica-rgb-secondary) / 0.22), transparent 64%),
+    linear-gradient(180deg, #16191d 0%, #12151a 100%);
+}
+
+/* ── Separated (dahulu "minimal"): hilangkan pemisahan visual yang tidak perlu ── */
+[data-layout-style='separated'] {
+  --sica-shadow-card: 0 0 0 1px rgb(30 41 59 / 0.05);
+  --sica-shadow-raised: 0 0 0 1px rgb(30 41 59 / 0.08), 0 12px 28px rgb(56 65 74 / 0.06);
+  --sica-border-color: rgb(30 41 59 / 0.08);
+  --sica-radius-lg: 10px;
+}
+
+/* Permukaan putih khusus tema terang. Dulu blok ini menulis
+   `--sica-surface-canvas: #ffffff` tanpa syarat tema, sehingga `minimal` +
+   gelap menghasilkan kanvas putih; karena gaya & tema kini dua knob bebas,
+   penumpangnya harus eksplisit. */
+[data-layout-style='separated'][data-bs-theme='light'] {
+  --sica-surface-canvas: #ffffff;
+  --sica-surface-inset: #fafbfd;
+}
+
+/* ── Lebar halaman (Velzon `data-layout-width`) ──────────────────────────── */
+/* `boxed` hanya mengetengahkan isi; ritme jarak tetap dari `--sica-page-pad`. */
+[data-layout-width='boxed'] {
+  --sica-content-max: 1200px;
+}
+
+/* ── Scrollbar tipis (anti "default OS" look) ────────────────────────────── */
 * {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--sica-rgb-slate-300) / 0.9) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--sica-rgb-slate-300) / 0.9);
+  border-radius: var(--sica-radius-full);
+  transition: background-color var(--sica-transition-fast);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(var(--sica-rgb-slate-400) / 0.95);
+}
+
+@layer base {
+  body {
+    font-family: var(--sica-font-sans);
+    background-color: var(--sica-surface-canvas);
+    background-image: var(--sica-canvas-paint, none);
+    background-attachment: fixed;
+    color: var(--sica-text-body);
+    line-height: 1.6;
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv11', 'ss01';
+    letter-spacing: 0.002em;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    color: var(--sica-text-heading);
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: var(--sica-tracking-display);
+  }
+
+  p {
+    line-height: var(--sica-leading-loose);
+  }
+
+  ::selection {
+    background: rgb(var(--sica-rgb-primary) / 0.18);
+    color: var(--sica-text-heading);
+  }
+}
+
+/* Disiplin bobot: display tidak pernah 800/900.
+   Dulu aturan ini berada di dalam `@layer base` dan TERBUKTI tidak pernah
+   keluar dari artefak CSS produksi (terukur 2026-10-24 pada
+   `.next/static/css`: `font-black`/`font-extrabold` = 0 kemunculan) karena
+   Tailwind memperlakukan selector BERBASIS KELAS di dalam `@layer` seperti
+   utilitas — bila tidak ada JSX yang memakai kelasnya, ia dibuang. Selama ia
+   di dalam layer, `§11.2` menjanjikan pelindung yang tidak pernah dikirim.
+   Di luar layer, ia selalu ikut terkompilasi dan menang atas utilitas
+   `.font-black{font-weight:900}` yang dibuat Tailwind. */
+.font-black,
+.font-extrabold {
+  font-weight: 600 !important;
+  letter-spacing: var(--sica-tracking-display);
+}
+
+@layer components {
+  /* ── Layout & containers (nama kelas Velzon) ─────────────────────────── */
+  .main-content {
+    min-height: calc(100vh - var(--sica-header-height));
+    background-color: transparent;
+  }
+
+  .page-content {
+    width: 100%;
+    max-width: var(--sica-content-max);
+    margin-inline: auto;
+    padding: var(--sica-page-pad);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sica-space-6);
+  }
+
+  @media (max-width: 640px) {
+    .page-content {
+      padding: var(--sica-space-4);
+      gap: var(--sica-space-4);
+    }
+  }
+
+  /* Dua baris ala Velzon horizontal (ralat pemilik 2026-10-24, `UI_UX §2.6`): baris 1 =
+     merek + pencarian + utility + akun, baris 2 = menu kerja. Yang sticky adalah
+     `.topnav` whole, bukan `.navbar-header` — kalau hanya baris 1 yang sticky, baris menu
+     ikut ter-scroll hilang dan navigasi utama lenyap saat pengguna membaca tabel panjang. */
+  .topnav {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background-color: var(--sica-surface-header);
+    -webkit-backdrop-filter: var(--sica-glass);
+    backdrop-filter: var(--sica-glass);
+  }
+
+  .navbar-header {
+    height: var(--sica-header-height);
+    display: flex;
+    align-items: center;
+    gap: var(--sica-space-4);
+    padding-inline: var(--sica-space-6);
+  }
+
+  /* ── Card ─────────────────────────────────────────────────────────────── */
+  .card {
+    background-color: var(--sica-surface-card);
+    border: 1px solid var(--sica-border-color);
+    border-radius: var(--sica-radius-lg);
+    box-shadow: var(--sica-shadow-card);
+    transition: box-shadow var(--sica-transition-smooth),
+      transform var(--sica-transition-smooth), border-color var(--sica-transition-smooth);
+  }
+
+  .card-hover:hover {
+    box-shadow: var(--sica-shadow-raised);
+    transform: translate3d(0, -2px, 0);
+    border-color: rgb(var(--sica-rgb-primary) / 0.22);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sica-space-4);
+    padding: var(--sica-space-5) var(--sica-space-6);
+    border-bottom: 1px solid var(--sica-divider);
+  }
+
+  .card-title {
+    font-size: 0.975rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--sica-text-heading);
+    line-height: 1.35;
+  }
+
+  .card-subtitle {
+    font-size: 0.8125rem;
+    font-weight: 400;
+    color: var(--sica-text-muted);
+    line-height: 1.5;
+  }
+
+  .card-body {
+    padding: var(--sica-space-6);
+  }
+
+  .card-footer {
+    padding: var(--sica-space-4) var(--sica-space-6);
+    border-top: 1px solid var(--sica-divider);
+    background-color: var(--sica-surface-inset);
+    border-bottom-left-radius: var(--sica-radius-lg);
+    border-bottom-right-radius: var(--sica-radius-lg);
+  }
+
+  /* ── Section heading halaman ──────────────────────────────────────────── */
+  .page-title {
+    font-size: 1.375rem;
+    font-weight: 600;
+    letter-spacing: var(--sica-tracking-display);
+    color: var(--sica-text-heading);
+  }
+
+  .page-description {
+    font-size: 0.875rem;
+    font-weight: 400;
+    color: var(--sica-text-muted);
+    line-height: var(--sica-leading-loose);
+    max-width: 72ch;
+  }
+
+  .section-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: var(--sica-tracking-wide);
+    color: var(--sica-text-muted);
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sica-space-2);
+    padding: 4px 10px;
+    border-radius: var(--sica-radius-full);
+    border: 1px solid rgb(var(--sica-rgb-primary) / 0.24);
+    background-color: var(--sica-primary-soft);
+    color: var(--sica-on-primary-soft);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: var(--sica-tracking-wide);
+    text-transform: uppercase;
+  }
+
+  /* ── Buttons: solid, soft, label, ghost ───────────────────────────────── */
+  .btn-soft-primary {
+    background-color: var(--sica-primary-soft);
+    color: var(--sica-on-primary-soft);
+    border-color: rgb(var(--sica-rgb-primary) / 0.18);
+  }
+
+  .btn-soft-primary:hover {
+    background-color: rgb(var(--sica-rgb-primary) / 0.2);
+    border-color: rgb(var(--sica-rgb-primary) / 0.3);
+  }
+
+  .btn-label-primary {
+    background-color: var(--sica-primary-soft);
+    color: var(--sica-on-primary-soft);
+    border: 1px solid rgb(var(--sica-rgb-primary) / 0.28);
+  }
+
+  .btn-soft-secondary { background-color: var(--sica-secondary-soft); color: var(--sica-on-secondary-soft); }
+  .btn-soft-info { background-color: var(--sica-info-soft); color: var(--sica-on-info-soft); }
+  .btn-soft-warning { background-color: var(--sica-warning-soft); color: var(--sica-on-warning-soft); }
+  .btn-soft-danger { background-color: var(--sica-danger-soft); color: var(--sica-on-danger-soft); }
+
+  .btn-sweep {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn-sweep::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent);
+    background-repeat: no-repeat;
+    background-size: 100% 2px;
+    background-position: 0 0;
+    /* `background-position: -100%` tidak pernah menggeser apa pun selama
+       `background-size` selebar kontainerya — rumus perseran CSS mengalikan
+       (w kontainer - w gambar), yang nol bila keduanya sama. Hasilnya garis
+       kilau justru TERLIHAT diam di tepi atas tombol (diukur pada kartu login,
+       2026-10-24). Yang memindahkan garis sekarang adalah transform, dan
+       `overflow: hidden` di atas menjaga ia tidak keluar saat lewat. */
+    transform: translate3d(-100%, 0, 0);
+    transition: transform 650ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .btn-sweep:hover::after,
+  .btn-sweep:focus-visible::after {
+    transform: translate3d(100%, 0, 0);
+  }
+
+  .role-tab-list {
+    scroll-snap-type: x proximity;
+    scrollbar-color: rgb(var(--sica-rgb-slate-300)) transparent;
+    scrollbar-width: thin;
+  }
+
+  .role-tab-list::-webkit-scrollbar { height: 6px; }
+  .role-tab-list::-webkit-scrollbar-track { background: transparent; }
+  .role-tab-list::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgb(var(--sica-rgb-slate-300));
+  }
+
+  .role-tab-list > [role='tab'] { scroll-snap-align: start; }
+
+  .catalog-detail[open] .catalog-detail-content {
+    animation: sica-fade-up 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* ── Badges: soft & label (bukan blok warna keras) ────────────────────── */
+  .badge-soft-primary { background-color: var(--sica-primary-soft); color: var(--sica-on-primary-soft); }
+  .badge-soft-secondary { background-color: var(--sica-secondary-soft); color: var(--sica-on-secondary-soft); }
+  .badge-soft-success { background-color: var(--sica-success-soft); color: var(--sica-on-success-soft); }
+  .badge-soft-info { background-color: var(--sica-info-soft); color: var(--sica-on-info-soft); }
+  .badge-soft-warning { background-color: var(--sica-warning-soft); color: var(--sica-on-warning-soft); }
+  .badge-soft-danger { background-color: var(--sica-danger-soft); color: var(--sica-on-danger-soft); }
+  .badge-soft-neutral { background-color: rgb(var(--sica-rgb-slate-100)); color: rgb(var(--sica-rgb-slate-600)); }
+
+  .badge-label-secondary { background-color: var(--sica-secondary-soft); color: var(--sica-on-secondary-soft); border: 1px solid rgb(var(--sica-rgb-secondary) / 0.3); }
+  .badge-label-primary { background-color: var(--sica-primary-soft); color: var(--sica-on-primary-soft); border: 1px solid rgb(var(--sica-rgb-primary) / 0.3); }
+  .badge-label-success { background-color: var(--sica-success-soft); color: var(--sica-on-success-soft); border: 1px solid rgb(var(--sica-rgb-success) / 0.3); }
+  .badge-label-info { background-color: var(--sica-info-soft); color: var(--sica-on-info-soft); border: 1px solid rgb(var(--sica-rgb-info) / 0.3); }
+  .badge-label-warning { background-color: var(--sica-warning-soft); color: var(--sica-on-warning-soft); border: 1px solid rgb(var(--sica-rgb-warning) / 0.4); }
+  .badge-label-danger { background-color: var(--sica-danger-soft); color: var(--sica-on-danger-soft); border: 1px solid rgb(var(--sica-rgb-danger) / 0.3); }
+
+  /* ── Avatar scale (Velzon) ────────────────────────────────────────────── */
+  .avatar { position: relative; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--sica-radius-md); overflow: hidden; flex: none; }
+  .avatar > img { width: 100%; height: 100%; object-fit: cover; }
+  .avatar-title { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; font-weight: 600; letter-spacing: 0.02em; background-color: var(--sica-secondary-soft); color: var(--sica-on-secondary-soft); }
+  .avatar-xxs { width: 20px; height: 20px; font-size: 0.625rem; }
+  .avatar-xs { width: 26px; height: 26px; font-size: 0.6875rem; }
+  .avatar-sm { width: 34px; height: 34px; font-size: 0.75rem; }
+  .avatar-md { width: 42px; height: 42px; font-size: 0.875rem; }
+  .avatar-lg { width: 54px; height: 54px; font-size: 1rem; }
+  .avatar-xl { width: 78px; height: 78px; font-size: 1.375rem; }
+
+  .status-dot {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    width: 10px;
+    height: 10px;
+    border-radius: var(--sica-radius-full);
+    border: 2px solid var(--sica-surface-card);
+    background-color: var(--sica-text-subtle);
+  }
+
+  .status-dot-online { background-color: var(--sica-success); }
+  .status-dot-busy { background-color: var(--sica-danger); }
+  .status-dot-away { background-color: var(--sica-warning); }
+  /* Offline sengaja netral: warna "tidak aktif" tidak boleh bersaing dengan
+     busy/away yang berarti sesuatu sedang terjadi. */
+  .status-dot-offline { background-color: rgb(var(--sica-rgb-slate-400)); }
+
+  /* ── Progress & skeleton ──────────────────────────────────────────────── */
+  .progress {
+    width: 100%;
+    height: 8px;
+    border-radius: var(--sica-radius-full);
+    background-color: rgb(var(--sica-rgb-slate-200) / 0.85);
+    overflow: hidden;
+  }
+
+  .progress-sm { height: 5px; }
+  .progress-lg { height: 11px; }
+
+  .progress-bar {
+    height: 100%;
+    border-radius: inherit;
+    background-image: linear-gradient(90deg, var(--sica-primary), rgb(var(--sica-rgb-primary) / 0.7));
+    transition: width 520ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--sica-surface-skeleton);
+    border-radius: var(--sica-radius-md);
+  }
+
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translate3d(-100%, 0, 0);
+    background-image: linear-gradient(90deg, transparent, var(--sica-skeleton-sheen), transparent);
+    animation: sica-shimmer 1500ms ease-in-out infinite;
+  }
+
+  @keyframes sica-shimmer {
+    100% { transform: translate3d(100%, 0, 0); }
+  }
+
+  /* ── Dropdown, accordion, table ───────────────────────────────────────── */
+  .dropdown-menu {
+    min-width: 220px;
+    padding: 6px;
+    border-radius: var(--sica-radius-lg);
+    background-color: var(--sica-surface-raised);
+    border: 1px solid var(--sica-border-color);
+    box-shadow: var(--sica-shadow-dropdown);
+  }
+
+  .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: var(--sica-space-3);
+    padding: 8px 10px;
+    border-radius: var(--sica-radius-md);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--sica-text-body);
+    transition: background-color var(--sica-transition-fast), color var(--sica-transition-fast);
+  }
+
+  .dropdown-item:hover {
+    background-color: var(--sica-surface-hover);
+    color: var(--sica-on-primary-soft);
+  }
+
+  .table-head {
+    background-color: rgb(var(--sica-rgb-slate-50) / 0.85);
+    border-bottom: 1px solid rgb(var(--sica-rgb-slate-200) / 0.8);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: var(--sica-tracking-wide);
+    color: var(--sica-text-muted);
+  }
+
+  .table-row {
+    border-bottom: 1px solid var(--sica-divider);
+    transition: background-color 150ms ease;
+  }
+
+  .table-row:hover {
+    background-color: rgb(var(--sica-rgb-slate-50) / 0.7);
+  }
+
+  /* ── Form field (Velzon refined) ──────────────────────────────────────── */
+  /* Padanan kelas aplikasi untuk Velzon `.form-control` (§2.6: satu keluarga
+     kelas per layar; nama `.velzon-input` dipertahankan sampai layar per layar
+     dipindah ke `.form-control` pada UI-VLN-4). Bentuknya mengikuti spesifikasi
+     Velzon — bukan abu-abu mengambang:
+       latar = `--sica-surface-input` (hampir putih di terang, #21262c di gelap),
+       border tipis `--sica-border-color`, radius 8px (= §2.0 "radius kanonik"),
+       fokus = border primary + ring 0 0 0 4px primary/25%.
+     Sebelum 2026-10-24 field kita memakai `slate-50/50` + radius 12px, yang
+     membuat form terlihat generik dan menyalahi radius kanonik sendiri. */
+  .velzon-input {
+    width: 100%;
+    background-color: var(--sica-surface-input);
+    border: 1px solid var(--sica-border-color);
+    border-radius: var(--sica-radius-md);
+    padding: 10px 14px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--sica-text-heading);
+    outline: none;
+    transition: background-color var(--sica-transition-fast), border-color var(--sica-transition-fast),
+      box-shadow var(--sica-transition-fast);
+  }
+
+  .velzon-input::placeholder { color: var(--sica-text-muted); font-weight: 400; }
+
+  .velzon-input:hover:not(:disabled) { border-color: rgb(var(--sica-rgb-slate-300)); }
+
+  .velzon-input:focus-visible,
+  .velzon-input:focus {
+    border-color: var(--sica-primary);
+    box-shadow: 0 0 0 4px rgb(var(--sica-rgb-primary) / 0.25);
+  }
+
+  .velzon-input:disabled {
+    background-color: var(--sica-surface-inset);
+    color: var(--sica-text-muted);
+    cursor: not-allowed;
+  }
+
+  /* `.form-label` Velzon: 13px/600, bukan label kapital kecil. */
+  .field-label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.006em;
+    color: rgb(var(--sica-rgb-slate-700));
+    margin-bottom: 6px;
+  }
+
+  .field-hint { font-size: 0.75rem; color: var(--sica-text-muted); line-height: 1.5; }
+  .field-error { font-size: 0.75rem; font-weight: 500; color: var(--sica-danger-ink); }
+
+  /* ── Overlay modal/offcanvas ──────────────────────────────────────────── */
+  .overlay-backdrop {
+    background-color: var(--sica-backdrop);
+    -webkit-backdrop-filter: blur(6px) saturate(120%);
+    backdrop-filter: blur(6px) saturate(120%);
+  }
+
+  .elevated-panel {
+    background-color: var(--sica-surface-card);
+    border: 1px solid var(--sica-border-color);
+    border-radius: var(--sica-radius-2xl);
+    box-shadow: var(--sica-shadow-modal);
+  }
+
+  .auth-reset-dialog::backdrop {
+    background-color: var(--sica-backdrop);
+    -webkit-backdrop-filter: blur(6px) saturate(120%);
+    backdrop-filter: blur(6px) saturate(120%);
+  }
+
+  /* ── Utility ──────────────────────────────────────────────────────────── */
+  .hairline { border-color: var(--sica-border-color); }
+  .text-muted-2 { color: var(--sica-text-muted); }
+  .tabular { font-variant-numeric: tabular-nums; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-sweep::after {
+    display: none;
+  }
+
+  .catalog-detail[open] .catalog-detail-content {
+    animation: none;
+  }
+
+  .auth-reset-dialog[open] {
+    animation: none;
+  }
+
+  .skeleton::after { animation: none; }
+  .progress-bar { transition: none; }
+  .card-hover:hover { transform: none; }
+}
+
+/* Reset `* { box-sizing; padding: 0; margin: 0 }` yang dulu ada di sini DIHAPUS
+   (2026-10-24). Ia salinan kedua dari Preflight Tailwind — dua sumber kebenaran
+   untuk satu hal — dan karena ia berada DI LUAR layer sementara Preflight kini
+   diikat ke `@layer reset` (UI_UX_DESIGN §2.6), dialah yang meniadakan seluruh
+   `padding`/`margin` kerangka Bootstrap/Velzon: panel kiri layar login terpotong
+   di tepi layar dan `.card-body` kehilangan spasi 24px-nya. Preflight yang
+   ber-layer tetap menormalkan box model seperti sebelumnya. */
+
+html {
+  scroll-behavior: smooth;
 }
 
 html,
@@ -15,16 +868,6 @@ body {
   max-width: 100vw;
   min-height: 100vh;
   overflow-x: hidden;
-  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: var(--sica-surface-canvas);
-  color: var(--sica-text-body);
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-html {
-  scroll-behavior: smooth;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -33,117 +876,37 @@ html {
   }
 }
 
-h1, h2, h3, h4, h5, h6 {
-  color: var(--sica-text-heading);
-  font-weight: 600;
-  line-height: 1.25;
-}
-
 a {
-  color: var(--sica-color-primary);
+  color: var(--sica-primary);
   text-decoration: none;
   transition: color var(--sica-transition-fast);
 }
 
 a:hover {
-  color: var(--sica-color-primary-hover);
+  color: var(--sica-primary-hover);
 }
 
 button {
   font-family: inherit;
 }
 
-/* ── Top navigation ala Velzon "horizontal layout" ─────────────────────────
-   Menu mendatar disembunyikan di bawah 1024px dan diganti toggle mobile,
-   sehingga tidak ada overflow horizontal pada layar sempit. */
-@media (max-width: 1023px) {
-  .sica-topnav-menu {
-    display: none !important;
-  }
-
-  .sica-topnav-toggle {
-    display: inline-flex !important;
-  }
-
-  .sica-topnav-actions {
-    margin-left: auto;
-    gap: 10px !important;
-  }
+:focus-visible {
+  outline: none;
+  box-shadow: var(--sica-shadow-focus);
+  border-radius: var(--sica-radius-md);
 }
 
-@media (max-width: 640px) {
-  .sica-topnav-actions {
-    gap: 8px !important;
-  }
+/* ── Chrome navigasi ─────────────────────────────────────────────────────── */
+/* Pindah ke `src/styles/_velzon-skeleton.scss` (`@layer velzon`) pada 2026-10-24
+   bersama kelas kerangka Velzon `.topnav` / `.navbar-header` / `.navbar-nav` /
+   `.nav-item` / `.nav-link`. Hook lama (`sica-search`, `sica-utils`,
+   `sica-profile`, `sica-navitem`, `sica-dropdown`, `sica-topnav-*`) tidak lagi
+   dipakai komponen mana pun; membiarkannya di sini berarti dua rumah untuk satu
+   chrome — persis pola `RD-32` yang kita perangi. Aturan `.navbar-header`
+   (sticky, tinggi, glass) tetap di berkas ini karena ia milik token, bukan
+   milik kerangka. */
 
-  .sica-topnav-actions .sica-hide-sm {
-    display: none;
-  }
-}
-
-/* ── Header Velzon: pencarian, ikon utilitas, menu & dropdown ───────────── */
-.sica-search:focus-within {
-  border-color: var(--sica-color-primary) !important;
-  background-color: #fff !important;
-  box-shadow: 0 0 0 3px var(--sica-color-primary-light);
-}
-
-.sica-utils button:hover {
-  background-color: var(--sica-surface-hover) !important;
-  color: var(--sica-color-primary) !important;
-}
-
-.sica-profile {
-  transition: background-color 160ms ease;
-}
-
-.sica-profile:hover {
-  background-color: var(--sica-border-color) !important;
-}
-
-.sica-navitem > a:hover,
-.sica-navitem > button:hover {
-  background-color: var(--sica-surface-hover);
-  border-radius: var(--sica-radius-md) var(--sica-radius-md) 0 0;
-}
-
-.sica-dropdown a:hover {
-  background-color: var(--sica-surface-hover) !important;
-  color: var(--sica-color-primary) !important;
-}
-
-.sica-topnav-tail button:hover {
-  background-color: var(--sica-color-danger-light) !important;
-  border-color: var(--sica-color-danger) !important;
-}
-
-@media (max-width: 1279px) {
-  .sica-search {
-    display: none !important;
-  }
-}
-
-@media (max-width: 1023px) {
-  .sica-topnav-menu {
-    display: none !important;
-  }
-
-  .sica-topnav-toggle {
-    display: inline-flex !important;
-  }
-}
-
-@media (max-width: 767px) {
-  .sica-utils {
-    display: none !important;
-  }
-
-  .sica-profile {
-    display: none !important;
-  }
-}
-
-/* ─ Motion landing: entrance, ambient background, micro-interaction ─────── */
+/* ── Motion landing & micro-interaction ──────────────────────────────────── */
 @keyframes sica-fade-up {
   from { opacity: 0; transform: translate3d(0, 22px, 0); }
   to   { opacity: 1; transform: none; }
@@ -175,11 +938,6 @@ button {
   to   { transform: translate3d(-50%, 0, 0); }
 }
 
-@keyframes sica-sheen {
-  from { transform: translate3d(-120%, 0, 0) skewX(-18deg); }
-  to   { transform: translate3d(220%, 0, 0) skewX(-18deg); }
-}
-
 .sica-anim {
   animation-fill-mode: both;
   animation-duration: 720ms;
@@ -202,33 +960,15 @@ button {
   animation-play-state: paused;
 }
 
-/* Kilau lembut pada tombol utama saat hover */
-.sica-sheen {
-  position: relative;
-  overflow: hidden;
-  isolation: isolate;
-}
-
-.sica-sheen::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
-  transform: translate3d(-120%, 0, 0) skewX(-18deg);
-}
-
-.sica-sheen:hover::after {
-  animation: sica-sheen 900ms ease-out;
-}
-
-/* Kartu yang terangkat halus saat disentuh pointer */
+/* Kartu terangkat halus — versi token dipakai `.card-hover`; ini untuk landing */
 .sica-lift {
-  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms ease, border-color 320ms ease;
+  transition: transform var(--sica-transition-smooth), box-shadow var(--sica-transition-smooth),
+    border-color var(--sica-transition-smooth);
 }
 
 .sica-lift:hover {
   transform: translate3d(0, -6px, 0);
+  box-shadow: var(--sica-shadow-raised);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -236,8 +976,7 @@ button {
   .sica-float,
   .sica-drift,
   .sica-blob,
-  .sica-marquee-track,
-  .sica-sheen::after {
+  .sica-marquee-track {
     animation: none !important;
   }
 

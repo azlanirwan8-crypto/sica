@@ -1,25 +1,30 @@
 import type { Metadata, Viewport } from 'next';
+// Urutan impor = urutan lapisan: kerangka Bootstrap/Velzon lebih dulu, lalu
+// token + utilitas aplikasi (yang tidak ber-layer dan karenanya menang).
+import 'remixicon/fonts/remixicon.css';
+import '@/styles/theme.scss';
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
+import { DesignPanel } from '@/components/layout/design-panel';
+import { ThemeProvider, themeInitScript } from '@/components/ui/theme-provider';
 
 export const metadata: Metadata = {
   title: {
-    default: 'SICA — System Integration Central Academic',
+    default: 'SICA — Layanan Kampus dalam Pengembangan',
     template: '%s · SICA',
   },
   description:
-    'Platform SaaS multi-tenant manajemen akademik & operasional kampus: registrasi, KRS, presensi, penilaian, keuangan, dan pelaporan PDDikti dalam satu sistem.',
+    'SICA sedang dikembangkan untuk membantu perguruan tinggi mengelola kegiatan akademik dan layanan kampus. Daftar ini menunjukkan rencana, bukan layanan yang sudah siap digunakan.',
   applicationName: 'SICA',
   icons: {
     icon: '/sica-emblem.png',
     apple: '/sica-emblem.png',
   },
   openGraph: {
-    title: 'SICA — System Integration Central Academic',
-    description: 'Satu platform untuk seluruh siklus akademik kampus. Multi-tenant, aman, dan siap PDDikti.',
+    title: 'SICA — Layanan Kampus dalam Pengembangan',
+    description: 'SICA sedang dikembangkan untuk membantu perguruan tinggi mengelola kegiatan akademik dan layanan kampus.',
     type: 'website',
     siteName: 'SICA',
-    images: [{ url: '/sica-logo.png', width: 169, height: 208, alt: 'Logo SICA' }],
   },
 };
 
@@ -35,17 +40,33 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="id">
+    <html
+      lang="id"
+      data-bs-theme="light"
+      data-topbar="light"
+      data-layout-style="default"
+      data-layout-width="fluid"
+      suppressHydrationWarning
+    >
       <head>
+        {/* Tema diterapkan sebelum paint pertama supaya tidak ada kedip terang→gelap. */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* 400/500/600/700 saja — kontrak tipografi melarang 800/900 (UI_UX §2.1). */}
         <link
-          href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body className="antialiased">
-        {children}
+      <body>
+        <ThemeProvider>
+          {children}
+          {/* Panel kustomiser Velzon ada di semua halaman template. Ia WAJIB di
+              dalam ThemeProvider: di luar, `useTheme()` jatuh ke konteks default
+              dan knobnya tampak hidup padahal tidak menulis apa pun. */}
+          <DesignPanel />
+        </ThemeProvider>
         <Toaster />
       </body>
     </html>

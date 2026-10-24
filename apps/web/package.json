@@ -5,17 +5,26 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "typecheck": "tsc --noEmit",
     "start": "next start",
     "lint": "next lint --max-warnings 0",
     "lint:fix": "next lint --fix",
     "test": "vitest run",
     "test:unit": "vitest run --reporter=verbose",
     "seed:dev": "tsx src/scripts/dev-seed.ts",
-    "seed:academic": "tsx src/scripts/dev-seed-academic.ts"
+    "seed:dev:clean": "tsx src/scripts/dev-seed-clean.ts",
+    "verify:chain": "tsx src/scripts/verify-audit-chain.ts",
+    "seed:academic": "tsx src/scripts/dev-seed-academic.ts",
+    "verify:menu": "tsx src/scripts/verify-menu.ts",
+    "audit:menu": "tsx src/scripts/audit-role-menu.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
+    "@sica/contracts": "workspace:*",
+    "@sica/database": "workspace:*",
+    "@sica/logger": "workspace:*",
     "@tanstack/react-query": "^5.56.0",
+    "bootstrap": "5.3.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.0.0",
@@ -24,26 +33,25 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.53.0",
+    "remixicon": "4.5.0",
     "sonner": "^1.7.0",
     "tailwind-merge": "^2.5.5",
     "zod": "^3.23.0",
-    "zustand": "^5.0.0",
-    "@sica/contracts": "workspace:*",
-    "@sica/database": "workspace:*",
-    "@sica/logger": "workspace:*"
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
-    "eslint": "^9.0.0",
-    "eslint-config-next": "15.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
-    "tailwindcss": "^3.4.0",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "15.0.0",
     "postcss": "^8.4.0",
-    "autoprefixer": "^10.4.0"
+    "sass": "1.83.4",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   }
 }

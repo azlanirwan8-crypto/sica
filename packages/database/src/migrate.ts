@@ -10,14 +10,14 @@ import { join } from 'path';
  * 3. Lock timeout 5 detik untuk mencegah table deadlock
  */
 async function runMigrations() {
-  const connectionString =
-    process.env.DIRECT_DATABASE_URL ??
-    process.env.DATABASE_URL ??
-    'postgresql://sica_user:sica_password@localhost:5432/sica_db?sslmode=disable';
+  const connectionString = process.env.DIRECT_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      'DIRECT_DATABASE_URL atau DATABASE_URL wajib diisi sebelum migrasi dijalankan.'
+    );
+  }
 
   console.info('🚀 Memulai eksekusi migrasi database SICA...');
-  console.info(`Target Database: ${connectionString.replace(/:[^:@]+@/, ':****@')}`);
-
   const sql = postgres(connectionString, {
     max: 1,
     connect_timeout: 10,
@@ -68,13 +68,13 @@ async function runMigrations() {
     }
 
     console.info('🎉 Seluruh migrasi database selesai diaplikasikan dengan sukses!');
-  } catch (error) {
-    console.error('❌ Terjadi kesalahan fatal saat mengeksekusi migrasi:', error);
-    process.exit(1);
   } finally {
     await sql.end();
   }
 }
 
 // Jalankan runner
-runMigrations();
+runMigrations().catch((error: unknown) => {
+  console.error('❌ Terjadi kesalahan fatal saat mengeksekusi migrasi:', error);
+  process.exitCode = 1;
+});

@@ -4,6 +4,7 @@
  * pepper boleh kosong utk refresh/logout (verifikasi sandi tak dipakai), tetap disertakan utk login.
  */
 import type { AuthRuntimeConfig } from './auth.service';
+import { devMfaBypassEnabled } from '@/lib/dev-flags';
 
 export function buildAuthConfig(): { config: AuthRuntimeConfig | null; missing: string[] } {
   const privateKeyPem = process.env['JWT_PRIVATE_KEY'] ?? '';
@@ -16,6 +17,7 @@ export function buildAuthConfig(): { config: AuthRuntimeConfig | null; missing: 
       audience: process.env['JWT_AUDIENCE'] ?? 'sica-web',
       accessTtlSec: Number(process.env['JWT_ACCESS_TOKEN_TTL_SEC'] ?? 900),
       refreshTtlSec: Number(process.env['JWT_REFRESH_TOKEN_TTL_SEC'] ?? 604800),
+      devMfaBypass: devMfaBypassEnabled(),
     },
     missing: [],
   };

@@ -1,5 +1,9 @@
 import React from 'react';
-import { Check, Minus, Sparkles } from 'lucide-react';
+import { Check, CircleDashed, Minus, Sparkles, type LucideIcon } from 'lucide-react';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { Reveal } from './motion';
 
 export interface BenchmarkRow {
@@ -26,85 +30,135 @@ export interface BenchmarkCopy {
   readonly sevima: readonly SevimaRow[];
 }
 
-const STATUS_STYLE: Record<string, { pill: string; icon: React.ReactNode }> = {
-  ready: { pill: 'bg-velzon-success/12 text-velzon-success', icon: <Check className="h-3 w-3" /> },
-  partial: { pill: 'bg-velzon-warning/15 text-[#b57614]', icon: <Minus className="h-3 w-3" /> },
-  roadmap: { pill: 'bg-slate-100 text-slate-500', icon: <span className="text-[9px] font-bold">•••</span> },
+type Tone = NonNullable<BadgeProps['tone']>;
+
+interface StatusStyle {
+  readonly tone: Tone;
+  readonly label: 'statusReady' | 'statusPartial' | 'statusRoadmap';
+  readonly icon: LucideIcon;
+}
+
+/** Kesiapan modul: nada soft + ikon, bukan blok warna penuh. */
+const STATUS_STYLE: Record<string, StatusStyle> = {
+  ready: { tone: 'success', label: 'statusReady', icon: Check },
+  partial: { tone: 'warning', label: 'statusPartial', icon: Minus },
+  roadmap: { tone: 'neutral', label: 'statusRoadmap', icon: CircleDashed },
 };
 
-const FALLBACK_STATUS: { pill: string; icon: React.ReactNode } = {
-  pill: 'bg-slate-100 text-slate-500',
-  icon: <span className="text-[9px] font-bold">•••</span>,
-};
+const FALLBACK_STATUS: StatusStyle = { tone: 'neutral', label: 'statusRoadmap', icon: CircleDashed };
+
+/** Kolom pembanding terakhir adalah milik SICA dan mendapat sorotan lembut. */
+const HIGHLIGHT = 'bg-primary/10 text-primary-hover';
 
 /** Tabel benchmark: diferensiasi arsitektur + cakupan modul standar pasar. */
 export function BenchmarkSection({ copy }: { copy: BenchmarkCopy }) {
+  const highlightIndex = copy.columns.length - 1;
+
+  const countOf = (status: string): number => copy.sevima.filter((s) => s.status === status).length;
+  const readyCount = countOf('ready');
+
   return (
-    <div className="grid gap-10 lg:grid-cols-[1.5fr_1fr] lg:items-start">
+    <div className="grid gap-8 lg:grid-cols-[1.55fr_1fr] lg:items-start">
       {/* Perbandingan diferensiator */}
       <Reveal>
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full border-collapse text-left">
-            <thead>
-              <tr className="bg-slate-50">
-                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-500 sm:px-5">&nbsp;</th>
+        <Card className="overflow-hidden">
+          <CardContent className="p-0">
+            <Table className="text-[12.5px]">
+              <caption className="sr-only">{copy.title}</caption>
+              <THead>
+                <TH className="w-[34%]">
+                  <span className="sr-only">Aspek</span>
+                </TH>
                 {copy.columns.map((col, i) => (
-                  <th
-                    key={col}
-                    className={`px-3 py-3 text-center text-[12px] font-bold sm:px-4 ${
-                      i === 2 ? 'bg-velzon-primary text-white' : 'text-slate-600'
-                    }`}
-                  >
-                    {col}
-                  </th>
+                  <TH key={col} align="center" className={i === highlightIndex ? HIGHLIGHT : undefined}>
+                    {i === highlightIndex ? <span className="text-primary-hover">{col}</span> : col}
+                  </TH>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {copy.rows.map((row, ri) => (
-                <tr key={row.label} className={ri % 2 ? 'bg-slate-50/40' : 'bg-white'}>
-                  <td className="px-4 py-3.5 text-[13px] font-semibold text-slate-800 sm:px-5">{row.label}</td>
-                  {row.cells.map((cell, ci) =>
-                    ci === 2 ? (
-                      <td key={ci} className="bg-velzon-primary/[0.06] px-3 py-3.5 text-center text-[12.5px] font-bold text-velzon-primary sm:px-4">
+              </THead>
+              <TBody>
+                {copy.rows.map((row) => (
+                  <TR key={row.label}>
+                    <TD className="py-4 pr-3 font-semibold text-[color:var(--sica-text-heading)] sm:pr-4">
+                      {row.label}
+                    </TD>
+                    {row.cells.map((cell, ci) => (
+                      <TD
+                        key={`${row.label}-${ci}`}
+                        align="center"
+                        className={
+                          ci === highlightIndex
+                            ? 'bg-primary/[0.07] py-4 font-semibold text-primary-hover'
+                            : 'py-4 text-slate-500'
+                        }
+                      >
                         {cell}
-                      </td>
-                    ) : (
-                      <td key={ci} className="px-3 py-3.5 text-center text-[12.5px] text-slate-500 sm:px-4">
-                        {cell}
-                      </td>
-                    )
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                      </TD>
+                    ))}
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </CardContent>
+        </Card>
       </Reveal>
 
-      {/* Cakupan modul standar pasar */}
-      <Reveal delay={120}>
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-velzon-primary" />
-            <h3 className="text-sm font-bold text-slate-900">{copy.sevimaTitle}</h3>
-          </div>
-          <p className="mt-1.5 text-[12.5px] leading-relaxed text-slate-500">{copy.sevimaNote}</p>
-          <ul className="mt-5 space-y-2.5">
-            {copy.sevima.map((s) => {
-              const st = STATUS_STYLE[s.status] ?? FALLBACK_STATUS;
-              return (
-                <li key={s.label} className="flex items-center justify-between gap-3">
-                  <span className="text-[13px] font-medium text-slate-700">{s.label}</span>
-                  <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[10.5px] font-bold uppercase tracking-wide ${st.pill}`}>
-                    {st.icon}
-                    {s.status === 'ready' ? copy.statusReady : s.status === 'partial' ? copy.statusPartial : copy.statusRoadmap}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+      {/* Cakupan modul standar pasar — kartu kedua menyusul satu langkah stagger. */}
+      <Reveal delay={48}>
+        <Card>
+          <CardHeader className="items-start">
+            <div className="flex min-w-0 items-start gap-3">
+              <span
+                aria-hidden
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary-hover"
+              >
+                <Sparkles className="h-4 w-4" strokeWidth={1.9} />
+              </span>
+              <div className="flex min-w-0 flex-col gap-1">
+                <CardTitle>{copy.sevimaTitle}</CardTitle>
+                <CardDescription>{copy.sevimaNote}</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="flex flex-col gap-6">
+            <div>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="section-label">{copy.statusReady}</span>
+                <span className="text-[12px] tabular text-slate-500">
+                  {readyCount} / {copy.sevima.length}
+                </span>
+              </div>
+              <Progress
+                value={readyCount}
+                max={copy.sevima.length || 1}
+                tone="success"
+                label={`${copy.statusReady} ${readyCount} / ${copy.sevima.length}`}
+                className="mt-2.5"
+              />
+            </div>
+
+            <ul className="flex flex-col">
+              {copy.sevima.map((s, i) => {
+                const st = STATUS_STYLE[s.status] ?? FALLBACK_STATUS;
+                const Icon = st.icon;
+                return (
+                  <li
+                    key={s.label}
+                    className={`flex items-center justify-between gap-3 py-2.5 ${
+                      i === copy.sevima.length - 1 ? '' : 'border-b hairline'
+                    }`}
+                  >
+                    <span className="min-w-0 text-[13px] font-medium text-slate-700">{s.label}</span>
+                    <Badge tone={st.tone} size="sm" className="shrink-0">
+                      <Icon className="h-3 w-3" aria-hidden strokeWidth={2.4} />
+                      {copy[st.label]}
+                    </Badge>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
       </Reveal>
     </div>
   );

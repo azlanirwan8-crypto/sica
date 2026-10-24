@@ -8,8 +8,13 @@
  */
 import {
   withTenantContext,
+  db,
   eq,
   and,
+  or,
+  gt,
+  isNull,
+  ne,
   inArray,
   type TenantTx,
   users,
@@ -27,8 +32,17 @@ import {
   enrollments,
   grades,
   attendances,
+  tenants,
+  roles,
+  userRoleAssignments,
+  accessChangeRequests,
+  masterSystemParameters,
+  loginEvents,
 } from '@sica/database';
 import { calculateIpk, type GradeEntry } from './gpa-calculator.service';
+import { readParameterNumber } from '@/modules/settings/services/parameter-resolver';
+import { getDictionary } from '@/lib/i18n';
+import type { DashboardSurface } from '@/modules/authz/menu';
 
 type MemberRole = 'super_admin' | 'tenant_admin' | 'dosen' | 'mahasiswa' | 'staff';
 
@@ -51,6 +65,13 @@ export interface TodayClassRow {
 
 export interface DashboardView {
   readonly role: MemberRole;
+  /**
+   * Permukaan yang menentukan grid kartu dan pintasan (`UI_UX_DESIGN §17.2.6`).
+   * Sebelumnya tidak ada: semua peran non-mahasiswa/non-dosen jatuh ke satu
+   * agregat akademik, sehingga Admin SICA dan Admin IT Kampus melihat angka
+   * "Mahasiswa Aktif / Kelas Dibuka" dan ditawari pintasan "Pengisian KRS".
+   */
+  readonly surface: DashboardSurface;
   readonly greetingName: string;
   readonly identityLine: string;
   readonly activePeriodLabel: string;
@@ -182,13 +203,23 @@ async function loadTodayClasses(tx: TenantTx, tenantId: string, classIds: string
 }
 
 export async function loadDashboard(tenantId: string, userId: string): Promise<DashboardView | null> {
+  // Ambang kehadiran dibaca dari mesin parameter (`SPE-15` butir 1 — angka 75 literasi yang
+  // lama hidup di baris ini). Diambil DI LUAR transaksi karena resolver membuka transaksinya
+  // sendiri; postgres.js tidak boleh bersarang pada satu koneksi.
+  const minPresencePct = await readParameterNumber(tenantId, 'attendance.min_presence_pct', 75);
   return withTenantContext(tenantId, async (tx) => {
     const me = await resolveRole(tx, tenantId, userId);
     if (!me) return null;
     const myMembershipId = await memberRowId(tx, tenantId, userId);
 
     const openPeriod = await activePeriod(tx, tenantId);
-    const periodId = openPeriod?.id ?? '';
+    // `null` = tenant belum punya periode akademik aktif. BUKAN string kosong:
+    // Postgres menolak `''` sebagai `uuid`, dan itu membuat /dashboard 500 untuk
+    // akun yang tenant-nya tanpa periode (terukur 2026-10-24 lewat login nyata
+    // Operator Platform — MFA lulus 200, lalu layar tujuan melempar
+    // `invalid input syntax for type uuid: ""` dan pengguna terlempar kembali
+    // ke form login sehingga disalahpahami sebagai "kode MFA gagal").
+    const periodId = openPeriod?.id ?? null;
     const activePeriodLabel = openPeriod ? periodLabel(openPeriod.term, openPeriod.yearLabel) : '—';
 
     const dow = todayDayOfWeek(new Date());
@@ -237,10 +268,12 @@ export async function loadDashboard(tenantId: string, userId: string): Promise<D
       });
       const gpa = calculateIpk(entries);
 
-      const activeEnr = await tx
-        .select({ classId: enrollments.classId })
-        .from(enrollments)
-        .where(and(eq(enrollments.tenantId, tenantId), eq(enrollments.studentId, st.id), eq(enrollments.periodId, periodId), inArray(enrollments.status, ['SUBMITTED', 'EFFECTIVE'])));
+      const activeEnr = periodId
+        ? await tx
+            .select({ classId: enrollments.classId })
+            .from(enrollments)
+            .where(and(eq(enrollments.tenantId, tenantId), eq(enrollments.studentId, st.id), eq(enrollments.periodId, periodId), inArray(enrollments.status, ['SUBMITTED', 'EFFECTIVE'])))
+        : [];
       const activeClassIds = (activeEnr as Array<{ classId: string }>).map((e) => e.classId);
       const loadSks = await sumSksForClasses(tx, activeClassIds);
 
@@ -254,13 +287,14 @@ export async function loadDashboard(tenantId: string, userId: string): Promise<D
 
       return {
         role: me.role,
+        surface: 'akademik',
         greetingName: me.userName,
         identityLine: `${prog?.name ?? 'Program Studi'} · NIM: ${st.nim}`,
         activePeriodLabel,
         cards: [
           { label: 'Indeks Prestasi Kumulatif', value: gpa.ipk.toFixed(2), badge: `${gpa.totalCourseCount} matakuliah dinilai`, tone: gpa.ipk >= 2.0 ? 'success' : 'warning' },
           { label: 'Total SKS Lulus', value: `${gpa.passedSks} / ${minSks}`, badge: `Beban SKS semester aktif: ${loadSks} SKS`, tone: 'info' },
-          { label: 'Presensi Kehadiran', value: `${attPct.toFixed(1)}%`, badge: totalAtt > 0 ? `${presentAtt} dari ${totalAtt} sesi hadir` : 'Belum ada presensi', tone: attPct >= 75 ? 'success' : 'warning' },
+          { label: 'Presensi Kehadiran', value: `${attPct.toFixed(1)}%`, badge: totalAtt > 0 ? `${presentAtt} dari ${totalAtt} sesi hadir · ambang ${minPresencePct}%` : 'Belum ada presensi', tone: attPct >= minPresencePct ? 'success' : 'warning' },
           { label: 'Status Akademik', value: st.status, badge: `Masuk ${st.entryYear} · Feeder ${st.feederStatusCode === '1' ? 'Aktif' : st.feederStatusCode}`, tone: st.status === 'ACTIVE' ? 'success' : 'muted' },
         ],
         todayClasses,
@@ -277,6 +311,7 @@ export async function loadDashboard(tenantId: string, userId: string): Promise<D
 
       return {
         role: me.role,
+        surface: 'akademik',
         greetingName: me.userName,
         identityLine: `Dosen ${lec?.specialization ?? 'Pengajar'} · NIDN: ${lec?.nidn ?? me.memberCode ?? '—'}`,
         activePeriodLabel,
@@ -290,30 +325,102 @@ export async function loadDashboard(tenantId: string, userId: string): Promise<D
       } satisfies DashboardView;
     }
 
-    // tenant_admin / super_admin — agregat tenant
-    const stCount = await tx.select({ id: students.id }).from(students).where(eq(students.tenantId, tenantId));
-    const lecCount = await tx.select({ id: lecturers.id }).from(lecturers).where(eq(lecturers.tenantId, tenantId));
-    const classCount = await tx.select({ id: classes.id }).from(classes).where(and(eq(classes.tenantId, tenantId), eq(classes.periodId, periodId)));
-    const schedRows = await tx
-      .select({ classId: classes.id })
-      .from(classSchedules)
-      .innerJoin(classes, eq(classes.id, classSchedules.classId))
-      .where(and(eq(classes.tenantId, tenantId), eq(classSchedules.dayOfWeek, dow)));
-    const adminTodayIds = (schedRows as Array<{ classId: string }>).map((r) => r.classId);
-    const todayClasses = await loadTodayClasses(tx, tenantId, adminTodayIds, dow, nowHour);
+    // ── Peran IT (R-1 platform · R-2 tenant) — grid kartu `UI_UX_DESIGN §17.2.6`.
+    //    Permukaan dibaca dari `user_role_assignments` × `roles.code`, BUKAN dari
+    //    label carrier `member_role`: carrier hanyalah pembawa login (`AGENTS §3.8`).
+    const assigned = await tx
+      .select({ code: roles.code })
+      .from(userRoleAssignments)
+      .innerJoin(roles, eq(roles.id, userRoleAssignments.roleId))
+      .where(
+        and(
+          eq(userRoleAssignments.tenantId, tenantId),
+          eq(userRoleAssignments.userId, userId),
+          or(isNull(userRoleAssignments.validTo), gt(userRoleAssignments.validTo, new Date()))
+        )
+      );
+    const surface: DashboardSurface = (assigned as Array<{ code: string }>).some((a) => a.code === 'PLATFORM_OPERATOR')
+      ? 'platform'
+      : 'it';
+
+    const tenantRow = await db.select({ legalName: tenants.legalName }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+    const identityLine = (tenantRow[0] as { legalName: string } | undefined)?.legalName ?? '—';
+    const d = getDictionary('id').dashboard;
+
+    if (surface === 'platform') {
+      // Registri tenant adalah satu-satunya objek lintas-tenant yang terbaca JUJUR di
+      // sini. `tenant_modules`/`audit_logs` ber-RLS `FORCE` dan akan mengembalikan nol
+      // baris di luar konteks tenant — menampilkan nol itu sebagai "modul aktif" atau
+      // "kejadian audit" adalah kebohongan angka, bukan data kosong.
+      const registry = (await db.select({ id: tenants.id, status: tenants.status }).from(tenants)) as Array<{
+        id: string;
+        status: string;
+      }>;
+      const byStatus = (s: string) => registry.filter((r) => r.status === s).length;
+      const suspended = byStatus('SUSPENDED');
+      const onboarding = byStatus('ONBOARDING');
+      return {
+        role: me.role,
+        surface,
+        greetingName: me.userName,
+        identityLine,
+        activePeriodLabel: '—',
+        cards: [
+          { label: d.cardTenantActive, value: String(byStatus('ACTIVE')), badge: d.badgeTenantRegistry, tone: 'success' },
+          { label: d.cardTenantOnboarding, value: String(onboarding), badge: d.badgeTenantPending, tone: onboarding > 0 ? 'warning' : 'muted' },
+          { label: d.cardTenantSuspended, value: String(suspended), badge: d.badgeTenantOperator, tone: suspended > 0 ? 'warning' : 'muted' },
+          { label: d.cardTenantTotal, value: String(registry.length), badge: d.badgeTenantRegistry, tone: 'info' },
+        ],
+        todayClasses: [],
+      } satisfies DashboardView;
+    }
+
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const members = await tx
+      .select({ id: tenantMemberships.id })
+      .from(tenantMemberships)
+      .where(and(eq(tenantMemberships.tenantId, tenantId), eq(tenantMemberships.status, 'ACTIVE')));
+    const pending = await tx
+      .select({ id: accessChangeRequests.id })
+      .from(accessChangeRequests)
+      .where(and(eq(accessChangeRequests.tenantId, tenantId), eq(accessChangeRequests.status, 'PENDING')));
+    const params = await tx
+      .select({ id: masterSystemParameters.id })
+      .from(masterSystemParameters)
+      .where(and(eq(masterSystemParameters.tenantId, tenantId), eq(masterSystemParameters.isActive, true)));
+    const loginFails = await tx
+      .select({ id: loginEvents.id })
+      .from(loginEvents)
+      .where(and(eq(loginEvents.tenantId, tenantId), ne(loginEvents.outcome, 'SUCCESS'), gt(loginEvents.occurredAt, since24h)));
+    const accountCount = (members as Array<{ id: string }>).length;
+    const requestCount = (pending as Array<{ id: string }>).length;
+    const paramCount = (params as Array<{ id: string }>).length;
+    const failCount = (loginFails as Array<{ id: string }>).length;
 
     return {
       role: me.role,
+      surface,
       greetingName: me.userName,
-      identityLine: 'Biro Administrasi Akademik',
+      identityLine,
       activePeriodLabel,
       cards: [
-        { label: 'Mahasiswa Aktif', value: String(stCount.length), badge: `Periode ${activePeriodLabel}`, tone: 'success' },
-        { label: 'Dosen & Pengajar', value: String(lecCount.length), badge: 'Seluruh homebase aktif', tone: 'info' },
-        { label: 'Kelas Dibuka', value: String(classCount.length), badge: 'Periode berjalan', tone: 'info' },
-        { label: 'Sesi Hari Ini', value: String(todayClasses.length), badge: 'Total kelas terjadwal', tone: 'warning' },
+        { label: d.cardItAccounts, value: String(accountCount), badge: d.badgeItTenantScope, tone: 'info' },
+        {
+          label: d.cardItRequests,
+          value: String(requestCount),
+          badge: requestCount > 0 ? d.badgeItNeedsDecision : d.badgeItQueueEmpty,
+          tone: requestCount > 0 ? 'warning' : 'muted',
+        },
+        { label: d.cardItParameters, value: String(paramCount), badge: d.badgeItParameters, tone: 'success' },
+        {
+          label: d.cardItLoginFail,
+          value: String(failCount),
+          badge: d.badgeItLast24h,
+          tone: failCount > 0 ? 'warning' : 'muted',
+        },
       ],
-      todayClasses,
+      // Jadwal kuliah hari ini bukan milik layar IT; kartu §17.2.6 tidak memuatnya.
+      todayClasses: [],
     } satisfies DashboardView;
   });
 }

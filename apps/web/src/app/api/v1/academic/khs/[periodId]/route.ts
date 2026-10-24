@@ -8,14 +8,16 @@
  * Response: Standard Envelope + SemesterGpaResult
  */
 import type { NextRequest } from 'next/server';
-import { UUIDSchema } from '@sica/contracts';
+import { UUIDSchema, PERM } from '@sica/contracts';
 import {
   extractRequestContext,
   successResponse,
   validationFailed,
-  unauthorized,
   internalError,
 } from '@/lib/api-response';
+import { requireDataPrincipal } from '@/modules/authz/rbac-repository';
+
+import { ensureModuleActive } from '@/lib/module-gate';
 import {
   calculateIps,
   type GradeEntry,
@@ -33,11 +35,14 @@ export async function GET(
 ) {
   const ctx = extractRequestContext(request);
 
+  // Gerbang entitlement (SEC-09): modul assessment wajib ACTIVE/TRIAL.
+  const moduleDenied = await ensureModuleActive('assessment')(ctx);
+  if (moduleDenied) return moduleDenied;
+
   try {
-    // 1. Validasi Autentikasi
-    if (!ctx.tenantId) {
-      return unauthorized(ctx);
-    }
+    // 1. Guard izin (SEC-05/06): fail-closed, subjek dari token terverifikasi.
+    const access = await requireDataPrincipal(ctx, PERM.assessmentGradeView);
+    if (!access.granted) return access.response;
 
     // 2. Validasi Parameter Route
     const resolvedParams = await context.params;

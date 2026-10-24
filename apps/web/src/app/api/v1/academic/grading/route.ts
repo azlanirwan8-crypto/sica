@@ -9,18 +9,19 @@
  * Action: 'SAVE_DRAFT' | 'SUBMIT_FINAL'
  */
 import type { NextRequest } from 'next/server';
-import { GradingSubmitRequestSchema } from '@sica/contracts';
+import { GradingSubmitRequestSchema, PERM } from '@sica/contracts';
 import {
   extractRequestContext,
   successResponse,
   errorResponse,
   validationFailed,
-  unauthorized,
   forbidden,
   notFound,
   internalError,
 } from '@/lib/api-response';
 import { submitGrading } from '@/modules/academic/services/grading.service';
+import { requireDataPrincipal, holdsScoped } from '@/modules/authz/rbac-repository';
+import { ensureModuleActive } from '@/lib/module-gate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,10 +29,16 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest): Promise<Response> {
   const ctx = extractRequestContext(request);
 
+  // Gerbang entitlement (SEC-09): modul assessment wajib ACTIVE/TRIAL.
+  const moduleDenied = await ensureModuleActive('assessment')(ctx);
+  if (moduleDenied) return moduleDenied;
+
   try {
-    if (!ctx.tenantId || !ctx.userId) {
-      return unauthorized(ctx);
-    }
+    // L3 (SEC-10): hak dari tabel penugasan. Relasi pengampu & status periode
+    // tetap dicek service (hak halus); L4 lingkup kelas dicek setelah body valid.
+    const access = await requireDataPrincipal(ctx, PERM.gradingValueWrite);
+    if (!access.granted) return access.response;
+    const { tenantId, userId } = access.principal;
 
     let body: unknown;
     try {
@@ -50,9 +57,17 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     const { classId, periodId, entries, action } = parseResult.data;
 
-    // Finalisasi menuntut seluruh entry memiliki skor atau huruf mutu.
+    // L4 (SEC-11): penugasan ber-lingkup kelas, atau lingkup luas (TENANT) untuk admin.
+    const scopedToClass = holdsScoped(access.principal.access, PERM.gradingValueWrite, { classId });
+    const tenantWide = holdsScoped(access.principal.access, PERM.gradingValueWrite);
+    if (!scopedToClass && !tenantWide) {
+      return forbidden(ctx, 'Aksi ini berada di luar hak akses peran Anda.');
+    }
+
+    // Finalisasi menuntut seluruh entry memiliki skor; huruf mutu diturunkan server
+    // dari band skala (SERVER_ONLY, SEC-02) — tidak diterima dari body.
     if (action === 'SUBMIT_FINAL') {
-      const incomplete = entries.filter((e) => e.rawScore === undefined && !e.letterCode);
+      const incomplete = entries.filter((e) => e.rawScore === undefined);
       if (incomplete.length > 0) {
         return validationFailed(ctx, [
           {
@@ -63,7 +78,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       }
     }
 
-    const result = await submitGrading(ctx.tenantId, ctx.userId, { classId, periodId, entries, action });
+    const result = await submitGrading(tenantId, userId, { classId, periodId, entries, action });
 
     if (!result.ok) {
       switch (result.kind) {

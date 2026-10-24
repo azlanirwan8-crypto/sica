@@ -18,7 +18,8 @@ import {
 } from '@sica/database';
 import { signJwt } from './jwt.service';
 import { createPasswordHasher } from './password.service';
-import { generateOpaqueToken, issueRefreshToken, newFamilyId, hashToken, parseRefreshTokenTenant } from './token.service';
+import { issueRefreshToken, newFamilyId, hashToken, parseRefreshTokenTenant } from './token.service';
+import { createMfaChallenge } from './mfa.service';
 
 export interface AuthRuntimeConfig {
   readonly privateKeyPem: string;
@@ -27,6 +28,13 @@ export interface AuthRuntimeConfig {
   readonly accessTtlSec: number;
   readonly refreshTtlSec: number;
   readonly pepper: string;
+  /**
+   * Dev-only (`SICA_DEV_MFA_BYPASS=1` pada `NODE_ENV=development`, `RD-173`): lewati
+   * langkah MFA pada login. Opsional karena gagal-tertutup — setiap pemanggil yang
+   * tidak mengisinya (termasuk seluruh uji yang sudah ada) tetap mewajibkan MFA.
+   * Sesi hasil bypass tetap `amr = ['pwd']`, jadi gerbang tulis tidak ikut terbuka.
+   */
+  readonly devMfaBypass?: boolean;
 }
 
 export interface LoginPrincipal {
@@ -141,20 +149,51 @@ export async function authenticate(
     return { ok: false, code: 'LOCKED' };
   }
 
-  // 5. MFA wajib → keluarkan challenge, sesi penuh belum dibuat.
+  // 5. MFA wajib → keluarkan tantangan sekali-pakai (0084); sesi penuh belum dibuat.
+  //    Bypass dev (`RD-173`) melewati LANGKAH-nya saja: tantangan tidak dibuat dan
+  //    sesi di bawah tetap terbit dengan `amr = ['pwd']`, sehingga `login_events`
+  //    mencatat `password` dan gerbang tulis platform/admin tetap menolak.
+  if (match.mfaRequired && !config.devMfaBypass) {
+    const mfaToken = await createMfaChallenge(tenant.id, match.userId);
+    return { ok: true, requireMfa: true, mfaToken };
+  }
   if (match.mfaRequired) {
-    return { ok: true, requireMfa: true, mfaToken: generateOpaqueToken() };
+    console.warn('[dev] langkah MFA dilewati saat login (SICA_DEV_MFA_BYPASS=1) — sesi terbit dengan amr=[pwd], aksi tulis MFA masih tertutup');
   }
 
   // 6. Buat sesi + refresh token + akses token JWT (dalam konteks tenant utk INSERT RLS).
+  return establishSession(
+    config,
+    {
+      userId: match.userId,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      role: match.role,
+      fullName: match.fullName,
+      email: match.email,
+    },
+    ['pwd']
+  );
+}
+
+/**
+ * Terbitkan sesi teruji (sessions + refresh + JWT RS256 dengan klaim sid & amr).
+ * Dipakai login biasa (`['pwd']`) maupun penyelesai MFA (`['pwd','mfa']`) — SATU jalur
+ * penerbitan, tidak ada sesi MFA kelas dua.
+ */
+export async function establishSession(
+  config: AuthRuntimeConfig,
+  principal: LoginPrincipal,
+  amr: readonly string[]
+): Promise<Extract<AuthenticateResult, { readonly requireMfa: false }>> {
   const sessionId = crypto.randomUUID();
   const familyId = newFamilyId();
-  const rawRefresh = issueRefreshToken(tenant.id);
+  const rawRefresh = issueRefreshToken(principal.tenantId);
   const refreshHash = hashToken(rawRefresh);
   const sessionExpiry = nowPlusSeconds(config.refreshTtlSec);
 
   const accessToken = signJwt(
-    { sub: match.userId, tid: tenant.id, sid: sessionId, role: match.role },
+    { sub: principal.userId, tid: principal.tenantId, sid: sessionId, role: principal.role, amr },
     {
       privateKeyPem: config.privateKeyPem,
       issuer: config.issuer,
@@ -163,19 +202,19 @@ export async function authenticate(
     }
   );
 
-  await withTenantContext(tenant.id, async (tx) => {
+  await withTenantContext(principal.tenantId, async (tx) => {
     await tx.insert(sessions).values({
       id: sessionId,
-      tenantId: tenant.id,
-      userId: match.userId,
-      roleCtx: { role: match.role },
-      authMethod: 'password',
+      tenantId: principal.tenantId,
+      userId: principal.userId,
+      roleCtx: { role: principal.role, amr },
+      authMethod: amr.includes('mfa') ? 'password+totp' : 'password',
       expiresAt: sessionExpiry,
     });
     await tx.insert(refreshTokens).values({
       id: crypto.randomUUID(),
-      tenantId: tenant.id,
-      userId: match.userId,
+      tenantId: principal.tenantId,
+      userId: principal.userId,
       sessionId,
       tokenHash: refreshHash,
       familyId,
@@ -184,24 +223,46 @@ export async function authenticate(
     await tx
       .update(users)
       .set({ lastLoginAt: new Date(), failedAttempts: 0 })
-      .where(eq(users.id, match.userId));
+      .where(eq(users.id, principal.userId));
   });
 
   return {
     ok: true,
     requireMfa: false,
-    principal: {
-      userId: match.userId,
-      tenantId: tenant.id,
-      tenantSlug: tenant.slug,
-      role: match.role,
-      fullName: match.fullName,
-      email: match.email,
-    },
+    principal,
     sessionId,
     accessToken,
     refreshToken: rawRefresh,
     expiresInSeconds: config.accessTtlSec,
+  };
+}
+
+/** Muat principal dari id (dipakai penyelesai MFA — identitas sudah terbukti sandi). */
+export async function loadPrincipalById(tenantId: string, userId: string): Promise<LoginPrincipal | null> {
+  const rows = await withTenantContext(tenantId, async (tx) =>
+    tx
+      .select({
+        userId: users.id,
+        email: users.email,
+        fullName: users.fullName,
+        role: tenantMemberships.role,
+        tenantSlug: tenants.slug,
+      })
+      .from(tenantMemberships)
+      .innerJoin(users, eq(users.id, tenantMemberships.userId))
+      .innerJoin(tenants, eq(tenants.id, tenantMemberships.tenantId))
+      .where(and(eq(tenantMemberships.tenantId, tenantId), eq(tenantMemberships.userId, userId)))
+      .limit(1)
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    userId: row.userId,
+    tenantId,
+    tenantSlug: row.tenantSlug,
+    role: row.role,
+    fullName: row.fullName,
+    email: row.email,
   };
 }
 

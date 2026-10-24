@@ -22,6 +22,8 @@ export interface RequestContext {
   readonly role?: string | null;
   readonly sessionId?: string | null;
   readonly authenticated?: boolean;
+  /** Metode autentikasi dari klaim JWT terverifikasi (`pwd`, `mfa`) — gerbang MFA aksi tulis. */
+  readonly amr?: readonly string[];
 }
 
 interface AuthConfig {
@@ -72,6 +74,7 @@ export function extractRequestContext(request: NextRequest): RequestContext {
       role: claims.role,
       sessionId: claims.sid,
       authenticated: true,
+      amr: claims.amr ?? ['pwd'],
     };
   } catch {
     // Token invalid/kedaluwarsa → anggap tidak terautentikasi.
@@ -82,6 +85,18 @@ export function extractRequestContext(request: NextRequest): RequestContext {
 // =============================================================================
 // Success Response
 // =============================================================================
+
+/** Hitung blok `meta.pagination` dari (page, limit, total) — bentuk kanonik §2.4. */
+export function paginationFor(page: number, limit: number, totalRecords: number) {
+  return {
+    page,
+    limit,
+    totalRecords,
+    totalPages: Math.max(1, Math.ceil(totalRecords / limit)),
+    hasNextPage: page * limit < totalRecords,
+    hasPrevPage: page > 1,
+  };
+}
 
 /**
  * Buat Standard Success Envelope.
@@ -177,4 +192,22 @@ export function validationFailed(ctx: RequestContext, details: Array<{ field?: s
 export function internalError(ctx: RequestContext, error: unknown): NextResponse {
   const message = error instanceof Error ? error.message : 'Kesalahan internal server.';
   return errorResponse('INTERNAL_SERVER_ERROR', message, ctx, 500);
+}
+
+/**
+ * Penjaga parameter rute. `:id` yang bukan UUID tidak boleh diteruskan ke DB:
+ * PostgreSQL menjawab `22P02 invalid input syntax for type uuid` dan rute berubah
+ * menjadi 500 — galat server untuk masukan yang jelas-jelas salah di transport.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string | undefined): value is string {
+  return typeof value === 'string' && UUID_RE.test(value);
+}
+
+/** 422 siap-pakai untuk parameter rute yang cacat bentuk. */
+export function invalidRouteId(ctx: RequestContext, field = 'id'): NextResponse {
+  return errorResponse('VALIDATION_FAILED', `Parameter rute \`${field}\` bukan UUID sah.`, ctx, 422, [
+    { field, message: 'uuid' },
+  ]);
 }

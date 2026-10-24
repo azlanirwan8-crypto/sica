@@ -1,77 +1,97 @@
-'use client';
-
-import React from 'react';
+import React, { Suspense } from 'react';
 import Link from 'next/link';
-import { ShieldCheck, BadgeCheck, CalendarCheck, Gauge } from 'lucide-react';
 import { LoginForm } from '@/modules/auth/components/login-form';
-import { LoginShowcase } from '@/components/auth/login-showcase';
+import { Skeleton } from '@/components/ui/skeleton';
 import { SicaBrand } from '@/components/brand/sica-brand';
+import { getDictionary } from '@/lib/i18n';
 
+/**
+ * Kerangka `auth-signin-cover` Velzon (UI_UX_DESIGN §2.6): `.auth-fluid` dua kolom
+ * dengan panel `.auth-fluid-sidebg` di kiri dan `.auth-fluid-content`
+ * (logo → `.auth-content > .auth-inner > .card` → `.auth-fluid-footer`) di kanan.
+ *
+ * Kelasnya kerangka Velzon; isinya tetap pernyataan lingkup SICA — panel kiri
+ * sengaja tidak menjual fitur yang belum ada.
+ */
 export default function LoginPage() {
-  return (
-    <div className="flex h-screen max-h-screen w-full overflow-hidden">
-      {/* ── Panel kiri (50%): showcase produk ── */}
-      <aside className="relative hidden w-1/2 flex-col justify-between overflow-hidden bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 p-12 text-white lg:flex">
-        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:34px_34px]" />
-        <div className="pointer-events-none absolute -left-24 top-1/4 h-80 w-80 rounded-full bg-velzon-primary/25 blur-3xl" />
-        <div className="pointer-events-none absolute -right-16 bottom-0 h-72 w-72 rounded-full bg-velzon-info/20 blur-3xl" />
+  const t = getDictionary('id').auth;
 
-        <div className="relative z-10 shrink-0">
-          <Link href="/" aria-label="SICA">
+  return (
+    <div className="auth-fluid">
+      <aside aria-label="Rencana layanan SICA" className="auth-fluid-sidebg">
+        <div className="hidden lg:block">
+          <Link href="/" aria-label="Kembali ke beranda SICA" className="auth-logo rounded-lg">
             <SicaBrand height={38} variant="dark" />
           </Link>
         </div>
 
-        <div className="relative z-10 flex min-h-0 flex-1 items-center justify-center py-6">
-          <LoginShowcase />
-        </div>
+        <div>
+          <p className="auth-eyebrow">{t.scopeEyebrow}</p>
+          <h2 className="auth-headline">{t.scopeTitle}</h2>
+          <p className="auth-lede">{t.scopeDescription}</p>
 
-        <div className="relative z-10 flex shrink-0 flex-col items-center text-center">
-          <h1 className="mx-auto max-w-md text-xl font-semibold leading-relaxed tracking-tight text-slate-100 lg:text-2xl">
-            Pengelolaan Akademik Kampus Modern &amp; Terintegrasi PDDIKTI
-          </h1>
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
-            <TrustBadge icon={<ShieldCheck className="h-4 w-4 text-velzon-success" />} title="ISO 27001" sub="Certified" />
-            <TrustBadge icon={<BadgeCheck className="h-4 w-4 text-velzon-info" />} title="Permendikbudristek" sub="No. 39/2025" />
-            <TrustBadge icon={<Gauge className="h-4 w-4 text-velzon-warning" />} title="SLA 99,9%" sub="Uptime" />
+          <div className="auth-stats">
+            <div className="auth-stat">
+              <p className="auth-stat-value">{t.scopeModuleCount}</p>
+              <p className="auth-stat-label">{t.scopeModuleLabel}</p>
+            </div>
+            <div className="auth-stat">
+              <p className="auth-stat-value">{t.scopeAppCount}</p>
+              <p className="auth-stat-label">{t.scopeAppLabel}</p>
+            </div>
           </div>
+
+          <p className="auth-note">{t.scopeRegistryNote}</p>
         </div>
       </aside>
 
-      {/* ── Panel kanan (50%): form login ── */}
-      <main className="flex w-full flex-col bg-slate-50/50 lg:w-1/2">
-        <div className="px-8 pt-8 sm:px-12 lg:hidden">
-          <Link href="/" aria-label="SICA">
-            <SicaBrand height={32} />
+      <div className="auth-fluid-content">
+        <div className="px-6 pt-6 sm:px-10 lg:hidden">
+          <Link href="/" aria-label="Kembali ke beranda SICA" className="auth-logo rounded-lg">
+            <SicaBrand height={34} />
           </Link>
         </div>
 
-        <div className="flex flex-1 items-center justify-center overflow-y-auto px-6 py-6 lg:px-10 lg:py-8">
-          <LoginForm tenantSlug="demo" />
-        </div>
+        <main className="auth-content">
+          <div className="auth-inner">
+            <Suspense fallback={<LoginCardSkeleton />}>
+              <LoginForm />
+            </Suspense>
+          </div>
+        </main>
 
-        <footer className="px-8 pb-6 pt-2 text-center text-xs font-medium text-slate-500 sm:px-12">
-          <p className="flex items-center justify-center gap-1.5">
-            <CalendarCheck className="h-3 w-3" />
-            © 2026 SICA (System Integration Central Academic). Hak Cipta Dilindungi Undang-Undang.
-          </p>
-          <p className="mt-1">
-            Kepatuhan Permendikbudristek No. 39/2025 &amp; SN-Dikti • Terintegrasi Feeder PDDIKTI
-          </p>
+        <footer className="auth-fluid-footer">
+          <p>{t.publicFooter.replace('{year}', String(new Date().getFullYear()))}</p>
         </footer>
-      </main>
+      </div>
     </div>
   );
 }
 
-function TrustBadge({ icon, title, sub }: { icon: React.ReactNode; title: string; sub: string }) {
+/** Fallback selama `useSearchParams` di dalam form disuspensi — bentuknya disamakan dengan kartu aslinya. */
+function LoginCardSkeleton() {
   return (
-    <div className="flex items-center gap-2.5">
-      <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/10 ring-1 ring-white/15">{icon}</span>
-      <span className="leading-tight">
-        <span className="block text-[13px] font-semibold text-slate-100">{title}</span>
-        <span className="block text-[11px] font-medium text-slate-300">{sub}</span>
-      </span>
-    </div>
+    <section className="card">
+      <div className="card-body">
+        <Skeleton className="h-2.5 w-24" />
+        <Skeleton className="mt-3 h-6 w-44" />
+        <Skeleton className="mt-2.5 h-3.5 w-56" />
+        <div className="mt-6 flex flex-col gap-5">
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-3 w-28" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+          <Skeleton className="h-11 w-full" />
+        </div>
+      </div>
+    </section>
   );
 }

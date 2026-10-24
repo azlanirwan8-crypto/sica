@@ -4,6 +4,9 @@ import { sql } from 'drizzle-orm';
 import * as schema from './schema';
 
 // Re-export `sql` agar konsumen (apps/web) tak perlu bergantung langsung ke `drizzle-orm`.
+// `sqlClient` sudah diekspor di bawah: beberapa objek global (mis. `reference_kinds`, tanpa
+// RLS dan tanpa `tenant_id`) harus ditulis lewat klien mentah karena `withTenantContext`
+// tidak punya apa pun untuk disetel di sana.
 export { sql };
 
 const connectionString =

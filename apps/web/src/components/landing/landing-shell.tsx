@@ -1,14 +1,21 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Menu, X, ChevronDown, Check } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
+import { Accordion } from '@/components/ui/accordion';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SicaBrand } from '@/components/brand/sica-brand';
+import { cn } from '@/lib/utils';
 
 interface NavLink {
   href: string;
   label: string;
 }
+
+/** Kelas pembungkus permukaan header: ikut tema, tanpa putih/hexa keras. */
+const HEADER_SURFACE = 'bg-[color:var(--sica-surface-header)] backdrop-blur-md';
 
 export function LandingNav({ links, loginLabel, demoLabel }: { links: NavLink[]; loginLabel: string; demoLabel: string }) {
   const [open, setOpen] = useState(false);
@@ -20,15 +27,23 @@ export function LandingNav({ links, loginLabel, demoLabel }: { links: NavLink[];
 
   // Bayangan header & bilah progres baca seluruh halaman.
   useEffect(() => {
+    let frame = 0;
     function onScroll() {
-      const doc = document.documentElement;
-      const max = doc.scrollHeight - doc.clientHeight;
-      setScrolled(window.scrollY > 8);
-      setProgress(max > 0 ? Math.min(100, (window.scrollY / max) * 100) : 0);
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const doc = document.documentElement;
+        const max = doc.scrollHeight - doc.clientHeight;
+        setScrolled(window.scrollY > 8);
+        setProgress(max > 0 ? Math.min(100, window.scrollY / max) : 0);
+      });
     }
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   // Scroll-spy: menandai menu dari seksi yang sedang menempati sepertiga atas layar.
@@ -52,22 +67,24 @@ export function LandingNav({ links, loginLabel, demoLabel }: { links: NavLink[];
 
   return (
     <header
-      className="sticky top-0 z-50 border-b backdrop-blur-md transition-all duration-300"
-      style={{
-        borderColor: scrolled ? 'rgba(226,232,240,0.9)' : 'transparent',
-        backgroundColor: scrolled ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.72)',
-        boxShadow: scrolled ? '0 6px 24px -12px rgba(15,23,42,0.18)' : 'none',
-      }}
+      className={cn(
+        'sticky top-0 z-50 border-b transition-[background-color,box-shadow,border-color] duration-300',
+        scrolled
+          ? cn(HEADER_SURFACE, 'hairline shadow-sm')
+          : 'border-transparent bg-transparent'
+      )}
     >
       {/* Bilah progres gulir */}
       <div
         aria-hidden
-        className="absolute bottom-0 left-0 h-[2px] bg-gradient-to-r from-velzon-primary to-velzon-info transition-[width] duration-150 ease-out"
-        style={{ width: `${progress}%` }}
+        className="absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-gradient-to-r from-primary to-info"
+        style={{
+          transform: `scaleX(${progress})`,
+        }}
       />
 
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-5 lg:px-8">
-        <Link href="/" className="flex items-center" aria-label="SICA">
+        <Link href="/" className="flex min-h-11 items-center rounded-md" aria-label="SICA — beranda">
           <SicaBrand height={34} />
         </Link>
 
@@ -78,13 +95,19 @@ export function LandingNav({ links, loginLabel, demoLabel }: { links: NavLink[];
               <a
                 key={l.href}
                 href={l.href}
-                className="group relative rounded-md px-3 py-2 text-sm font-medium transition-colors hover:text-velzon-primary"
-                style={{ color: active ? 'var(--sica-color-primary, #0ab39c)' : undefined }}
+                aria-current={active ? 'true' : undefined}
+                className={cn(
+                  'group relative rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  active ? 'text-primary-hover' : 'text-slate-600 hover:text-primary-hover'
+                )}
               >
-                <span className={active ? 'text-velzon-primary' : 'text-slate-600 group-hover:text-velzon-primary'}>{l.label}</span>
+                {l.label}
                 <span
-                  className="absolute -bottom-0.5 left-3 right-3 h-0.5 origin-left rounded-full bg-velzon-primary transition-transform duration-300"
-                  style={{ transform: active ? 'scaleX(1)' : 'scaleX(0)' }}
+                  aria-hidden
+                  className={cn(
+                    'absolute -bottom-0.5 left-3 right-3 h-0.5 origin-left rounded-full bg-primary transition-transform duration-300 ease-velzon',
+                    active ? 'scale-x-100' : 'scale-x-0 group-hover:scale-x-50'
+                  )}
                 />
               </a>
             );
@@ -92,50 +115,46 @@ export function LandingNav({ links, loginLabel, demoLabel }: { links: NavLink[];
         </nav>
 
         <div className="hidden items-center gap-2 lg:flex">
-          <Link
-            href="/login"
-            className="rounded-md px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100"
-          >
+          <Link href="/login" className={cn(buttonVariants({ variant: 'ghost', size: 'default' }))}>
             {loginLabel}
           </Link>
-          <a
-            href="#cta"
-            className="sica-sheen inline-flex items-center gap-1.5 rounded-md bg-velzon-primary px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-velzon-primary/25 transition-transform duration-200 hover:-translate-y-0.5"
-          >
+          <a href="#modul" className={cn(buttonVariants({ variant: 'default', size: 'default' }))}>
             {demoLabel}
           </a>
         </div>
 
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="icon"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          aria-label="Buka menu"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 text-slate-700 lg:hidden"
+          aria-controls="landing-mobile-nav"
+          aria-label={open ? 'Tutup menu' : 'Buka menu'}
+          className="min-h-11 min-w-11 lg:hidden"
         >
-          {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+          {open ? <X className="h-5 w-5" aria-hidden /> : <Menu className="h-5 w-5" aria-hidden />}
+        </Button>
       </div>
 
       {open && (
-        <div className="border-t border-slate-200 bg-white px-5 pb-5 pt-2 lg:hidden">
+        <div id="landing-mobile-nav" className="border-t hairline bg-sica-card px-5 pb-5 pt-2 lg:hidden">
           <nav className="flex flex-col" aria-label="Navigasi seluler">
             {links.map((l) => (
               <a
                 key={l.href}
                 href={l.href}
                 onClick={() => setOpen(false)}
-                className="border-b border-slate-100 py-3 text-sm font-medium text-slate-700"
+                className="border-b hairline py-3 text-sm font-medium text-slate-700 transition-colors hover:text-primary-hover"
               >
                 {l.label}
               </a>
             ))}
           </nav>
           <div className="mt-4 flex flex-col gap-2">
-            <Link href="/login" className="rounded-md border border-slate-200 px-4 py-2.5 text-center text-sm font-semibold text-slate-700">
+            <Link href="/login" onClick={() => setOpen(false)} className={cn(buttonVariants({ variant: 'label', size: 'lg' }), 'w-full')}>
               {loginLabel}
             </Link>
-            <a href="#cta" onClick={() => setOpen(false)} className="rounded-md bg-velzon-primary px-4 py-2.5 text-center text-sm font-semibold text-white">
+            <a href="#modul" onClick={() => setOpen(false)} className={cn(buttonVariants({ variant: 'default', size: 'lg' }), 'w-full')}>
               {demoLabel}
             </a>
           </div>
@@ -153,48 +172,90 @@ export interface RoleTab {
   points: string[];
 }
 
-export function RoleTabs({ tabs }: { tabs: RoleTab[] }) {
+const TAB_KEYS = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'] as const;
+
+export function RoleTabs({ tabs, scopeLabel }: { tabs: RoleTab[]; scopeLabel: string }) {
   const [active, setActive] = useState(tabs[0]?.key ?? '');
+  const listRef = useRef<HTMLDivElement | null>(null);
   const current = tabs.find((t) => t.key === active) ?? tabs[0];
+
   if (!current) return null;
+
+  // Navigasi tab dengan panah (roving tabindex), sebagaimana pola ARIA tabs.
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!(TAB_KEYS as readonly string[]).includes(event.key)) return;
+    event.preventDefault();
+    const index = tabs.findIndex((t) => t.key === current.key);
+    let next = index;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabs.length - 1;
+
+    const target = tabs[next];
+    if (!target) return;
+    setActive(target.key);
+    const buttons = listRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    buttons?.[next]?.focus();
+  };
 
   return (
     <div>
-      <div className="flex flex-wrap gap-2" role="tablist">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={t.key === current.key}
-            onClick={() => setActive(t.key)}
-            className={`rounded-full px-4 py-2 text-sm font-semibold transition-all ${
-              t.key === current.key
-                ? 'bg-velzon-primary text-white shadow-sm shadow-velzon-primary/25'
-                : 'border border-slate-200 bg-white text-slate-600 hover:border-velzon-primary/40 hover:text-velzon-primary'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div
+        ref={listRef}
+        className="role-tab-list flex min-w-0 flex-nowrap gap-2 overflow-x-auto overscroll-x-contain pb-2"
+        role="tablist"
+        aria-label="Peran pengguna"
+        onKeyDown={onKeyDown}
+      >
+        {tabs.map((t) => {
+          const selected = t.key === current.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              id={`role-tab-${t.key}`}
+              aria-selected={selected}
+              aria-controls={`role-panel-${t.key}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setActive(t.key)}
+              className={cn(
+                'min-h-11 flex-none scroll-mx-2 whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold transition-[transform,background-color,color,border-color,box-shadow] duration-200 ease-velzon hover:-translate-y-px active:scale-[0.98] motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100',
+                selected
+                  ? 'bg-primary text-primary-on shadow-sm'
+                  : 'border hairline bg-sica-card text-slate-600 hover:bg-primary-soft hover:text-primary-hover'
+              )}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
-      <div className="mt-8 grid gap-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:grid-cols-2 lg:items-center">
-        <div>
-          <h3 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">{current.title}</h3>
-          <p className="mt-3 text-sm leading-relaxed text-slate-600 sm:text-base">{current.desc}</p>
-        </div>
-        <ul className="grid gap-3">
-          {current.points.map((p) => (
-            <li key={p} className="flex items-start gap-3 rounded-xl border border-slate-100 bg-slate-50/70 px-4 py-3">
-              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-velzon-success/15">
-                <Check className="h-3.5 w-3.5 text-velzon-success" />
-              </span>
-              <span className="text-sm font-medium text-slate-700">{p}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <Card
+        key={current.key}
+        role="tabpanel"
+        id={`role-panel-${current.key}`}
+        aria-labelledby={`role-tab-${current.key}`}
+        className="sica-anim sica-fade-up mt-8"
+      >
+        <CardHeader className="sm:pb-6">
+          <CardTitle className="text-xl tracking-tightest sm:text-2xl">{current.title}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-8 pt-0 lg:grid-cols-2 lg:items-start">
+          <p className="section-label lg:col-span-2">{scopeLabel}</p>
+          <p className="text-sm leading-relaxed2 text-slate-600 sm:text-[15px]">{current.desc}</p>
+          <ul className="grid gap-3">
+            {current.points.map((p) => (
+              <li key={p} className="flex items-start gap-3 rounded-lg border hairline bg-sica-inset px-4 py-3">
+                <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                <span className="text-sm font-medium text-slate-700">{p}</span>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -205,27 +266,14 @@ export interface FaqItem {
 }
 
 export function FaqAccordion({ items }: { items: FaqItem[] }) {
-  const [openIdx, setOpenIdx] = useState<number | null>(0);
-
   return (
-    <div className="divide-y divide-slate-200 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-      {items.map((item, idx) => {
-        const isOpen = openIdx === idx;
-        return (
-          <div key={item.q}>
-            <button
-              type="button"
-              onClick={() => setOpenIdx(isOpen ? null : idx)}
-              aria-expanded={isOpen}
-              className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left sm:px-6"
-            >
-              <span className="text-sm font-semibold text-slate-900 sm:text-base">{item.q}</span>
-              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isOpen ? 'rotate-180 text-velzon-primary' : ''}`} />
-            </button>
-            {isOpen && <p className="px-5 pb-5 text-sm leading-relaxed text-slate-600 sm:px-6">{item.a}</p>}
-          </div>
-        );
-      })}
-    </div>
+    <Card>
+      <CardContent className="py-1">
+        <Accordion
+          defaultOpen={0}
+          items={items.map((item) => ({ title: item.q, content: <p className="leading-relaxed2">{item.a}</p> }))}
+        />
+      </CardContent>
+    </Card>
   );
 }

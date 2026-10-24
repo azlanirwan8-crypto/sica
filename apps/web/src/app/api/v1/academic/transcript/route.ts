@@ -9,12 +9,15 @@
  * Response: Standard Envelope + CumulativeGpaResult
  */
 import type { NextRequest } from 'next/server';
+import { PERM } from '@sica/contracts';
 import {
   extractRequestContext,
   successResponse,
-  unauthorized,
   internalError,
 } from '@/lib/api-response';
+import { requireDataPrincipal } from '@/modules/authz/rbac-repository';
+
+import { ensureModuleActive } from '@/lib/module-gate';
 import {
   calculateIpk,
   type GradeEntry,
@@ -23,11 +26,14 @@ import {
 export async function GET(request: NextRequest) {
   const ctx = extractRequestContext(request);
 
+  // Gerbang entitlement (SEC-09): modul academic wajib ACTIVE/TRIAL.
+  const moduleDenied = await ensureModuleActive('academic')(ctx);
+  if (moduleDenied) return moduleDenied;
+
   try {
-    // 1. Validasi Autentikasi
-    if (!ctx.tenantId) {
-      return unauthorized(ctx);
-    }
+    // 1. Guard izin (SEC-05/06): fail-closed, subjek dari token terverifikasi.
+    const access = await requireDataPrincipal(ctx, PERM.academicTranscriptView);
+    if (!access.granted) return access.response;
 
     // 2. Data riwayat akademik komprehensif mahasiswa
     // Siap dihubungkan ke query Drizzle ORM

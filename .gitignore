@@ -28,8 +28,12 @@ pnpm-debug.log*
 *.tsbuildinfo
 tsconfig.tsbuildinfo
 
-# Local bundled toolchain (node/pnpm runtime) — NOT project source
-.tools/
+# Local bundled toolchain (node/pnpm runtime) — NOT project source.
+# Sumber penjaga (*.mjs) dan dokumentasinya (*.md) adalah bagian proyek yang terlacak
+# (DEV-G7); keluaran alat (log/txt/json/err) tetap lokal.
+.tools/*
+!.tools/*.mjs
+!.tools/*.md
 
 # Coverage & testing
 coverage/

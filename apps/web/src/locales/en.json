@@ -1,35 +1,105 @@
 {
   "auth": {
     "loginTitle": "Sign In to Academic Portal",
-    "loginSubtitle": "Please enter your institutional account credentials",
-    "tenantLabel": "Campus Subdomain Code",
+    "loginSubtitle": "Enter your campus account details to continue",
+    "tenantLabel": "Campus code",
     "tenantPlaceholder": "e.g. unpad or ui",
-    "usernameLabel": "Student ID / Faculty ID / Email",
-    "usernamePlaceholder": "Enter your username or email",
+    "usernameLabel": "Student ID, faculty ID or campus email",
+    "usernamePlaceholder": "Enter your ID or email",
     "passwordLabel": "Password",
     "passwordPlaceholder": "Minimum 8 characters",
-    "rememberMe": "Remember this session",
+    "rememberMe": "Remember me",
     "forgotPassword": "Forgot password?",
+    "resetPassword": {
+      "title": "Reset your password",
+      "description": "Enter the email address registered with your institution.",
+      "emailLabel": "Campus email",
+      "emailPlaceholder": "name@campus.edu",
+      "send": "Send",
+      "cancel": "Cancel",
+      "close": "Close password reset form",
+      "notConnected": "This form is not connected to an email service yet. No request has been sent."
+    },
     "loginButton": "Sign In",
-    "loggingIn": "Verifying credentials...",
-    "loginSuccess": "Login successful, redirecting...",
-    "mfaRequired": "Two-Factor Authentication (MFA) Required",
-    "mfaInstruction": "Enter the 6-digit OTP code from your authenticator app",
+    "loggingIn": "Checking your account...",
+    "loginSuccess": "Signed in. Opening the portal...",
+    "mfaRequired": "Additional verification required",
+    "mfaInstruction": "Enter the 6-digit code from your security app",
     "otpPlaceholder": "000000",
-    "verifyOtp": "Verify OTP",
-    "verifying": "Verifying...",
-    "invalidCredentials": "Invalid username or password.",
-    "mfaFailed": "Invalid or expired OTP code."
+    "verifyOtp": "Continue",
+    "verifying": "Checking...",
+    "otpLabel": "Security code",
+    "backToLogin": "Back",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "portalEyebrow": "Academic Portal",
+    "staleTitle": "This verification needs to restart",
+    "staleBody": "The time or attempt limit for this code screen has passed, so even a new code will not be accepted here.",
+    "staleStep1": "Press Back below, then sign in again to start a new verification.",
+    "staleStep2": "Have your security code ready so you can enter it straight away.",
+    "invalidCredentials": "The ID, email or password does not match.",
+    "mfaFailed": "The security code does not match or has expired.",
+    "scopeEyebrow": "SICA is in development",
+    "scopeTitle": "Planned campus services in one place.",
+    "scopeDescription": "This list describes services being planned, not services ready to use.",
+    "scopeModuleCount": "47",
+    "scopeModuleLabel": "planned campus services",
+    "scopeAppCount": "1",
+    "scopeAppLabel": "planned mobile app",
+    "scopeRegistryNote": "The mobile app is planned to provide access to the same services and is not counted as an extra service.",
+    "publicFooter": "© {year} SICA · In development"
   },
   "dashboard": {
     "title": "Academic Dashboard",
+    "metaTitle": "Academic Dashboard",
+    "metaDescription": "Academic summary and student status based on the active tenant's database",
     "welcome": "Welcome back",
     "activePeriod": "Active Academic Year",
     "quickActions": "Quick Actions",
+    "quickActionsHint": "Shortcuts to the screens you use most.",
+    "cardTenantActive": "Active tenants",
+    "cardTenantOnboarding": "Tenants onboarding",
+    "cardTenantSuspended": "Suspended tenants",
+    "cardTenantTotal": "Total registered tenants",
+    "badgeTenantRegistry": "SaaS tenant registry",
+    "badgeTenantPending": "Awaiting completion",
+    "badgeTenantOperator": "By operator decision",
+    "cardItAccounts": "Active campus accounts",
+    "cardItRequests": "Access requests pending",
+    "cardItParameters": "Active system parameters",
+    "cardItLoginFail": "Login failures in 24h",
+    "badgeItTenantScope": "ACTIVE memberships in this tenant",
+    "badgeItNeedsDecision": "Needs your decision",
+    "badgeItQueueEmpty": "Queue is clear",
+    "badgeItParameters": "Source: master_system_parameters",
+    "badgeItLast24h": "Last 24 hours",
     "krsOnline": "Course Enrollment (KRS)",
     "khsTranscript": "Grade Report & Transcript",
     "attendance": "Class Attendance",
     "billing": "Tuition Fee Status",
+    "descKrs": "Pick courses for the active semester",
+    "descKhs": "Print grade report & transcript",
+    "descAttendance": "Scan attendance QR for class",
+    "descBilling": "Payment history & tuition invoices",
+    "attentionTitle": "Needs attention",
+    "attentionBody": "{items}. Review the details before the period closes.",
+    "noSummaryTitle": "Summary not available yet",
+    "noSummaryBody": "There is no academic data to show for your role in this period yet.",
+    "summaryAria": "Academic summary",
+    "scheduleActionsAria": "Schedule and quick actions",
+    "scheduleTitle": "Today's Class Schedule",
+    "scheduleCount": "{count} sessions scheduled today",
+    "scheduleNone": "No sessions on today's calendar",
+    "scheduleEmptyTitle": "No classes scheduled today.",
+    "scheduleEmptyBody": "Class sessions appear here once the schedule in the active period begins.",
+    "viewAll": "View All",
+    "colTime": "Time",
+    "colCourse": "Course",
+    "colLecturer": "Lecturer",
+    "colStatus": "Status",
+    "classDone": "Completed",
+    "classRunning": "In Progress",
+    "classUpcoming": "Upcoming",
     "profile": "My Profile",
     "logout": "Sign Out"
   },
@@ -38,285 +108,1219 @@
     "academic": "Academic",
     "krs": "Online KRS",
     "khs": "Grade Report",
+    "dpa": "Advisor Approval",
     "schedule": "Class Schedule",
     "attendance": "QR Attendance",
     "finance": "Finance & Tuition",
-    "settings": "Settings"
+    "modules": "Modules & Add-ons",
+    "audit": "Audit Trail",
+    "more": "More",
+    "settings": "Settings",
+    "platform": "Platform",
+    "platformTenants": "Institutions & Provisioning",
+    "platformAudit": "Cross-institution Audit",
+    "platformSupport": "Supervised Support",
+    "admin": "Admin Area",
+    "adminUsers": "Users",
+    "adminOrganization": "Organization & Programs",
+    "adminRbac": "Access Rights",
+    "adminRequests": "Access Requests",
+    "adminParameters": "System Parameters",
+    "soon": "Coming soon"
+  },
+  "platform": {
+    "eyebrow": "Platform Area",
+    "crumbDashboard": "Dashboard",
+    "crumbPlatform": "Platform",
+    "crumbTenants": "Institutions",
+    "crumbAudit": "Cross-institution Audit",
+    "crumbSupport": "Supervised Support",
+    "tenantsTitle": "Institutions & Provisioning",
+    "tenantsSubtitle": "Aggregate cross-tenant listing without per-record PII. Provisioning, suspension and reinstatement run from one screen.",
+    "colInstitution": "Institution",
+    "colSlug": "Slug",
+    "colStatus": "Status",
+    "colCreated": "Registered",
+    "colModules": "Active modules",
+    "colRoles": "Roles seeded",
+    "colSubscription": "Subscription",
+    "colAction": "Actions",
+    "colOccurred": "Time",
+    "colTarget": "Target entity",
+    "colTargetId": "Target id",
+    "colActor": "Actor",
+    "colReason": "Reason",
+    "colHash": "Chain hash",
+    "colPrevHash": "Previous hash",
+    "newTenant": "Provision institution",
+    "provisionTitle": "Tenant provisioning wizard",
+    "provisionHint": "Single transaction: a failure halfway leaves zero rows (AC-PLT-1). The Idempotency-Key header is generated automatically and reused until the request succeeds.",
+    "fSlug": "Institution slug",
+    "fLegalName": "Legal name",
+    "fAdminEmail": "First admin email",
+    "fAdminFullName": "First admin name",
+    "fAdminPassword": "Initial admin password",
+    "fMemberCode": "Initial member code",
+    "fModules": "Modules to activate",
+    "fReason": "Reason",
+    "reasonPlaceholder": "At least 10 characters — this reason is stored in the audit trail.",
+    "slugHint": "lowercase letters, digits and hyphens only",
+    "passwordHint": "at least 12 characters (SECURITY §2.1)",
+    "provisionSubmit": "Run provisioning",
+    "provisionBusy": "Provisioning running…",
+    "provisionOk": "Institution created with ONBOARDING status.",
+    "rolesSeeded": "Roles seeded",
+    "modulesActivated": "Modules activated",
+    "detailTitle": "Institution detail",
+    "detailBusy": "Loading detail…",
+    "detailEmpty": "Pick a row to inspect modules, roles and subscription.",
+    "suspend": "Suspend",
+    "reinstate": "Reinstate",
+    "transitionTitle": "Institution status transition",
+    "transitionHint": "The status column is SERVER_ONLY — it only changes through the transition routes, with a reason and an MFA session.",
+    "transitionOk": "Institution status updated.",
+    "currentStatus": "Current status",
+    "loadError": "Failed to load the institution list.",
+    "empty": "No institution registered yet.",
+    "mfaRequired": "Platform writes require an MFA session. Sign in again and complete the TOTP challenge.",
+    "forbidden": "Rejected by the server (403) — insufficient permission for this action.",
+    "conflict": "Conflict — the slug/email may already exist, or the Idempotency-Key was reused with a different payload.",
+    "auditTitle": "Cross-institution Audit",
+    "auditSubtitle": "Reading another tenant's trail requires a reason, and this read itself becomes a new audit row in the operator tenant.",
+    "fTenant": "Target institution",
+    "fTenantNone": "Select an institution…",
+    "fActionFilter": "Action code (optional)",
+    "fTargetEntity": "Target entity (optional)",
+    "fFrom": "From",
+    "fTo": "To",
+    "auditRun": "Fetch audit trail",
+    "auditBusy": "Fetching trail…",
+    "auditIdle": "No query run yet — choose an institution and provide a reason.",
+    "auditNoRows": "No audit rows in this range or filter.",
+    "auditRows": "audit rows",
+    "auditPage": "Page",
+    "auditOf": "of",
+    "chainNote": "Hashes are chained with SHA-256 per tenant. Verify the chain with `pnpm --filter @sica/web verify:chain`.",
+    "reasonRequiredBadge": "Reason required",
+    "writeOnRead": "This read itself has been recorded as a new audit row in the operator tenant.",
+    "supportTitle": "Supervised Support",
+    "supportSubtitle": "Support grants have a TTL of at most 30 minutes, require MFA, and are recorded as an audit row in the target tenant.",
+    "fTargetSlug": "Target institution slug",
+    "fTargetId": "Target institution id (UUID)",
+    "targetTenantHint": "Provide the target slug OR id — the slug takes priority when both are filled.",
+    "fTargetUser": "Target user id (UUID)",
+    "fScope": "Grant scope",
+    "fTtl": "TTL (minutes)",
+    "fTicket": "Ticket id (UUID, optional)",
+    "scopeReadOnly": "Read only",
+    "scopeRepair": "Helpdesk repair",
+    "grantSubmit": "Request support grant",
+    "grantBusy": "Submitting grant…",
+    "grantOk": "Grant created and ACTIVE.",
+    "countdown": "Grant time remaining",
+    "expired": "TTL exceeded",
+    "revoke": "Revoke grant",
+    "revokeBusy": "Revoking…",
+    "revokeOk": "Grant revoked (REVOKED).",
+    "ttlMaxBadge": "TTL max 30 minutes",
+    "sessionLedgerTitle": "Grants created in this browser session",
+    "ttlHint": "1–30 minutes, clamped by the server",
+    "sessionLedger": "The list below shows grants created in this browser session. Full per-institution history is read on the Cross-institution Audit screen for the `impersonation_grants` entity.",
+    "noGrants": "No grants in this session.",
+    "openAudit": "Open this institution's audit",
+    "formInvalid": "Review the highlighted fields.",
+    "optionalLabel": "optional",
+    "close": "Close",
+    "reload": "Reload",
+    "transitionBusy": "Saving transition…",
+    "save": "Save"
   },
   "landing": {
     "nav": {
       "features": "Features",
-      "modules": "Modules",
+      "modules": "Services",
       "roles": "Roles",
       "security": "Security",
-      "pricing": "Pricing",
+      "integrations": "Connections",
       "faq": "FAQ",
       "login": "Sign In",
-      "demo": "Book a Demo"
+      "demo": "Explore Services"
     },
     "hero": {
-      "titleA": "One Campus Platform,",
-      "titleHighlight": "Every Academic Process Covered",
-      "subtitle": "SICA connects registration, course enrollment, attendance, grading, finance and PDDikti reporting in one secure multi-tenant platform. Designed so enrollment day stays smooth while thousands of students access it at once.",
-      "ctaPrimary": "Try the Portal",
-      "ctaSecondary": "Browse All Modules",
-      "trust1": "Per-institution data isolation (RLS)",
-      "trust2": "Web & mobile parity",
-      "trust3": "Audit-ready records",
-      "previewCaption": "Student dashboard — GPA, credits, attendance and today's schedule"
-    },
-    "stats": {
-      "heading": "Capacity Tested for Campus Peak Conditions",
-      "items": [
-        { "value": "19", "label": "Business modules in the catalogue" },
-        { "value": "1,000+", "label": "Concurrent users as the design target" },
-        { "value": "30 sec", "label": "Rotating attendance QR against proxy check-in" },
-        { "value": "2 languages", "label": "Indonesian & English, switchable" }
+      "status": "In development",
+      "titleA": "Academic Information",
+      "titleHighlight": "for Higher Education",
+      "subtitle": "SICA is being developed to help manage campus services. This page describes plans, not services ready to use.",
+      "ctaPrimary": "See Planned Services",
+      "ctaSecondary": "Sign In to the Portal",
+      "areasEyebrow": "Planned services",
+      "areasTitle": "What is being prepared",
+      "areas": [
+        {
+          "title": "Studies & student services",
+          "desc": "Course information, learning, assessment and student support."
+        },
+        {
+          "title": "Campus operations",
+          "desc": "Finance, staff, facilities and campus administration."
+        },
+        {
+          "title": "Quality & reports",
+          "desc": "Quality checks, accreditation preparation and campus reports."
+        },
+        {
+          "title": "Research & partnerships",
+          "desc": "Research, student exchange, careers, admissions and partner activities."
+        }
       ]
-    },
-    "strengths": {
-      "eyebrow": "How SICA Solves It",
-      "title": "Every Problem Has an Automatic Answer",
-      "subtitle": "SICA does more than record — it validates, locks and calculates automatically, so campus rules are enforced by the system, not by human memory.",
-      "items": [
-        { "title": "Automatic, safe enrollment at peak", "desc": "Credit limits are derived from GPA, course prerequisites are checked, schedule/room/lecturer clashes are detected, and each seat is locked per student so quotas are never exceeded." },
-        { "title": "Smart, fair grading", "desc": "Numbers convert to letter grades and GPA automatically per curriculum scale; total weights are validated to 100%, and grade corrections require an approved, logged workflow." },
-        { "title": "Honest attendance", "desc": "30-second QR with an anti-forgery code, location verification, and instant rejection of fake locations. Attendance recaps automatically become an exam gate." },
-        { "title": "Finance that runs itself", "desc": "Invoices are generated automatically, virtual-account/QRIS payments are reconciled, and enrollment is held until paid — no manual matching." },
-        { "title": "Anomaly detection for leaders", "desc": "Unusual patterns such as sudden grade spikes or suspicious attendance are flagged early, so decisions rest on clean data." },
-        { "title": "PDDikti & audit ready", "desc": "Data completeness and mapping follow national reporting rules from the start, with an audit trail for every important change." }
-      ]
-    },
-    "problem": {
-      "eyebrow": "Why Legacy Systems Feel Heavy",
-      "title": "Real Problems We Solve",
-      "items": [
-        { "title": "Enrollment day takes the server down", "desc": "Credit quotas and seats compete in the same hour. SICA separates read/write paths, locks per class and guarantees idempotent submission." },
-        { "title": "Proxy attendance and manual recaps", "desc": "Short-lived QR, HMAC signature and Haversine geofencing enforce physical presence; attendance recaps automatically become an exam eligibility gate." },
-        { "title": "National reporting keeps rejecting rows", "desc": "Field completeness follows PDDikti Neo Feeder requirements from the schema, not patched at reporting time." },
-        { "title": "One campus locks out another", "desc": "Every business table carries tenant_id with default-deny Row-Level Security, so data cannot leak across institutions." }
-      ]
-    },
-    "modules": {
-      "eyebrow": "Modular",
-      "title": "Enable Only What Your Campus Needs",
-      "subtitle": "The academic core is always present; add-on modules can be self-served with dependency guarding.",
-      "coreLabel": "Core",
-      "addonLabel": "Add-on",
-      "items": []
     },
     "catalog": {
-      "eyebrow": "19-Module Catalogue",
-      "title": "The Whole Campus Lifecycle, Mapped per Role",
-      "subtitle": "Nine core modules are always available; ten add-ons can be self-served with dependency guarding. Filter by your role.",
-      "allRoles": "All roles",
-      "coreTab": "Core Modules",
-      "addonTab": "Add-on Modules",
-      "allTab": "All",
-      "rolesLabel": "Used by",
-      "dependsLabel": "Requires",
-      "licenseLabel": "License",
-      "empty": "No modules match this filter.",
-      "roles": {
-        "mahasiswa": "Students",
-        "dosen": "Lecturers & Advisors",
-        "baak": "Academic Affairs",
-        "pimpinan": "Leadership",
-        "ortu": "Parents"
+      "eyebrow": "Planned Services",
+      "title": "47 Services in the Plan",
+      "subtitle": "This list shows SICA's planned services. Not all services have been built or are ready to use.",
+      "searchLabel": "Search services",
+      "searchPlaceholder": "Search by service name or keyword",
+      "roleFilterLabel": "User role",
+      "roleFilterAll": "All roles",
+      "packageFilterLabel": "Service type",
+      "packageFilters": {
+        "all": "All services",
+        "core": "Core plan",
+        "addon": "Add-on",
+        "role": "Role-based access",
+        "unmapped": "Proposed, not mapped"
       },
-      "license": {
-        "INCLUDED": "Included",
-        "PER_SEAT": "Per seat",
-        "FLAT": "Flat rate"
+      "audienceLabel": "For",
+      "packageLabels": {
+        "core": "Core plan",
+        "addon": "Add-on",
+        "role": "Role-based access",
+        "unmapped": "Proposed, not mapped"
+      },
+      "classificationNote": "Labels follow SICA's planned entitlement catalog, not a campus plan list. Proposed services do not yet have an official entitlement; plan pricing and availability have not been set.",
+      "resultLabel": "services found",
+      "expandAll": "Show all descriptions",
+      "collapseAll": "Close all descriptions",
+      "empty": "No matching services found.",
+      "registryNote": "The mobile app is planned to use the same services, not add another service.",
+      "superApp": {
+        "title": "SICA mobile app",
+        "desc": "The planned mobile app will let students and staff access campus services from a phone.",
+        "note": "The app is still planned and is not a separate service."
       },
       "items": [
-        { "code": "identity", "name": "Identity & Access", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "dosen", "mahasiswa", "pimpinan"], "desc": "One identity for students, lecturers and staff with per-institution roles and memberships." },
-        { "code": "academic", "name": "Academic Master Data", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "pimpinan", "dosen"], "desc": "Faculties, programmes, curricula, courses, periods and rooms as a single source of truth." },
-        { "code": "teaching", "name": "Teaching & Scheduling", "category": "CORE", "license": "INCLUDED", "roles": ["dosen", "baak"], "desc": "Classes, lecturers, weekly schedules and sessions with clash detection." },
-        { "code": "enrollment", "name": "Enrolment & Advisor Approval", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "dosen", "baak"], "desc": "Course registration with GPA-based credit quota, prerequisites and advisor sign-off." },
-        { "code": "attendance", "name": "Attendance & Geofencing", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "dosen", "baak"], "desc": "Rotating QR, GPS geofencing, detailed status and attendance recaps as an exam gate." },
-        { "code": "assessment", "name": "Grading, Reports & Transcripts", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "dosen", "baak", "ortu"], "desc": "Weighted components, letter conversion, semester grade reports and final transcripts." },
-        { "code": "finance", "name": "Finance & Enrolment Gate", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "baak", "pimpinan", "ortu"], "desc": "Tuition, invoices, payment channels and a settlement-based registration gate." },
-        { "code": "feeder_pddikti", "name": "PDDIKTI Feeder", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "pimpinan"], "desc": "Field completeness and code mapping so national reporting is not rejected." },
-        { "code": "audit", "name": "Audit Trail", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "pimpinan"], "desc": "Trail of sensitive changes and administrator actions for auditing." },
-        { "code": "pmb", "name": "Admission & Selection CBT", "category": "ADDON", "license": "FLAT", "roles": ["baak", "pimpinan"], "depends": ["identity", "academic"], "desc": "New student admission and computer-based selection exams." },
-        { "code": "cbt", "name": "Computer-Based Test", "category": "ADDON", "license": "FLAT", "roles": ["mahasiswa", "dosen", "baak"], "depends": ["identity", "academic"], "desc": "Online exams with item bank, schedule and automatic grading." },
-        { "code": "lms", "name": "Online Learning (LMS)", "category": "ADDON", "license": "PER_SEAT", "roles": ["mahasiswa", "dosen"], "depends": ["teaching", "enrollment"], "desc": "Materials, assignments and class interaction beyond contact hours." },
-        { "code": "mbkm", "name": "MBKM (Independent Campus)", "category": "ADDON", "license": "FLAT", "roles": ["mahasiswa", "dosen", "baak"], "depends": ["enrollment", "assessment", "academic"], "desc": "Running and credit conversion of learning activities outside the programme." },
-        { "code": "thesis", "name": "Final Project / Thesis", "category": "ADDON", "license": "PER_SEAT", "roles": ["mahasiswa", "dosen", "baak"], "depends": ["enrollment", "assessment"], "desc": "Supervision, examination and documentation of final projects." },
-        { "code": "spmi", "name": "Quality Assurance & Accreditation", "category": "ADDON", "license": "FLAT", "roles": ["pimpinan", "baak", "dosen"], "depends": ["academic", "assessment", "feeder_pddikti"], "desc": "Internal quality assurance and accreditation data preparation." },
-        { "code": "hr_bkd", "name": "HR / Workload / SISTER", "category": "ADDON", "license": "PER_SEAT", "roles": ["dosen", "baak", "pimpinan"], "depends": ["identity", "teaching"], "desc": "Lecturer workload, employment history and HR reporting." },
-        { "code": "parent_portal", "name": "Parent Portal", "category": "ADDON", "license": "INCLUDED", "roles": ["ortu"], "depends": ["enrollment", "assessment", "finance"], "desc": "View a student's attendance, grades and bills in a limited, secure way." },
-        { "code": "graduation", "name": "Commencement / Diploma Legalisation", "category": "ADDON", "license": "FLAT", "roles": ["mahasiswa", "baak", "pimpinan"], "depends": ["assessment", "feeder_pddikti"], "desc": "Graduation process, diplomas, graduate profiles and legalisation services." },
-        { "code": "tracer_iku", "name": "Tracer Study & KPI", "category": "ADDON", "license": "FLAT", "roles": ["pimpinan", "baak", "mahasiswa"], "depends": ["graduation", "feeder_pddikti"], "desc": "Alumni tracking and university core performance indicators." }
+        {
+          "code": "M-01",
+          "packageType": "ROLE",
+          "name": "SaaS Foundation",
+          "displayName": "Campus Service Management",
+          "audience": "Platform Managers",
+          "desc": "Manage participating campuses, service plans and subscriptions."
+        },
+        {
+          "code": "M-02",
+          "packageType": "ROLE",
+          "name": "Master Parameters",
+          "displayName": "Campus Settings",
+          "audience": "Campus Administrators",
+          "desc": "Set campus choices and rules, such as reference lists and student ID formats."
+        },
+        {
+          "code": "M-03",
+          "packageType": "CORE",
+          "name": "Access Control & RBAC",
+          "displayName": "Access Settings",
+          "audience": "Campus Administrators",
+          "desc": "Decide who can view or change information based on their work."
+        },
+        {
+          "code": "M-04",
+          "packageType": "ROLE",
+          "name": "IT Helpdesk",
+          "displayName": "User Help",
+          "audience": "All users",
+          "desc": "Ask for help and find answers to common problems."
+        },
+        {
+          "code": "M-05",
+          "packageType": "CORE",
+          "name": "Security & Audit",
+          "displayName": "Security and Change Records",
+          "audience": "Auditors, Campus Administrators",
+          "desc": "Record important changes and help protect the privacy and accuracy of information."
+        },
+        {
+          "code": "M-06",
+          "packageType": "UNMAPPED",
+          "name": "HRIS & Payroll",
+          "displayName": "Staff and Payroll",
+          "audience": "HR Staff, Employees",
+          "desc": "Manage staff records, leave, performance reviews, pay and tax."
+        },
+        {
+          "code": "M-07",
+          "packageType": "ADDON",
+          "name": "Lecturer Workload (BKD)",
+          "displayName": "Lecturer Workload",
+          "audience": "Lecturers, Programme Heads, Reviewers",
+          "desc": "Record and summarize teaching, research and community service activities."
+        },
+        {
+          "code": "M-08",
+          "packageType": "ADDON",
+          "name": "SISTER Sync",
+          "displayName": "Lecturer Records",
+          "audience": "Lecturers, HR Staff",
+          "desc": "Prepare and send lecturer information to SISTER and review the results."
+        },
+        {
+          "code": "M-09",
+          "packageType": "ADDON",
+          "name": "Admissions & OCR",
+          "displayName": "New Student Admissions",
+          "audience": "Admissions Staff, Applicants",
+          "desc": "Manage applications, documents, selection and student ID assignment."
+        },
+        {
+          "code": "M-10",
+          "packageType": "CORE",
+          "name": "Finance & Billing",
+          "displayName": "Bills and Payments",
+          "audience": "Finance Staff, Students",
+          "desc": "Record student bills and payments."
+        },
+        {
+          "code": "M-11",
+          "packageType": "UNMAPPED",
+          "name": "KIP-K & Scholarships",
+          "displayName": "Scholarships",
+          "audience": "Scholarship Staff, Students",
+          "desc": "Manage scholarship applications, eligibility and recipient follow-up."
+        },
+        {
+          "code": "M-12",
+          "packageType": "CORE",
+          "name": "OBE Curriculum",
+          "displayName": "Learning-Based Curriculum",
+          "audience": "Programme Heads, Deans",
+          "desc": "Plan courses and make sure they support learning goals."
+        },
+        {
+          "code": "M-13",
+          "packageType": "CORE",
+          "name": "Course Registration & Advising",
+          "displayName": "Course Plans and Advising",
+          "audience": "Students, Advisors, Academic Staff",
+          "desc": "Help students choose courses and request approval from their advisor."
+        },
+        {
+          "code": "M-14",
+          "packageType": "CORE",
+          "name": "Scheduling & Rooms",
+          "displayName": "Class Times and Rooms",
+          "audience": "Academic Staff, Lab Staff",
+          "desc": "Plan class times and arrange rooms and laboratory use."
+        },
+        {
+          "code": "M-15",
+          "packageType": "CORE",
+          "name": "Course Delivery Modes",
+          "displayName": "Class Formats",
+          "audience": "Academic Staff, Lecturers",
+          "desc": "Record how classes are held, such as in person or online, and when they meet."
+        },
+        {
+          "code": "M-16",
+          "packageType": "ADDON",
+          "name": "Digital LMS",
+          "displayName": "Course Materials and Assignments",
+          "audience": "Lecturers, Students",
+          "desc": "Provide course materials, assignments and an online learning space."
+        },
+        {
+          "code": "M-17",
+          "packageType": "ADDON",
+          "name": "Exams & Proctoring",
+          "displayName": "Exams and Supervision",
+          "audience": "Exam Supervisors, Lecturers",
+          "desc": "Manage exams and question sets, and flag activity that may need review."
+        },
+        {
+          "code": "M-18",
+          "packageType": "CORE",
+          "name": "Smart Attendance",
+          "displayName": "Class Attendance",
+          "audience": "Lecturers, Students, Academic Staff",
+          "desc": "Record student attendance using different sources."
+        },
+        {
+          "code": "M-19",
+          "packageType": "CORE",
+          "name": "Grades & Semester Reports",
+          "displayName": "Grades and Study Results",
+          "audience": "Lecturers, Programme Heads, Students",
+          "desc": "Calculate, publish and store grades and semester results."
+        },
+        {
+          "code": "M-20",
+          "packageType": "ADDON",
+          "name": "Final Projects & RAMA",
+          "displayName": "Final Projects",
+          "audience": "Students, Supervisors, Examiners",
+          "desc": "Manage supervision, final examinations and student project records."
+        },
+        {
+          "code": "M-21",
+          "packageType": "UNMAPPED",
+          "name": "Journals & OJS",
+          "displayName": "Journal Publishing",
+          "audience": "Journal Managers",
+          "desc": "Manage the publication of academic journals."
+        },
+        {
+          "code": "M-22",
+          "packageType": "UNMAPPED",
+          "name": "Incubator & Intellectual Property",
+          "displayName": "Ideas, Creations and Startups",
+          "audience": "Innovation Staff, Lecturers, Students",
+          "desc": "Support ideas, creative work, usage rights and new businesses."
+        },
+        {
+          "code": "M-23",
+          "packageType": "ADDON",
+          "name": "Commencement & Gowns",
+          "displayName": "Graduation Ceremony",
+          "audience": "Event Staff, Academic Staff",
+          "desc": "Arrange graduation events, attendee lists and seating. Graduation decisions remain part of the academic process."
+        },
+        {
+          "code": "M-24",
+          "packageType": "UNMAPPED",
+          "name": "Student Affairs & SKKM",
+          "displayName": "Student Activities",
+          "audience": "Student Affairs Staff",
+          "desc": "Manage student activities, achievements, points and conduct matters."
+        },
+        {
+          "code": "M-25",
+          "packageType": "UNMAPPED",
+          "name": "Community Service, Internship & Placement",
+          "displayName": "Community Service and Internships",
+          "audience": "Students, Field Supervisors, Partners",
+          "desc": "Arrange community service, internships and student placements with partners."
+        },
+        {
+          "code": "M-26",
+          "packageType": "CORE",
+          "name": "Graduation Projection",
+          "displayName": "Estimated Time to Graduate",
+          "audience": "Students, Advisors",
+          "desc": "Estimate graduation timing based on courses a student still needs to complete."
+        },
+        {
+          "code": "M-27",
+          "packageType": "ADDON",
+          "name": "Tracer Study",
+          "displayName": "Alumni Survey",
+          "audience": "Alumni Staff, Alumni",
+          "desc": "Gather updates and feedback from graduates."
+        },
+        {
+          "code": "M-28",
+          "packageType": "UNMAPPED",
+          "name": "Career Center",
+          "displayName": "Alumni Careers",
+          "audience": "Alumni, Employers",
+          "desc": "Connect alumni with job openings, applications and career events."
+        },
+        {
+          "code": "M-29",
+          "packageType": "UNMAPPED",
+          "name": "International Office & Mobility",
+          "displayName": "Student Exchange and International Support",
+          "audience": "International Office, International Students",
+          "desc": "Manage student exchanges and support for international students."
+        },
+        {
+          "code": "M-30",
+          "packageType": "ADDON",
+          "name": "Graduation Clearance & Diploma Supplement",
+          "displayName": "Graduation Checks and Documents",
+          "audience": "Academic Staff, Deans, Students",
+          "desc": "Check graduation requirements and prepare supporting diploma documents."
+        },
+        {
+          "code": "M-31",
+          "packageType": "ADDON",
+          "name": "Accreditation & LKPS",
+          "displayName": "Accreditation Preparation",
+          "audience": "Programme Heads, Quality Staff",
+          "desc": "Gather information needed for programme accreditation."
+        },
+        {
+          "code": "M-32",
+          "packageType": "ADDON",
+          "name": "KPI Dashboard",
+          "displayName": "Campus Performance Summary",
+          "audience": "University Leaders, Quality Staff",
+          "desc": "Show a summary of university performance indicators."
+        },
+        {
+          "code": "M-33",
+          "packageType": "CORE",
+          "name": "Emergency Scheduling",
+          "displayName": "Schedule Changes",
+          "audience": "Academic Staff, Facilities Staff",
+          "desc": "Help rearrange classes when a room or activity is disrupted."
+        },
+        {
+          "code": "M-34",
+          "packageType": "CORE",
+          "name": "PDDikti Feeder",
+          "displayName": "PDDikti Reporting",
+          "audience": "PDDikti Reporting Staff",
+          "desc": "Help check and send campus information for PDDikti reporting."
+        },
+        {
+          "code": "M-35",
+          "packageType": "ROLE",
+          "name": "PIN & SIVIL",
+          "displayName": "Diplomas and Verification",
+          "audience": "Academic Staff, Public",
+          "desc": "Manage diploma PINs and help the public check graduation documents."
+        },
+        {
+          "code": "M-36",
+          "packageType": "UNMAPPED",
+          "name": "PPKS Portal",
+          "displayName": "Sexual Violence Reporting and Support",
+          "audience": "Support Team, Reporters",
+          "desc": "Provide a way to report and handle sexual violence cases on campus."
+        },
+        {
+          "code": "M-37",
+          "packageType": "ADDON",
+          "name": "Internal Quality Assurance",
+          "displayName": "Quality Assurance",
+          "audience": "Auditors, Quality Staff",
+          "desc": "Manage quality standards, internal reviews, findings and follow-up."
+        },
+        {
+          "code": "M-38",
+          "packageType": "ADDON",
+          "name": "Independent Learning / MBKM",
+          "displayName": "Learning Beyond Campus",
+          "audience": "Programme Heads, Students",
+          "desc": "Record off-campus learning and how it counts toward course requirements."
+        },
+        {
+          "code": "M-39",
+          "packageType": "UNMAPPED",
+          "name": "e-Library",
+          "displayName": "Library",
+          "audience": "Librarians, Students",
+          "desc": "Manage library items, loans, fines and library clearance."
+        },
+        {
+          "code": "M-40",
+          "packageType": "UNMAPPED",
+          "name": "Assets & Inventory",
+          "displayName": "Campus Assets",
+          "audience": "Facilities Staff, Asset Staff",
+          "desc": "Record campus property, loans and asset condition."
+        },
+        {
+          "code": "M-41",
+          "packageType": "UNMAPPED",
+          "name": "Campus Clinic",
+          "displayName": "Clinic and Counseling",
+          "audience": "Doctors, Counselors, Students",
+          "desc": "Support clinic and counseling services while protecting personal information."
+        },
+        {
+          "code": "M-42",
+          "packageType": "UNMAPPED",
+          "name": "Residence & Canteen",
+          "displayName": "Housing and Canteen",
+          "audience": "Operators, Students",
+          "desc": "Manage student housing, canteen services and payments."
+        },
+        {
+          "code": "M-43",
+          "packageType": "UNMAPPED",
+          "name": "Communications & Events",
+          "displayName": "Campus Events",
+          "audience": "Communications Staff, Participants",
+          "desc": "Manage event registration and record attendee check-in."
+        },
+        {
+          "code": "M-44",
+          "packageType": "UNMAPPED",
+          "name": "Research & Community Service (SIM-LPPM)",
+          "displayName": "Research and Community Service",
+          "audience": "Researchers, Reviewers, Finance Staff",
+          "desc": "Manage funding applications, reviews, agreements and research results."
+        },
+        {
+          "code": "M-45",
+          "packageType": "UNMAPPED",
+          "name": "Admissions CRM & Marketing",
+          "displayName": "Student Recruitment",
+          "audience": "Admissions Teams, Partners",
+          "desc": "Support student recruitment and keep track of prospective applicants."
+        },
+        {
+          "code": "M-46",
+          "packageType": "UNMAPPED",
+          "name": "E-Procurement",
+          "displayName": "Purchasing Goods and Services",
+          "audience": "Procurement Staff, Budget Managers, Suppliers",
+          "desc": "Manage purchasing from request through agreement."
+        },
+        {
+          "code": "M-47",
+          "packageType": "UNMAPPED",
+          "name": "Endowment Fund",
+          "displayName": "Campus Endowment Fund",
+          "audience": "Fund Managers, Donors",
+          "desc": "Manage donations and endowment funds for scholarships or grants."
+        }
       ]
-    },
-    "benchmark": {
-      "eyebrow": "Benchmark",
-      "title": "Why Campuses Choose SICA",
-      "subtitle": "Against conventional academic systems and generic SaaS — it is not about menu count, but the technical foundation underneath.",
-      "columns": ["Conventional SIAKAD", "Generic Academic SaaS", "SICA"],
-      "rows": [
-        { "label": "Cross-campus data isolation", "cells": ["Separate instances", "Database schema", "Row-level security, default-deny"] },
-        { "label": "Self-serve module activation", "cells": ["No", "Limited", "Yes, with dependency map"] },
-        { "label": "Shared Web ↔ Mobile data contract", "cells": ["Two codebases", "Sometimes", "One source (Zod → TS & Dart)"] },
-        { "label": "On-premise / dedicated deploy", "cells": ["Yes", "Rare", "Yes"] },
-        { "label": "Enrolment-day peak readiness", "cells": ["Often down", "Limited", "Queue + per-class lock + idempotent"] },
-        { "label": "PDDikti field completeness", "cells": ["Patched at reporting", "Partial", "Designed into the schema"] }
-      ],
-      "sevimaTitle": "Market-standard module coverage",
-      "sevimaNote": "Core modules are production-ready; add-ons are mapped in a staged roadmap.",
-      "statusReady": "Ready",
-      "statusPartial": "Staged",
-      "statusRoadmap": "Roadmap",
-      "sevima": [
-        { "label": "Academic & Enrolment", "status": "ready" },
-        { "label": "Attendance & Geofencing", "status": "ready" },
-        { "label": "Grades, Reports & Transcripts", "status": "ready" },
-        { "label": "Finance & Tuition", "status": "partial" },
-        { "label": "PDDikti Feeder", "status": "partial" },
-        { "label": "Admission & CBT", "status": "roadmap" },
-        { "label": "MBKM", "status": "roadmap" },
-        { "label": "Final Project / Thesis", "status": "roadmap" },
-        { "label": "Quality & Accreditation", "status": "roadmap" },
-        { "label": "HR / Workload / SISTER", "status": "roadmap" },
-        { "label": "Parent Portal", "status": "roadmap" },
-        { "label": "Commencement / Diploma", "status": "roadmap" },
-        { "label": "Tracer Study & KPI", "status": "roadmap" }
-      ]
-    },
-    "deepdive": {
-      "krs": {
-        "eyebrow": "Enrolment Flow",
-        "title": "An Orderly Course Registration Window",
-        "steps": [
-          { "title": "Read last semester GPA", "desc": "Credit limit is computed from GPA and curriculum rules, never typed by hand." },
-          { "title": "Pick classes, detect clashes", "desc": "Schedule, lecturer and room conflicts are checked before submission." },
-          { "title": "Billing gate", "desc": "The institution may require tuition settlement before enrolment becomes effective." },
-          { "title": "Advisor approval", "desc": "Academic advisors approve or reject with a recorded reason." }
-        ]
-      },
-      "attendance": {
-        "eyebrow": "Attendance Flow",
-        "title": "Attendance You Can Defend",
-        "steps": [
-          { "title": "Lecturer opens the session", "desc": "QR is issued with a 30-second lifetime and an HMAC signature." },
-          { "title": "Student scans in class", "desc": "GPS coordinates are compared against the classroom location." },
-          { "title": "Layered validation", "desc": "Mock locations, out-of-radius and expired QR codes are all rejected." },
-          { "title": "Automatic recap", "desc": "Attendance percentage becomes exam eligibility and audit evidence." }
-        ]
-      }
     },
     "roles": {
-      "eyebrow": "Roles",
-      "title": "A Different View for Every Stakeholder",
-      "subtitle": "SICA serves every role on campus — from students to leadership — with a tailored view and access rights for each.",
+      "eyebrow": "Who It Is For",
+      "title": "Planned services for each role",
+      "subtitle": "The examples below show needs the service aims to support. They are still being developed and may not be available yet.",
+      "scopeLabel": "Example needs",
       "tabs": [
         {
           "key": "mahasiswa",
           "label": "Students",
           "title": "Everything about the semester on one screen",
           "desc": "Cumulative GPA and earned credits are computed from locked grades, the daily schedule shows rooms and lecturers, and the billing status is visible before registering courses.",
-          "points": ["Dashboard reads real academic data", "Course registration with live remaining credits", "Print grade report and transcript", "Scan attendance QR from the phone"]
+          "points": [
+            "Academic dashboard information",
+            "Course registration and credit planning",
+            "Grade report and transcript access",
+            "Mobile attendance concept"
+          ]
         },
         {
           "key": "dosen",
           "label": "Lecturers & Advisors",
           "title": "Teach, grade and advise without spreadsheets",
           "desc": "Assigned classes, today's sessions and advisee lists come first, then component grading with weights locked to 100%.",
-          "points": ["Assigned classes and today's sessions", "Approve advisee course registration", "Enter and lock component grades", "Attendance recap per student"]
+          "points": [
+            "Assigned classes and today's sessions",
+            "Approve advisee course registration",
+            "Enter and lock component grades",
+            "Attendance recap per student"
+          ]
         },
         {
           "key": "admin",
           "label": "Academic Affairs",
           "title": "Operational control of one institution",
           "desc": "Close data gaps before reporting: course master, parallel classes, active periods and add-on activation can be managed without waiting for the vendor.",
-          "points": ["Aggregates of students, lecturers and classes", "Module activation with dependency map", "Manage periods and parallel schedules", "Audit trail of administrator actions"]
+          "points": [
+            "Aggregates of students, lecturers and classes",
+            "Module activation with dependency map",
+            "Manage periods and parallel schedules",
+            "Audit trail of administrator actions"
+          ]
         },
         {
           "key": "pimpinan",
           "label": "Leadership",
           "title": "The numbers used to make decisions",
           "desc": "Performance indices, study completion and reporting compliance are presented consistently, so leadership meetings discuss policy instead of arguing about figures.",
-          "points": ["Academic performance index per study programme", "Completion and study-duration monitoring", "Reporting readiness", "Exports for senate meetings"]
+          "points": [
+            "Academic performance index per study programme",
+            "Completion and study-duration monitoring",
+            "Reporting readiness",
+            "Exports for senate meetings"
+          ]
         }
       ]
     },
     "security": {
-      "eyebrow": "Security & Compliance",
-      "title": "Built Assuming Campus Data Will Be Tested for Leaks",
+      "eyebrow": "Data Protection",
+      "title": "How SICA plans to protect information",
       "items": [
-        { "title": "Row-level tenant isolation", "desc": "Default-deny RLS on tenant_id across business tables with the tenant context set per transaction." },
-        { "title": "RS256 session JWT", "desc": "Asymmetrically signed access tokens, single-use refresh tokens and family reuse detection." },
-        { "title": "Hashed passwords", "desc": "Modern hashing with a server-side pepper and account lockout after repeated failures." },
-        { "title": "Audit trail", "desc": "Grade changes, manual attendance and admin actions are recorded with the actor." },
-        { "title": "Least privilege", "desc": "Module and role gating restricts routes and menus, not just hidden buttons." },
-        { "title": "Personal data protection", "desc": "Student biodata follows reporting needs without collecting more than required." }
-      ]
+        {
+          "title": "Separate campus data",
+          "desc": "Each campus's information is planned to be stored separately. This separation must be tested before use."
+        },
+        {
+          "title": "Access based on work",
+          "desc": "Users should only see or change information needed for their work. This rule still needs testing."
+        },
+        {
+          "title": "Account security",
+          "desc": "Passwords and sign-in details must be protected before the portal is used."
+        },
+        {
+          "title": "Change records",
+          "desc": "Important changes are planned to be recorded so they can be reviewed later."
+        },
+        {
+          "title": "Limited access",
+          "desc": "Access should match each person's campus responsibilities and must be checked before use."
+        },
+        {
+          "title": "Privacy",
+          "desc": "Personal information should only be collected when needed, protected and kept according to applicable rules."
+        }
+      ],
+      "note": "These are security plans, not a certificate or a guarantee that every protection is active."
     },
     "integrations": {
-      "eyebrow": "Integrations",
-      "title": "Connected to Systems the Campus Already Runs",
+      "eyebrow": "Connections to Other Services",
+      "title": "Services SICA plans to connect",
+      "note": "These connections are still planned. Availability and how they work must be checked before use.",
       "items": [
-        { "title": "PDDikti Neo Feeder", "desc": "Sync master and academic data for national reporting." },
-        { "title": "Payment gateways", "desc": "Virtual accounts, QRIS and automatic reconciliation to student bills." },
-        { "title": "Email & WhatsApp", "desc": "Notifications for schedule, billing and academic announcements." },
-        { "title": "Campus SSO", "desc": "OAuth2/OIDC with PKCE reusing existing identities." },
-        { "title": "Attendance devices", "desc": "Biometric or card readers as an alternative attendance source." },
-        { "title": "LMS & library", "desc": "Materials and loan status linked to one identity." }
-      ]
-    },
-    "pricing": {
-      "eyebrow": "Pricing",
-      "title": "Indicative, Scaled to Your Campus",
-      "subtitle": "Figures below are planning ranges; the final proposal follows student volume and the modules you activate.",
-      "annualNote": "per student per year",
-      "plans": [
-        { "name": "Starter", "price": "IDR 12,000", "desc": "For a new faculty or campus that needs the academic core running fast.", "features": ["Core academic modules", "Web & mobile portal", "Business-hours support", "1 institution (tenant)"], "cta": "Talk to Us", "featured": false },
-        { "name": "Campus", "price": "IDR 19,000", "desc": "The most complete package for universities with many faculties and programmes.", "features": ["All core modules", "Finance & billing", "PDDikti Feeder integration", "Campus SSO", "Priority support", "99.9% SLA"], "cta": "Choose Campus", "featured": true },
-        { "name": "Enterprise", "price": "Custom", "desc": "Institutions with on-premise needs, special audits and high volume.", "features": ["Everything in Campus", "Dedicated / on-prem deploy", "Audit & penetration testing", "Staff training", "Dedicated project manager"], "cta": "Contact Sales", "featured": false }
-      ]
-    },
-    "testimonials": {
-      "eyebrow": "Testimonials",
-      "title": "Voices from the Academic Community",
-      "disclaimer": "Quotes are illustrative for marketing demo purposes and will be replaced with verified client testimonials.",
-      "items": [
-        { "quote": "The biggest difference is enrollment day. We used to babysit the server; now we just watch the queue.", "name": "Head of Academic Affairs", "org": "Public University (West Java)" },
-        { "quote": "As an advisor, approving my advisees' study plans no longer means printing paper forms.", "name": "Lecturer & Academic Advisor", "org": "Informatics Engineering Programme" },
-        { "quote": "Attendance eligibility for final exams is finally trustworthy, because it is location-validated.", "name": "Vice Rector for Academic Affairs", "org": "Private University (East Java)" }
+        {
+          "title": "PDDikti",
+          "desc": "Planned checks and reporting of campus information to Indonesia's higher-education database."
+        },
+        {
+          "title": "Campus payments",
+          "desc": "Planned support for recording payments. The payment provider has not been selected."
+        },
+        {
+          "title": "Email and messages",
+          "desc": "Planned delivery of important updates. The messaging service has not been selected."
+        },
+        {
+          "title": "Campus account sign-in",
+          "desc": "Planned sign-in using a campus account. This option must be agreed and tested."
+        },
+        {
+          "title": "Attendance devices",
+          "desc": "Connections to campus devices will be decided once the devices and their setup are known."
+        },
+        {
+          "title": "Learning and library systems",
+          "desc": "The way information is shared with learning or library systems still needs to be decided."
+        }
       ]
     },
     "faq": {
       "eyebrow": "FAQ",
-      "title": "Questions We Are Asked Most",
+      "title": "Frequently asked questions",
       "items": [
-        { "q": "Does SICA replace an existing academic system?", "a": "SICA can run in parallel and later become the system of record. Master data and grade history migrate in stages using an expand-and-contract scheme so there is no academic downtime." },
-        { "q": "How is one campus prevented from reading another's data?", "a": "Every business table uses a tenant_id column with default-deny Row-Level Security. The tenant context is set at the start of the transaction, so even a query that forgets to filter cannot return another tenant's rows." },
-        { "q": "Is it ready for thousands of simultaneous students?", "a": "The design target is 1,000+ concurrent users: read/write splitting, pooled database connections, per-class locking and a worker queue to finalise enrolment." },
-        { "q": "How long until it is usable?", "a": "The academic core typically goes live within weeks for one institution, depending on master data completeness and which add-on modules are activated." },
-        { "q": "Can we run it on campus servers?", "a": "Yes. The architecture supports dedicated or local cloud deployment, with releases separated from deployments behind feature flags." },
-        { "q": "Is there a mobile app?", "a": "Yes. The web portal and mobile app share the same data contracts so key features have equivalents, including QR attendance from the phone." }
+        {
+          "q": "Can campuses use SICA now?",
+          "a": "Not yet. SICA is still being developed. Each service must be checked before it is used."
+        },
+        {
+          "q": "Are all listed services available?",
+          "a": "No. This list shows planned work, not finished services."
+        },
+        {
+          "q": "Does SICA have a security certificate?",
+          "a": "This page does not claim that SICA has a security certificate. Planned protections still need to be checked and tested."
+        },
+        {
+          "q": "Is SICA connected to PDDikti and payment services?",
+          "a": "This has not been confirmed. These connections still need to be built and tested."
+        },
+        {
+          "q": "Have prices and launch dates been set?",
+          "a": "No prices or dates have been announced. Please confirm them with SICA."
+        },
+        {
+          "q": "How do I sign in?",
+          "a": "Choose Sign In. The portal is only for people who already have a campus account."
+        }
       ]
     },
     "cta": {
-      "title": "Ready to See SICA with Your Campus Data?",
-      "subtitle": "We can prepare a test tenant containing a sample study programme, courses and one full registration cycle so the demo feels like real operations.",
-      "primary": "Book a Technical Demo",
-      "secondary": "Open the Demo Portal"
+      "title": "Explore SICA's planned services",
+      "subtitle": "SICA is still being developed. Examples on this page may not be available yet.",
+      "primary": "See planned services",
+      "secondary": "Sign In to the Portal"
     },
     "footer": {
-      "tagline": "All-in-one academic platform for Indonesian higher education.",
-      "product": "Product",
-      "company": "Company",
-      "resources": "Resources",
-      "legal": "Legal",
-      "productLinks": ["Academic Modules", "Attendance & Geofencing", "Campus Finance", "Mobile App"],
-      "companyLinks": ["About Us", "Careers", "Partners", "Contact"],
-      "resourceLinks": ["Documentation", "Service Status", "Changelog", "Help Center"],
-      "legalLinks": ["Privacy Policy", "Terms of Service", "Data Security"],
-      "copyright": "All Rights Reserved.",
-      "contactNote": "For institutions: implementation consulting and data migration are available."
+      "tagline": "Planned services to support higher-education activities.",
+      "navigation": "Page links",
+      "copyright": "Information may change during development."
+    }
+  },
+  "admin": {
+    "crumbDashboard": "Dashboard",
+    "crumbAdmin": "Admin area",
+    "crumbUsers": "Users",
+    "crumbRbac": "Access rights",
+    "crumbRequests": "Access requests",
+    "usersTitle": "Campus users",
+    "usersSubtitle": "Accounts, memberships and effective roles read from assignments — not the login label.",
+    "newUser": "Create account",
+    "createHint": "A new account deliberately holds no permission until a second person approves a grant.",
+    "fFullName": "Full name",
+    "fEmail": "Campus email",
+    "fMemberCode": "Member code",
+    "memberCodeHint": "Student / lecturer ID — unique inside this institution",
+    "fCarrier": "Login carrier",
+    "carrierHint": "Routes the login only; it is not an access right",
+    "fInitialPassword": "Initial password",
+    "passwordHint": "At least 12 characters; shown once and never logged",
+    "fReason": "Reason",
+    "reasonHint": "At least 10 characters — the reason is evidence, not a formality",
+    "fRole": "Requested role",
+    "roleHint": "System roles can be assigned but their composition stays locked",
+    "fValidTo": "Valid until",
+    "validToHint": "Leave empty for no expiry",
+    "formInvalid": "Fix the highlighted fields",
+    "userCreated": "Account created",
+    "userCreatedBody": "account active with zero rights; request a role from the access tab",
+    "userDeactivated": "Account deactivated",
+    "deactivate": "Deactivate",
+    "deactivateTitle": "Deactivate means close, not delete",
+    "deactivateBody": "Account status closes, every assignment gets valid_to, active sessions are revoked. The user row stays so academic history remains readable.",
+    "askRole": "Request role",
+    "submitRequest": "Submit request",
+    "requestQueued": "Request recorded (PENDING)",
+    "requestQueuedBody": "The right is not active yet — another approver must confirm it in the requests queue",
+    "grantPendingNote": "Four-eyes: you cannot approve your own request, and an approver cannot approve a grant to themselves.",
+    "noRoles": "No roles yet",
+    "holders": "holders",
+    "rbacTitle": "Access rights & roles",
+    "rbacSubtitle": "Role × permission × assignment matrix; every rights change goes through two people.",
+    "tabRoles": "Roles & permissions",
+    "tabAssignments": "Assignments",
+    "colPerson": "Member",
+    "colMemberCode": "Code",
+    "colEffectiveRoles": "Effective roles",
+    "colAccountStatus": "Account status",
+    "colActive": "Active assignments",
+    "colState": "State",
+    "colRole": "Role",
+    "colScope": "Scope",
+    "colKind": "Type",
+    "colHolders": "Holders",
+    "colPermissions": "Permissions",
+    "colOrigin": "Origin",
+    "colValidFrom": "Valid from",
+    "colValidTo": "Valid to",
+    "colReason": "Reason",
+    "colRequestedAt": "Requested",
+    "colStatus": "Status",
+    "colDecisionReason": "Decision reason",
+    "systemLocked": "System role — locked",
+    "systemLockedBody": "A system role’s composition cannot be edited; create a custom role when the campus needs something different.",
+    "customRole": "Custom role",
+    "openPermissions": "Role permissions",
+    "searchPermission": "Search permission catalog",
+    "searchPermissionHint": "Type at least 2 characters, e.g. finance.invoice",
+    "noSearchResults": "No new permission matches the search.",
+    "effectivePermissions": "Effective permissions",
+    "previewNote": "This list is a preview of the request. The role’s permission count has not changed until someone approves.",
+    "pendingAdd": "requested +",
+    "pendingRemove": "requested −",
+    "remove": "Remove",
+    "revoke": "Revoke assignment",
+    "revokeQueuedBody": "The assignment is not revoked yet; the REVOKE request awaits a second approver. Rows are never deleted.",
+    "deltaQueuedBody": "The permission delta is not active; role_permissions changes only after approval.",
+    "noEnd": "no expiry",
+    "requestsTitle": "Access request queue",
+    "requestsSubtitle": "GRANT · REVOKE · ROLE_PERMISSION_CHANGE in one four-eyes decision queue.",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approved": "Approved — the right applies from the next request",
+    "rejected": "Rejected",
+    "decisionHint": "Decisions are terminal and recorded in the audit chain together with the approver’s identity.",
+    "rejectHint": "Required, ≥ 10 characters: an unexplained rejection cannot be audited",
+    "reload": "Reload",
+    "save": "Save",
+    "close": "Close",
+    "empty": "No data yet",
+    "busy": "Working…",
+    "loadingList": "Loading…",
+    "loadFailed": "The list could not be loaded: {message}",
+    "fourEyesTitle": "Four-eyes, not two buttons",
+    "fourEyesBody": "Approval refuses when the approver is the requester or the target, requires an MFA session, and refuses any scope wider than the approver’s own assignment.",
+    "org": {
+      "title": "Organization & Study Programs",
+      "subtitle": "The ground assignment scopes stand on: faculties, departments, units and study programs with their academic numbers.",
+      "tabOrg": "Organizations",
+      "tabProdi": "Study programs",
+      "colName": "Name",
+      "colCode": "Code",
+      "colKind": "Kind",
+      "colParent": "Parent",
+      "colChildren": "Children",
+      "colPrograms": "Programs",
+      "colLevel": "Level",
+      "colSks": "Minimum SKS",
+      "colNominal": "Nominal study period",
+      "colMax": "Maximum study period",
+      "colIpk": "GPA threshold",
+      "colAccreditation": "Accreditation",
+      "colPddikti": "PDDikti code",
+      "createOrg": "Add organization",
+      "editOrg": "Edit organization",
+      "createProdi": "Add study program",
+      "editProdi": "Edit study program",
+      "fName": "Name",
+      "fCode": "Institution code",
+      "fKind": "Organization kind",
+      "fParent": "Parent",
+      "fNoParent": "— no parent (root) —",
+      "fLevel": "Level",
+      "fPddikti": "PDDikti code",
+      "fMinSks": "Minimum credit load (SKS)",
+      "fNominal": "Nominal study period (semesters)",
+      "fMax": "Maximum study period (semesters)",
+      "fIpk": "Graduation GPA threshold",
+      "fAccreditation": "Accreditation status",
+      "fReason": "Reason",
+      "hintCode": "Optional; when set it is unique within this institution",
+      "hintPddikti": "Used by the Feeder submission channel; empty means this program is never submitted",
+      "hintNumbers": "These academic numbers decide study load and graduation — every change is recorded with a reason.",
+      "noParentOption": "Hierarchy root",
+      "saved": "Change saved and recorded in the audit trail.",
+      "noOrgs": "No organizations yet. Add a hierarchy root first (e.g. the rectorate or a graduate school).",
+      "noProdis": "No study programs yet. A program must point to the organization it belongs to.",
+      "kindHQ": "Head office",
+      "kindFACULTY": "Faculty",
+      "kindDEPARTMENT": "Department",
+      "kindUNIT": "Unit",
+      "kindLIBRARY": "Library",
+      "cycleBlocked": "The hierarchy must not loop — the new parent sits below this node itself.",
+      "note": "There is no delete button. Organizations and programs are reference points for scopes and historical reports; deleting them breaks records already published."
+    },
+    "statusFilterNote": "Decided rows stay visible: a terminal decision is evidence, not queue litter.",
+    "onlyPending": "Pending only",
+    "allStatuses": "All statuses",
+    "param": {
+      "list": {
+        "title": "System Parameters",
+        "description": "Thresholds, limits, flags and patterns read by the engine — one home per institution.",
+        "colKey": "Key",
+        "colModule": "Module",
+        "colValue": "Current value",
+        "colDefault": "Default",
+        "colRange": "Range & allowed values",
+        "colRisk": "Risk class",
+        "colScope": "Window & scope",
+        "colVersion": "Version",
+        "colStatus": "Status",
+        "colDescription": "Description"
+      },
+      "filter": {
+        "module": "Module",
+        "riskClass": "Risk class",
+        "q": "Search key or description",
+        "includeInactive": "Include inactive",
+        "editableOnly": "Editable only",
+        "at": "State on date"
+      },
+      "risk": {
+        "TECHNICAL": "TECHNICAL",
+        "OPS": "OPS",
+        "ACADEMIC": "ACADEMIC",
+        "FINANCIAL": "FINANCIAL",
+        "REGULATORY": "REGULATORY",
+        "SECURITY": "SECURITY"
+      },
+      "status": {
+        "active": "Active",
+        "inactive": "Inactive",
+        "hiddenModule": "Module hidden",
+        "expired": "Expired",
+        "pointerIndex": "Discovery index",
+        "unboundedRange": "no limit"
+      },
+      "disabled": {
+        "notParamSource": "The real value lives in another home and is maintained there.",
+        "noEditGrant": "You do not hold the write grant for this class.",
+        "checkLocked": "Enforced by a database CHECK — no screen can negotiate past it.",
+        "moduleInactive": "The owning module is not active for this institution."
+      },
+      "editor": {
+        "title": "Edit value",
+        "reasonLabel": "Reason for change",
+        "reasonCounter": "{n}/500 characters, minimum 10",
+        "appliesTo": "Scope (empty = inherit the tenant value)",
+        "inheritedScope": "Whole tenant",
+        "impactLine": "Read by {count} registered consumers.",
+        "effectiveNow": "Currently effective value",
+        "proposedValue": "Proposed value",
+        "diffTitle": "Change",
+        "save": "Save value",
+        "submit": "Send to second approver",
+        "close": "Close"
+      },
+      "range": {
+        "between": "Allowed: {min}–{max}{unit}",
+        "allowedValues": " · allowed: {values}",
+        "unitSuffix": " {unit}",
+        "noLimit": "no limit",
+        "pctHint": "The 100% ceiling is enforced in transport and in the database.",
+        "bpHint": "= {pct}% (basis points; 10,000 = 100%)",
+        "cronPreview": "Schedule preview appears once the scheduler reads this key.",
+        "cronPreviewUnavailable": "Preview unavailable; the server still validates the value."
+      },
+      "riskCopy": {
+        "totpRotate": "A shorter rotation window shrinks the time a token can be replayed. Values below 5 seconds are rejected by the database and cannot be saved from any screen.",
+        "geofenceRadius": "A looser radius rejects fewer legitimate scans but widens the chance of recording attendance outside the room. Per-room limits stay in rooms.allowed_radius_m.",
+        "gpsAccuracy": "A tighter accuracy threshold will reject more legitimate readings inside the building.",
+        "clockSkew": "A looser clock skew accepts events that did not happen now.",
+        "onlineMinJoin": "Lowering the ratio counts partial attendance as fully present.",
+        "multiSourcePolicy": "This policy decides which evidence wins when on-site and online disagree; attendance stays one row per (session, student)."
+      },
+      "pending": {
+        "submitted": "Waiting for a second approver",
+        "effective": "The old value stays effective until this request is approved.",
+        "approvers": "Next holders",
+        "selfApprovalNotice": "You cannot approve your own request (SELF_APPROVAL_FORBIDDEN)."
+      },
+      "error": {
+        "outOfRange": "Value outside the allowed range. Resubmit between the lower and upper bounds shown.",
+        "readOnly": "This key is a discovery index only. Open the screen that owns the value.",
+        "invalidType": "Value type does not match the key data_type. The control label states the expected shape.",
+        "enumUnknown": "Value is not a dictionary member on that date. Add the dictionary item first; do not force the number.",
+        "secretForbidden": "Parameters never store secrets. Move the credential to ENV/vault.",
+        "restartRequired": "This key needs a release. The value was not written because the deploy pipeline is not wired.",
+        "approvalRequired": "Value stored as a draft and not yet effective. Send it to a second approver.",
+        "patternInvalid": "Invalid grant pattern. Check the parameterPattern shape and the required note.",
+        "permissionUnknown": "Permission code is not in the catalog. Names cannot be invented from a screen.",
+        "conflictVersion": "The row changed since you loaded it. Reload before saving.",
+        "selfApproval": "Four-eyes: the approver must be a second person. Ask another class holder to decide.",
+        "alreadyDecided": "Request already in a terminal state. See this key’s history.",
+        "notFound": "Key not found in this institution."
+      },
+      "mfa": {
+        "gate": "Changes of class {riskClass} require a multi-factor session. Your input stays on this screen until verification completes."
+      },
+      "sod": {
+        "grantHolder": "Save is hidden because your grants do not cover this class — submitting is still possible.",
+        "securityClass": "You hold grants over the object this threshold guards. The change must be submitted by another admin and approved by a second person (SoD G-19)."
+      },
+      "stale": {
+        "title": "Version state changed",
+        "reload": "Reload",
+        "cancel": "Cancel",
+        "detail": "The row is no longer version {version}. Saving would silently overwrite someone else’s change."
+      },
+      "mode": {
+        "readonlyReconstruct": "Read-only mode: state reconstructed from history on {at}. No value can be changed.",
+        "clientNotice": "Numbers on this screen are server projections. Clients never decide from editable thresholds."
+      },
+      "history": {
+        "title": "Change history",
+        "empty": "No recorded change in this range.",
+        "rangeFrom": "From date",
+        "rangeTo": "To date",
+        "source": "Source",
+        "approver": "Approver",
+        "redactedNotice": "Full identity and IP address are shown only to history-view holders.",
+        "replicaLag": "History read from a read replica; newest entries may lag briefly.",
+        "revert": "Revert to this version",
+        "revertConfirm": "Value {from} becomes {to}. This writes a new entry, never deletes a trace.",
+        "revertReason": "Revert to v{version}: ",
+        "revertDefault": "back to the default value"
+      },
+      "impact": {
+        "title": "Impact",
+        "empty": "No registry row for this key — nothing reads it.",
+        "orphan": "Key without a registered consumer (CI debt, not a feature).",
+        "ciDebt": "Registry debt",
+        "groupMenu": "Screens",
+        "groupService": "Processes/server",
+        "groupDictionary": "Dictionary",
+        "groupPattern": "Grant patterns",
+        "openingLine": "What this change touches: every reader below sees the new value on its next request."
+      },
+      "register": {
+        "title": "Register a new key",
+        "consumerHint": "Call sites that already exist in this branch (file:symbol), comma separated. Without consumers registration is rejected.",
+        "consumerMissing": "Consumers not proven: {missing}",
+        "dataTypeUnit": "The type decides the control; the unit is appended to the current value.",
+        "riskClassHint": "REGULATORY/SECURITY keys cannot be registered from a screen: the CHECK demands a real second approver.",
+        "submit": "Register key"
+      },
+      "tabs": {
+        "catalog": "Catalog",
+        "queue": "Approval queue",
+        "value": "Value",
+        "history": "History",
+        "impact": "Impact"
+      },
+      "queue": {
+        "title": "Approval queue",
+        "colKey": "Key",
+        "colProposed": "Proposed",
+        "colCurrent": "Still effective",
+        "colRequested": "Requested by",
+        "colState": "State",
+        "approve": "Approve",
+        "reject": "Reject",
+        "empty": "No draft is waiting.",
+        "reasonRequired": "Rejection requires a reason of 10–500 characters."
+      },
+      "versionLine": "Parameter version {hash} · {count} keys projected",
+      "reload": "Reload"
+    },
+    "crumbParameters": "System Parameters"
+  },
+  "krs": {
+    "metaTitle": "Study Plan Card (KRS)",
+    "metaDescription": "Build this semester's study plan from the real class list: IPS-based SKS ceiling, seat capacity, and schedule clashes.",
+    "title": "Study Plan Card (KRS)",
+    "description": "Build this semester's study plan: mind the IPS-based SKS ceiling, seat capacity, and schedule clashes before submitting to your academic adviser.",
+    "crumbHome": "Home",
+    "crumbAcademic": "Academic",
+    "crumbKrs": "KRS",
+    "requiredPermission": "Permission this screen requires",
+    "loadFailedTitle": "Failed to load KRS data",
+    "noStudentTitle": "This account is not linked to a student profile",
+    "noStudentBody": "The class list and SKS ceiling are computed from student rows in this institution. Contact the academic office to link the account; this screen never shows estimated classes.",
+    "noPeriodTitle": "No academic period yet",
+    "noPeriodBody": "This institution has no academic period, so there are no open classes to display.",
+    "notYourAreaTitle": "This screen is not your area",
+    "notYourAreaBody": "Taking seats and submitting a KRS is held only by roles granted enrollment.krs.submit. You do not hold it, so this screen renders no action button at all.",
+    "noDataNoAction": "No period or student profile could be read, so no class is displayed and no action is offered.",
+    "periodUnknown": "Period not readable",
+    "plafonTitle": "SKS Ceiling This Semester",
+    "plafonHint": "Computed from the previous period's IPS and the study programme's cap (BR-A2)",
+    "takenTitle": "SKS Already Taken",
+    "takenHint": "{count} active classes in this period",
+    "remainingTitle": "Remaining SKS Quota",
+    "remainingHint": "Cap {max} SKS · {used} SKS in use",
+    "remainingUnknown": "Quota cannot be computed yet",
+    "sksUnit": "SKS",
+    "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    "enrolledTitle": "Classes already taken",
+    "enrolledSubtitle": "Real enrollment rows in the active period. Releasing a seat is not an action of this screen (permission enrollment.krs.withdraw).",
+    "enrolledHint": "Cannot be released from this screen",
+    "quotaBlockedTitle": "KRS entry held by the validator",
+    "degradedTitle": "Class list is incomplete",
+    "degradedBody": "This screen loaded {shown} of {total} open classes in the period. Narrow the filter or use the API to see the rest.",
+    "gridTitle": "Select Classes for KRS",
+    "gridSubtitle": "Seat capacity is counted from active enrollments. Full or clashing classes cannot be taken.",
+    "eyebrow": "Class offerings · {period}",
+    "searchPlaceholder": "Search code, course, class, or lecturer...",
+    "filterStatusLabel": "Study plan status",
+    "filterAllStatuses": "All statuses",
+    "statusNotTaken": "Not taken yet",
+    "statusSubmitted": "Sent to adviser",
+    "statusApproved": "Approved",
+    "statusEffective": "Effective",
+    "colCode": "Code",
+    "colCourse": "Course & Lecturer",
+    "colSks": "SKS",
+    "colSchedule": "Schedule & Room",
+    "colSeats": "Seats",
+    "colStatus": "Status",
+    "colAction": "Action",
+    "noSchedule": "Schedule not set",
+    "noRoom": "Room not assigned",
+    "noLecturer": "Lecturer not assigned",
+    "moreSchedules": "+{n} more schedule(s)",
+    "seatsFull": "full",
+    "seatsRemaining": "{n} left",
+    "seatProgressAria": "Seats filled {pct} percent",
+    "takenAlready": "Already taken",
+    "reasonTaken": "This seat is already part of your enrollment in this period.",
+    "reasonPeriodClosed": "Period {period} has status {status} — entry is closed.",
+    "reasonClassClosed": "The class has been closed by the study programme.",
+    "reasonClassCancelled": "The class has been cancelled.",
+    "reasonFull": "The class is full.",
+    "reasonConflict": "Schedule clashes with your own class: {detail}",
+    "reasonQuota": "Taking this class exceeds the {max} SKS ceiling.",
+    "reasonMaxClasses": "A maximum of {max} classes per submission.",
+    "periodClosedHint": "The KRS entry period is closed",
+    "quotaAlertTitle": "SKS ceiling exceeded",
+    "quotaAlertBody": "Your plan totals {total} SKS while this semester's ceiling is {max} SKS. Reduce {over} SKS by releasing one class.",
+    "conflictAlertTitle": "{count} class pair(s) clash in schedule",
+    "conflictRow": "{day}: {a} overlaps {b}.",
+    "conflictBlocked": "{count} class pair(s) have clashing schedules. Release one of the clashing classes before submitting.",
+    "take": "Take",
+    "release": "Release",
+    "takeSeat": "Take seat",
+    "releaseSeat": "Release seat",
+    "takeHint": "Take this class seat",
+    "releaseHint": "Release the seat from your study plan",
+    "takeAria": "Take seat {code}",
+    "releaseAria": "Release seat {code}",
+    "detailHint": "View class detail",
+    "detailAria": "View detail {code}",
+    "rowAria": "View detail {course}, class {class}",
+    "selectionLabel": "Select classes for the study plan",
+    "pickedPrefix": "SKS picked · ceiling {max} SKS",
+    "clearSelection": "Clear selection",
+    "submit": "Submit KRS",
+    "submitting": "Submitting…",
+    "sentTitle": "Submission sent",
+    "sentBody": "{count} class(es) were submitted to your academic adviser (DPA) and await approval.",
+    "sentAlready": "{count} class(es) were already in your study plan (idempotent).",
+    "statusUntilDpa": "Your enrollment status is",
+    "blockedTitle": "Submission held",
+    "requestFailed": "The server refused the submission (HTTP {status}).",
+    "networkFailed": "The submission was not sent because of a network problem. Reload and submit again.",
+    "readOnlyTitle": "Read-only: you do not hold the KRS submit action",
+    "readOnlyBody": "The list below is this period's real class offering, shown without seat-taking affordances because that action belongs to holders of the enrollment.krs.submit permission.",
+    "emptyTitle": "No open class in this period yet",
+    "emptyBody": "The study programme has not published any OPEN class for the selected period, or the open classes belong to another study programme.",
+    "emptyAction": "Reload the class list",
+    "reload": "Reload",
+    "retryLoad": "Reload KRS data",
+    "reloadAria": "Reload KRS data from the server",
+    "reloadHint": "Fetch classes, quota, and enrollments again from the database",
+    "detailTitle": "Class detail",
+    "detailClose": "Close",
+    "detailSeatTitle": "Seat capacity",
+    "seatsFullNote": "Class full — a seat opens only when a student withdraws.",
+    "seatsRemainingNote": "{n} seats left.",
+    "serverConflictTitle": "Clash recorded by the server",
+    "detailLecturer": "Lecturer",
+    "detailSchedule": "Schedule",
+    "detailRoom": "Room",
+    "detailSks": "SKS weight",
+    "detailAfterLoad": "Load after taking",
+    "detailHowTitle": "How submission works",
+    "detailHowBody": "Seats are taken when the submission is sent, then approved by the adviser. Status, SKS quota, and schedule clashes are revalidated on the server — this screen only warns in advance.",
+    "periodLabel": "Period {period}"
+  },
+  "app": {
+    "footerCopyright": "SICA — All-in-One Campus Information System",
+    "footerStatus": "Development environment. Information may change.",
+    "menuAria": "Main navigation",
+    "topbarAria": "Top bar: brand, search and account",
+    "brandHome": "Back to app home",
+    "searchPlaceholder": "Search courses, lecturers, or student ID…",
+    "searchLabel": "Search",
+    "toggleMenu": "Open navigation menu",
+    "langLabel": "Switch language",
+    "modulesLabel": "App modules",
+    "fullscreenLabel": "Full screen",
+    "themeLabel": "Appearance",
+    "modeLight": "Switch to light mode",
+    "modeDark": "Switch to dark mode",
+    "notificationsLabel": "Notifications",
+    "profileLabel": "Account profile",
+    "designPanel": {
+      "open": "Open appearance panel",
+      "title": "Appearance panel",
+      "description": "Works like the theme customizer: it changes the layout and colours of this screen.",
+      "close": "Close appearance panel",
+      "sectionMode": "Colour mode",
+      "sectionTopbar": "Top bar",
+      "sectionStyle": "Background style",
+      "sectionWidth": "Page width",
+      "optionLight": "Light",
+      "optionDark": "Dark",
+      "optionTopbarFollow": "Follow theme",
+      "optionTopbarDark": "Dark",
+      "optionStyleDefault": "Default",
+      "optionStyleGradient": "Gradient",
+      "optionStyleSeparated": "Separated",
+      "optionWidthFluid": "Full width",
+      "optionWidthBoxed": "Boxed",
+      "verticalNote": "The vertical (sidebar) layout is not available yet: its menu is still built in code, not from access-control data.",
+      "publicNote": "On this page only the colour mode applies; background style and page width are used inside the portal."
     }
   }
 }

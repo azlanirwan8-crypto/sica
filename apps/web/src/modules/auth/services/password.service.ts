@@ -6,9 +6,23 @@
  *   teruji tanpa instalasi dependensi eksternal.
  * - `Argon2idPasswordHasher` (target produksi, SECURITY_COMPLIANCE): butuh paket `argon2`;
  *   diaktifkan setelah `pnpm install` (lihat catatan pada Argon2PasswordHasher).
+ *
  * Pepper (PASSWORD_HASH_PEPPER) digabung ke password sebelum KDF → pertahanan berlapis.
+ *
+ * `scrypt` dipanggil lewat varian ASINKRON. `scryptSync` dengan N=16384 memakan
+ * ±100 ms pada satu core dan MEMBLOKIR event loop selama itu: pada instance Next
+ * yang melayani 1.000+ sesi (AGENTS §3.7), antrean login terserialisasi dan setiap
+ * permintaan lain ikut menunggu. Varian async melepas thread kerja KDF.
  */
-import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { promisify } from 'util';
+import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'crypto';
+
+const scrypt = promisify(scryptCb) as (
+  password: string | Buffer,
+  salt: string | Buffer,
+  keylen: number,
+  options: { N: number; r: number; p: number; maxmem: number }
+) => Promise<Buffer>;
 
 export interface PasswordHasher {
   readonly scheme: string;
@@ -38,7 +52,7 @@ export class ScryptPasswordHasher implements PasswordHasher {
 
   async hash(password: string): Promise<string> {
     const salt = randomBytes(16);
-    const derived = scryptSync(mixPepper(password, this.pepper), salt, SCRYPT_KEYLEN, {
+    const derived = await scrypt(mixPepper(password, this.pepper), salt, SCRYPT_KEYLEN, {
       N: SCRYPT_COST,
       r: SCRYPT_BLOCK_SIZE,
       p: SCRYPT_PARALLELISM,
@@ -67,7 +81,7 @@ export class ScryptPasswordHasher implements PasswordHasher {
 
     const salt = Buffer.from(saltB64 ?? '', 'base64');
     const expected = Buffer.from(hashB64 ?? '', 'base64');
-    const derived = scryptSync(mixPepper(password, this.pepper), salt, expected.length, {
+    const derived = await scrypt(mixPepper(password, this.pepper), salt, expected.length, {
       N: n,
       r,
       p,

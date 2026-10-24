@@ -7,7 +7,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../apps/web/src/styles/velzon-theme.css">
+  <!-- Ralat 2026-10-24: baris ini sebelumnya memuat
+       `<link rel="stylesheet" href="../apps/web/src/styles/velzon-theme.css">`,
+       berkas yang sudah dihapus dari repo (`git status` = D) sehingga seluruh
+       `var(--sica-*)` di halaman ini jatuh ke nilai awal. Mockup statis ini BUKAN
+       sumber kebenaran desain: sumbernya `apps/web` (jalankan `pnpm --filter
+       @sica/web dev`) dengan token di `src/app/globals.css` dan kerangka Velzon di
+       `src/styles/theme.scss`. Halaman ini dipertahankan hanya sebagai sketsa. -->
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {

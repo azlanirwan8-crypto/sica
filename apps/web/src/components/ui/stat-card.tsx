@@ -1,141 +1,99 @@
-'use client';
+import * as React from 'react';
+import { ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react';
+import { Sparkline } from '@/components/ui/velzon-chart';
+import { cn } from '@/lib/utils';
 
-import React from 'react';
+export type StatTrend = 'up' | 'down' | 'flat';
 
-export type StatCardVariant = 'primary' | 'success' | 'warning' | 'info' | 'danger';
-
-export interface StatCardProps {
-  title: string;
-  value: string | number;
-  subtitle?: string;
-  icon?: string | React.ReactNode;
-  variant?: StatCardVariant;
-  trend?: {
-    value: string;
-    isPositive: boolean;
-  };
-}
-
+/**
+ * Kartu statistik Velzon: label kecil uppercase, angka tabular besar (bukan
+ * hitam pekat), delta bertanda panah, dan sparkline opsional di kanan bawah.
+ * Semua warna lewat token sehingga ikut tema.
+ */
 export function StatCard({
-  title,
+  label,
   value,
-  subtitle,
-  icon,
-  variant = 'primary',
+  hint,
   trend,
-}: StatCardProps) {
-  const variantColorMap: Record<StatCardVariant, { bg: string; text: string; iconBg: string }> = {
-    primary: {
-      bg: 'var(--sica-color-primary-light)',
-      text: 'var(--sica-color-primary)',
-      iconBg: 'rgba(10, 179, 156, 0.15)',
-    },
-    success: {
-      bg: 'var(--sica-color-success-light)',
-      text: 'var(--sica-color-success)',
-      iconBg: 'rgba(10, 179, 156, 0.15)',
-    },
-    warning: {
-      bg: 'var(--sica-color-warning-light)',
-      text: 'var(--sica-color-warning)',
-      iconBg: 'rgba(247, 184, 75, 0.2)',
-    },
-    info: {
-      bg: 'var(--sica-color-info-light)',
-      text: 'var(--sica-color-info)',
-      iconBg: 'rgba(41, 156, 219, 0.15)',
-    },
-    danger: {
-      bg: 'var(--sica-color-danger-light)',
-      text: 'var(--sica-color-danger)',
-      iconBg: 'rgba(240, 101, 72, 0.15)',
-    },
-  };
+  trendValue,
+  trendSemantic = 'neutral',
+  spark,
+  icon,
+  loading = false,
+  className,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly hint?: string;
+  readonly trend?: StatTrend;
+  readonly trendValue?: string;
+  /** 'good-when-up' membalik warna saat tren turun (mis. tunggakan). */
+  readonly trendSemantic?: 'neutral' | 'good-when-up' | 'good-when-down';
+  readonly spark?: readonly number[];
+  readonly icon?: React.ReactNode;
+  readonly loading?: boolean;
+  readonly className?: string;
+}) {
+  const goodDirection = trendSemantic === 'good-when-down' ? 'down' : 'up';
+  const toneClass =
+    !trend || !trendValue
+      ? 'text-[color:var(--sica-text-muted)]'
+      : trend === 'flat'
+        ? 'text-[color:var(--sica-text-muted)]'
+        : trend === goodDirection
+          ? 'text-success'
+          : 'text-danger-hover';
 
-  const currentVariant = variantColorMap[variant];
+  const TrendIcon = trend === 'down' ? ArrowDownRight : trend === 'up' ? ArrowUpRight : Minus;
+
+  if (loading) {
+    return (
+      <div className={cn('card', className)}>
+        <div className="card-body flex flex-col gap-3">
+          <span className="skeleton h-3 w-24 rounded" />
+          <span className="skeleton h-8 w-32 rounded" />
+          <span className="skeleton h-3 w-20 rounded" />
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      style={{
-        backgroundColor: 'var(--sica-surface-card)',
-        borderRadius: 'var(--sica-radius-lg)',
-        padding: '20px 24px',
-        boxShadow: 'var(--sica-shadow-card)',
-        border: '1px solid var(--sica-border-color)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-      }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <span
-          style={{
-            fontSize: '12px',
-            fontWeight: 600,
-            color: 'var(--sica-text-muted)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.5px',
-          }}
-        >
-          {title}
-        </span>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-          <span
-            style={{
-              fontSize: '26px',
-              fontWeight: 700,
-              color: 'var(--sica-text-heading)',
-              lineHeight: 1.2,
-            }}
-          >
-            {value}
-          </span>
-          {trend && (
-            <span
-              style={{
-                fontSize: '11px',
-                fontWeight: 600,
-                color: trend.isPositive ? 'var(--sica-color-success)' : 'var(--sica-color-danger)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '2px',
-              }}
-            >
-              {trend.isPositive ? '↑' : '↓'} {trend.value}
+    <div className={cn('card card-hover', className)}>
+      <div className="card-body">
+        <div className="flex items-start justify-between gap-4">
+          <p className="section-label">{label}</p>
+          {icon ? (
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-soft text-primary-hover">
+              {icon}
             </span>
-          )}
+          ) : null}
         </div>
-        {subtitle && (
-          <span
-            style={{
-              fontSize: '12px',
-              color: 'var(--sica-text-muted)',
-            }}
-          >
-            {subtitle}
-          </span>
-        )}
-      </div>
 
-      {icon && (
-        <div
-          style={{
-            width: '48px',
-            height: '48px',
-            borderRadius: 'var(--sica-radius-md)',
-            backgroundColor: currentVariant.iconBg,
-            color: currentVariant.text,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '22px',
-            flexShrink: 0,
-          }}
-        >
-          {icon}
+        <p className="mt-3 text-[26px] font-semibold leading-none tracking-tightest tabular text-[color:var(--sica-text-heading)]">
+          {value}
+        </p>
+
+        <div className="mt-2.5 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            {trend && trendValue ? (
+              <span className={cn('inline-flex items-center gap-1 text-[12.5px] font-semibold', toneClass)}>
+                <TrendIcon size={13} strokeWidth={2.4} aria-hidden />
+                {trendValue}
+              </span>
+            ) : null}
+            {hint ? (
+              <span className="text-[12.5px] text-[color:var(--sica-text-muted)]">{hint}</span>
+            ) : null}
+          </div>
+
+          {spark && spark.length > 1 ? (
+            <span className="w-24 shrink-0">
+              <Sparkline values={spark} />
+            </span>
+          ) : null}
         </div>
-      )}
+      </div>
     </div>
   );
 }

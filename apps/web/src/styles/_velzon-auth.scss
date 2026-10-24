@@ -1,0 +1,205 @@
+/**
+ * Layar autentikasi Velzon (`auth-signin-cover` / `auth-one-section`) — struktur
+ * dan kosakata kelasnya, di atas token SICA (`UI_UX_DESIGN §2.6`).
+ *
+ * Kenapa berkas terpisah dari `_velzon-skeleton.scss`: layar ini TIDAK memakai
+ * `#layout-wrapper`/`.topnav` (halaman publik tidak membawa chrome aplikasi —
+ * `data-layout` memang tidak dipasang di `/` dan `/login`), tetapi tetap memakai
+ * bahasa kelas yang sama: `.card`, `.form-label`, `.form-control`, `.btn-primary`.
+ */
+
+.auth-fluid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 100dvh;
+  width: 100%;
+
+  /* Anak grid tidak boleh melebarkan kolomnya sendiri: `min-width:auto` pada
+     item grid membuat track lebih lebar dari viewport bila ada keturunan yang
+     panjang (angka, teks panjang), dan itu menggeser panel kiri keluar layar.
+     `overflow-x: clip` menutup jalan keluar kedua: bergulir horizontal. */
+  > * {
+    min-width: 0;
+  }
+
+  overflow-x: clip;
+}
+
+@media (min-width: 1024px) {
+  .auth-fluid {
+    grid-template-columns: 55fr 45fr;
+  }
+}
+
+/* Panel sisi kiri Velzon (`auth-fluid-sidebg`): di SICA isinya pernyataan
+   lingkup rancangan, bukan foto hiasan — angka 47 layanan adalah data registri. */
+.auth-fluid-sidebg {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--sica-space-10);
+  order: 2;
+  padding: var(--sica-space-8) var(--sica-space-6);
+  overflow: hidden;
+  background-color: var(--sica-secondary);
+  color: var(--sica-text-inverse);
+}
+
+@media (min-width: 1024px) {
+  .auth-fluid-sidebg {
+    order: 0;
+    min-height: 100dvh;
+    padding: var(--sica-space-10) var(--sica-space-10);
+  }
+}
+
+@media (min-width: 1280px) {
+  .auth-fluid-sidebg {
+    padding-inline: var(--sica-space-16);
+  }
+}
+
+.auth-fluid-content {
+  display: flex;
+  flex-direction: column;
+  order: 1;
+  min-width: 0;
+}
+
+@media (min-width: 1024px) {
+  .auth-fluid-content {
+    order: 0;
+  }
+}
+
+.auth-content {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sica-space-8) var(--sica-space-6);
+}
+
+@media (min-width: 640px) {
+  .auth-content {
+    padding-inline: var(--sica-space-10);
+  }
+}
+
+/* `.auth-inner` = lebar maksimum kartu login Velzon (± 420px). */
+.auth-inner {
+  width: 100%;
+  max-width: 26rem;
+}
+
+.auth-logo {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+.auth-fluid-footer {
+  padding: var(--sica-space-4) var(--sica-space-6) var(--sica-space-6);
+  color: var(--sica-text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-align: center;
+}
+
+@media (min-width: 640px) {
+  .auth-fluid-footer {
+    padding-inline: var(--sica-space-10);
+  }
+}
+
+/* Baris label Velzon: judul field di kiri, tautan "lupa sandi?" di kanan. */
+.auth-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sica-space-3);
+}
+
+.auth-field-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--sica-primary-ink);
+  cursor: pointer;
+}
+
+.auth-field-link:hover {
+  color: var(--sica-primary-solid-hover);
+}
+
+/* Eyebrow & angka registri pada panel kiri. */
+.auth-eyebrow {
+  color: rgb(255 255 255 / 0.7);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.auth-headline {
+  max-width: 32rem;
+  margin-block-start: var(--sica-space-5);
+  font-size: clamp(1.75rem, 1.2rem + 1.6vw, 2.5rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: var(--sica-tracking-display);
+  color: #ffffff;
+}
+
+.auth-lede {
+  max-width: 32rem;
+  margin-block-start: var(--sica-space-5);
+  font-size: 0.9375rem;
+  line-height: var(--sica-leading-loose);
+  color: rgb(255 255 255 / 0.75);
+}
+
+.auth-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 28rem;
+  margin-block-start: var(--sica-space-10);
+  padding-block: var(--sica-space-5);
+  border-block: 1px solid rgb(255 255 255 / 0.15);
+}
+
+.auth-stat + .auth-stat {
+  padding-inline-start: var(--sica-space-5);
+  border-inline-start: 1px solid rgb(255 255 255 / 0.15);
+}
+
+.auth-stat:first-child {
+  padding-inline-end: var(--sica-space-5);
+}
+
+.auth-stat-value {
+  font-size: 1.875rem;
+  font-weight: 600;
+  letter-spacing: var(--sica-tracking-display);
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+}
+
+.auth-stat-label {
+  margin-block-start: 4px;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: rgb(255 255 255 / 0.7);
+}
+
+.auth-note {
+  max-width: 32rem;
+  margin-block-start: var(--sica-space-5);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: rgb(255 255 255 / 0.7);
+}

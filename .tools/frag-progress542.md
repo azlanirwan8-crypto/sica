@@ -1,0 +1,29 @@
+### 5.42 Siklus 2026-10-21 (bagian 3) — membayar tagihan "dari daftar sampai alumni", dan satu alat yang menemukan 250 izin karangan saya sendiri
+
+**Permintaan pemilik yang dijawab siklus ini.** Empat pertanyaan: apakah CRUD 100% untuk semua modul, apakah field sudah 100% dibanding Sevima + SOP dinas, apakah semua dokumen ada dari mendaftar sampai alumni sampai lingkup kampus, dan apakah UI sudah siap. Jawaban saya adalah **angka yang dicetak alat**, bukan kalimat siap. Empat hal yang membuat jawaban "ya" tidak bisa dikeluarkan hari ini, semuanya terukur: **250** kode izin dikutip API_SPEC tanpa pernah dinamai RBAC (`CRD-5`), **45** nama objek ber-nomor migrasi belum punya DDL (`CRD-6`), **40 dari 48** modul belum lengkap CRUD wajibnya (`CRD-1`/`CRD-2`), dan **nol** baris rute terimplementasi — yang terakhir ini memang konsekuensi larangan menulis kode, bukan temuan.
+
+**Yang ditulis, bukan yang dinyatakan.** `DATA_MODEL §23` (632 baris, **33 tabel**): `0020_platform_attachments` (`attachments`, `document_number_sequences`, `documents`, `import_runs`), `0021_pmb_intake` (10 objek dari gelombang sampai NIM), `0027_kelulusan_lanjutan` (`yudisium_batches`, `thesis_records`, pembimbing, penguji, `transcript_versions`, `transcript_lines`), `0019_permohonan_kelulusan` (permohonan lulus, legalisir, wisuda), sisa `0026` untuk pakan SKPI, dan dua nomor **baru** yang lahir karena belum pernah didaftarkan: `0076_student_cards` (KTM + peristiwa insert-only) dan `0077_tracer_study` (gelombang, instrumen, respons, rekaman kerja). `PRD §5.16` menerbitkan registri sembilan tahap **T-0 … T-8** dengan kolom rumah objek + nomor izin + status terukur, `FR-LC-01…12`, `BR` empat vonis, `AC-LC-1…9`. `ROADMAP §2.22` bertambah dua tiket (`CRD-5`, `CRD-6`). `MIGRATION_SOP §5/§6` diralat: `documents` tidak lagi terdaftar dua kali, `student_activities` divonis KALAH kepada `activity_participations`, `0076`/`0077` masuk register, maksimum nomor naik `0075` → `0077`. `API_SPEC §7.27` diralat dari `convocations` ke `/graduation/commencements/:batchId/register` karena pemilik nama objek adalah DATA_MODEL.
+
+**Tiga ralat yang saya tulis untuk diri sendiri, dalam urutan kejadian.** (1) **Dua baris DDL saya bukan SQL**: `CHECK (path_id IN (SELECT …))` (CHECK tidak boleh berisi subquery) dan `funding_source_code … REFERENCES pmb_program_quotas(??)`. Keduanya keluar dari blok DDL dan diganti pemicu/query CI yang dinyatakan; normanya sekarang tertulis di §23.2: klaim "ditegakkan service" hanya sah kalau baris DDL-nya bersih. (2) **Saya membuat alat ukur kembar**: `.tools/nonlatin-scan.mjs` saya tulis padahal `.tools/cjk-check.mjs` sudah ada dan lebih lengkap (mendapat skor ambang yang salah memvonis glyph status `❌` sebagai karakter asing). File itu saya hapus pada siklus yang sama; penjaga yang dipakai tetap `cjk-check.mjs`, dan hasilnya 1 SUSPECT = kutipan Thai yang memang disengaja dan sudah berpemindai. (3) **Skrip sisip saya sendiri gugup tiga kali**: satu regex dengan `/` yang tidak di-escape (Node menolak parse), satu array kehilangan kurung penutup, dan satu destructuring `[file, from, to]` atas data `[file, [from, to]]` yang membuat **semua anchor "hilang"** padahal yang salah adalah bentuk argumennya. Kelas kesalahannya satu: menulis alat sisip tanpa membaca keluarannya lebih dulu — persis `RD-62`.
+
+**Angka penjaga pada akhir siklus (dijalankan, bukan dikutip).**
+
+| Penjaga | Keluaran |
+|---|---|
+| `fk-audit` | **HIJAU** — 0 rujukan tanpa pembuat (sebelum siklus ini: 6); 327 tabel + 10 view |
+| `ddl-gap` | 45 nama tanpa DDL pada 12 nomor (dari 76); `0019`/`0020`/`0021`/`0026`/`0027` tidak lagi disebut |
+| `perm-phantom` | **MERAH** oleh desain: 364 kandidat · 84 ber-baris · 25 tanpa nomor · 5 singkat · **250 tanpa nama** |
+| `rbac-count` | 301 baris `usulan`, rentang 1–301, tanpa lubang; normatif 222/17/607 tidak diubah |
+| `rbac-module-union` | 13 nilai `PermissionModule`, 301 baris diperiksa, penyimpangan 0 |
+| `ref-audit` | 3.019 rujukan bernama diperiksa (naik dari 2.962 karena §23/§5.16), **0** menggantung |
+| `heading-dup` | dobel=0 mundur=0 sub-mundur=0 — blok §7.25–7.32 akhirnya berada di belakang §7.24 |
+| `error-dup` · `vocab-audit` · `chain-audit` | 149 baris register tanpa tabrakan · 16 daftar bernama, selisih 0 · sepuluh rantai terjejak, lubang tanpa pendataan 0 |
+| `env-drift` · `seed-count` · `placeholder-count` | rujukan yatim 0 (9 design-only ditandai) · sisi nyata seed = 0 (objek belum berberkas) · TODO/TBD/FIXME/XXX = 0 spesifikasi |
+| `route-count` | 308 baris §7 · 123 spec-only · 185 blocker · **0 implemented** · 0 unclassified (setelah batas bawah alat ditentukan judul, bukan posisi) |
+| `crud-matrix` | **40 dari 48 modul** CRUD wajib belum lengkap |
+| `roadmap-readiness` | 22 gugus · 280 task · dependensi 62% · DoD 69% |
+| UI: `contrast-audit` · `purge-check` · `css-balance` · `ui-guards` | FAILS=0 pada pasangan terang & gelap · 0 kelas ter-purge dari 59 · `globals.css` 978 baris depth=0 problems=0 · `text-black`=1 dan hex literal=19 (temuan token, belum ditutup) |
+| `check-docs` | TABEL KONSISTEN |
+
+**Vonis siklus ini.** Dokumen siklus hidup (mendaftar → aktif → karya puncak → yudisium → wisuda → ijazah/SKPI/transkrip → legalisir & verifikasi → tracer/alumni → dokumen lingkup kampus) **sudah punya rumah data dan nomor**; itu perubahan status yang nyata dan bisa dijalankan alatnya. Yang belum: 45 DDL sisa, 250 nama izin, 40 modul CRUD, dan satu pertanyaan yang tidak bisa dijawab dokumen mana pun — kualitas visual hanya terbukti setelah aplikasi berjalan, dan larangan menulis kode masih berlaku sampai penahan teknis (`G-02` jalur DB, `SEC-0` penegakan L1–L6, promosi izin `CRD-5`) lepas. Menulis "100% siap develop" hari ini akan mengulang kegagalan yang paling sering saya catat di laporan ini: menyebut angka yang belum ada alatnya.
+

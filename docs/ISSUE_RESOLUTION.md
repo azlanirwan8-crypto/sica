@@ -26,7 +26,11 @@ Setiap agen AI atau engineer yang menangani tiket *incident report* atau kegagal
 ```
 
 ### 1.1 Larangan Keras (Strict Constraints)
-- **Dilarang memotong/bypass PostgreSQL Row-Level Security (RLS)** untuk menyelesaikan kendala data tidak tampil. Jika data tidak muncul, periksa sesi `app.current_tenant_id` dan *tenant isolation claim* pada token JWT.
+- **Insiden admin tidak diselesaikan dengan memperluas peran.** Bedakan lisensi platform, release flag, preferensi tenant, permission, scope, state, dan RLS. Admin IT yang tidak dapat menyetujui KRS/nilai/pembayaran bukan otomatis bug; uji peran operasional yang memang berhak.
+- **Bekukan perubahan bila audit tidak cocok.** `HASH_MISMATCH` atau celah rantai ditriase terhadap stream/tenant asli dan jangkar tepercaya; jangan menghitung ulang hash agar terlihat hijau. Keberhasilan fixture verifier baru tidak memverifikasi tenant lama.
+- **Pemulihan harus terbatas tenant dan berizin.** Backup/restore melalui dry-run terisolasi, approval, quiesce, rekonsiliasi FK/audit/outbox dan catatan hasil. Tidak memakai `FLUSHALL`, purge antrean global, SQL bebas, atau cleanup akun berdasarkan prefix sebagai jalan pintas. Penolakan hanya `NODE_ENV=production` tidak membuktikan lingkungan aman.
+- **Bukti harus lengkap.** Simpan exit code asli, perintah, revision, lingkungan dan artefak tersanitasi; rerun hijau tidak menutup kegagalan fluktuatif tanpa RCA. Log admin tidak menampilkan kredensial, payload dokumen, NIK, isi DSAR atau koordinat individu di telemetry umum.
+- **Dilarang memotong/bypass PostgreSQL Row-Level Security (RLS)** untuk menyelesaikan kendala data tidak tampil. Jika data tidak muncul, periksa sesi `app.current_tenant` dan *tenant isolation claim* pada token JWT.
 - **Dilarang melakukan koreksi saldo atau data tagihan langsung pada tabel snapshot/summary.** Koreksi keuangan WAJIB berupa penambahan baris entri jurnal penyesuaian (*Adjustment Journal Entry*) pada *Double-Entry Ledger*.
 - **Dilarang mengubah kontrak public API yang sudah rilis** tanpa mekanisme *backward compatibility* dan *deprecation warning header*.
 
@@ -212,3 +216,20 @@ RCA ringkas hasil "Full-Spectrum Audit" saat pengambilalihan proyek. Format meng
 ### RCA-AUD-07 — Dependensi Belum Ter-install *(OPEN)*
 - **Ringkasan:** `lucide-react`, `class-variance-authority`, `sonner`, `clsx`, `tailwind-merge` absen di `node_modules` → 14 error `tsc` tersisa; `next build` akan gagal.
 - **Tindakan:** jalankan `pnpm install` pada lingkungan pengembangan. Belum dieksekusi oleh agent (aksi berdampak luas/jaringan — perlu konfirmasi operator). [Blocked]
+
+## 6. Klasifikasi insiden kanal vicon (audit dewan 2026-10-21)
+
+Kanal konferensi punya bentuk kegagalan yang tidak tercakup taksonomi §1–§3: ia **aset eksternal yang tidak mengubah fakta tetapi dapat menghentikan perhitungan kehadiran**. Tabel ini mengikat gejala ke kelas, SLA, dan — yang paling penting — ke **apa yang tidak boleh terjadi selama insiden** (angka akademik ditampilkan apa adanya).
+
+| Gejala | Kelas (`§1`) | Sevir | SLA tangani | Yang dilarang selama insiden | Tindakan penahan |
+|---|---|---|---|---|---|
+| Semua kanal mati saat sesi `SYNC_LIVE` berjalan | Kapasitas/layanan | **HIGH** | 30 menit | dilarang membuat sesi "hadir" tanpa bukti; dilarang menampilkan rasio parsial sebagai angka final | `BR-VIC-05`: `CHANNEL_UNAVAILABLE` di layar; vonis tertahan; notifikasi pengampu + Admin IT |
+| Kredensial kedaluwarsa / `401` berulang ke Graph | Keamanan-integrasi | **HIGH** | 1 jam (rotasi) | dilarang menyimpan token di log atau mengirimnya sebagai `credential_ref` | rotasi vault; `last_probe_state = FAILED`; kanal ditarik dari rantai |
+| Laporan kehadiran vendor tidak cocok dengan bukti internal | Mutu data | **MEDIUM** | 1 × 24 jam | dilarang menimpa vonis dengan laporan vendor (`§6.2 INTEGRATIONS`, vonis 4 `ARCHITECTURE §13.3`) | selisih masuk antrean telaah `NEEDS_REVIEW`; bukti ditandai `degraded` |
+| Satu peserta terhitung dua identitas (upn berubah) | Mutu data/PII | **MEDIUM** | 1 × 24 jam | dilarang mencocokkan lewat pencarian nama bebas | pencocokan ulang lewat blind index salt tenant (`SECURITY §3.7.2`) |
+| `payload_digest` tidak cocok / muatan ditolak | Keamanan | **HIGH** | 30 menit | dilarang memproses muatan yang gagal pembuktian meski bentuknya benar | tolak + alarm; tidak ada baris peristiwa yang ditulis |
+| Ambang 75 % diubah tanpa persetujuan kedua | Tata kelola | **HIGH** (kepatuhan) | 4 jam | dilarang menerapkan versi baru ke sesi berjalan | `parameter_history` dibekukan; rollback ke `parameter_version` sebelumnya |
+
+**Satu kalimat RCA yang wajib ada (format §4).** Untuk insiden kanal, bagian "penyebab akar" harus menyebut **salah satu** dari: konfigurasi kredensial, kontrak vendor yang berubah, kegagalan *fallback chain*, atau ketergantungan pada laporan vendor sebagai sumber tunggal. Empat hal itu adalah satu-satunya penyebab yang pernah terbukti di dokumen ini; kalau RCA menyebut "kode presensi salah", itu artinya kelas lain dan harus di-*route* ulang.
+
+**Daftar periksa pasca-insiden.** (1) vonis akhir tidak memakai `degraded = true`; (2) `conference_channel_events` tidak mengandung PII telanjang; (3) rantai fallback yang dipakai tercatat di `last_probe_*`; (4) tidak ada baris `attendances` ganda per `(sesi, mahasiswa)` (query `(t)` `DATA_MODEL §21.10.5`).

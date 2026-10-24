@@ -4,6 +4,13 @@ import { verifyAccessToken, type EdgeAuthEnv } from '@/lib/edge-auth';
 
 const ACCESS_COOKIE = 'sica_access_token';
 
+export function sanitizeIdentityHeaders(headers: Headers): Headers {
+  const requestHeaders = new Headers(headers);
+  requestHeaders.delete('x-tenant-id');
+  requestHeaders.delete('x-user-id');
+  return requestHeaders;
+}
+
 function readEnv(): EdgeAuthEnv {
   return {
     jwk: process.env['JWT_PUBLIC_KEY_JWK'],
@@ -22,7 +29,9 @@ export async function middleware(request: NextRequest) {
     pathname.includes('.') ||
     pathname === '/favicon.ico'
   ) {
-    return NextResponse.next();
+    return NextResponse.next({
+      request: { headers: sanitizeIdentityHeaders(request.headers) },
+    });
   }
 
   // 2. Ekstraksi subdomain tenant (hanya sebagai petunjuk tampilan; otoritatif = klaim tid)
@@ -43,7 +52,13 @@ export async function middleware(request: NextRequest) {
   const outcome = await verifyAccessToken(token, readEnv());
 
   const isAuthRoute = pathname === '/login' || pathname.startsWith('/login');
-  const isProtectedRoute = pathname.startsWith('/dashboard') || pathname.startsWith('/academic');
+  // /platform/** dijaga di edge juga: shell layar tidak boleh dirender untuk anonim,
+  // walau penegakan sebenarnya tetap di `requirePlatformRead/Write` (L2–L3).
+  const isProtectedRoute =
+    pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/academic') ||
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/platform');
 
   // 4. Rute terproteksi: wajib token valid. Fail-secure — invalid/unconfigured → login.
   if (isProtectedRoute && outcome.status !== 'valid') {
@@ -63,7 +78,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // 6. Teruskan konteks tenant via header (tid dari token bila valid, fallback slug)
-  const requestHeaders = new Headers(request.headers);
+  const requestHeaders = sanitizeIdentityHeaders(request.headers);
   requestHeaders.set('x-tenant-slug', tenantSubdomain);
   if (outcome.status === 'valid') {
     requestHeaders.set('x-tenant-id', outcome.claims.tid);

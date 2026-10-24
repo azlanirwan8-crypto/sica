@@ -165,3 +165,39 @@ export const tenantModuleStatusEnum = pgEnum('tenant_module_status', [
   'EXPIRED',
   'PENDING_PAYMENT',
 ]);
+
+// ── RBAC ber-scope (DATA_MODEL §3 / §14.4, migrasi 0011) ──
+/** 6 aksi kanonik FR-IDT-04; identik `PERMISSION_VERBS` di @sica/contracts. */
+export const permissionVerbEnum = pgEnum('permission_verb', [
+  'READ',
+  'INSERT',
+  'UPDATE',
+  'DELETE',
+  'VALIDATE',
+  'OTHER',
+]);
+
+/** Lingkup tempat sebuah peran dirancang; identik `SCOPE_KINDS` di @sica/contracts. */
+export const roleScopeKindEnum = pgEnum('role_scope_kind', [
+  'TENANT',
+  'ORG',
+  'PROGRAM',
+  'CLASS',
+  'PERIOD',
+  'SELF',
+]);
+
+export const accessRequestStatusEnum = pgEnum('access_request_status', [
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+]);
+
+/** Jenis perubahan hak yang diminta — kosakata tertutup (kelas A): ia memilih mesin
+ *  state persetujuan, bukan label yang dapat dirawat kampus. Lihat migrasi `0082`. */
+export const accessRequestKindEnum = pgEnum('access_request_kind', [
+  'GRANT',
+  'REVOKE',
+  'SCOPE_CHANGE',
+  'ROLE_PERMISSION_CHANGE',
+]);

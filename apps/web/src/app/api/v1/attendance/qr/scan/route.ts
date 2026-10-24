@@ -18,10 +18,13 @@ import {
   extractRequestContext,
   successResponse,
   validationFailed,
-  unauthorized,
   internalError,
 } from '@/lib/api-response';
+import { requireDataPrincipal } from '@/modules/authz/rbac-repository';
+import { ensureModuleActive } from '@/lib/module-gate';
+import { PERM } from '@sica/contracts';
 import { recordAttendance } from '@/modules/academic/services/attendance.service';
+import { readParameterNumber } from '@/modules/settings/services/parameter-resolver';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -61,13 +64,16 @@ function calculateHaversineDistance(
 export async function POST(request: NextRequest) {
   const ctx = extractRequestContext(request);
 
+  // Gerbang entitlement (SEC-09): modul attendance wajib ACTIVE/TRIAL.
+  const moduleDenied = await ensureModuleActive('attendance')(ctx);
+  if (moduleDenied) return moduleDenied;
+
   try {
-    // 1. Verifikasi Autentikasi Mahasiswa (wajib tenant + identitas user ter-autentikasi)
-    //     Tanpa userId, kehadiran tidak dapat diatribusikan ke mahasiswa tertentu.
-    if (!ctx.tenantId || !ctx.userId) {
-      return unauthorized(ctx, 'Sesi presensi memerlukan mahasiswa yang telah terautentikasi.');
-    }
-    const studentId = ctx.userId;
+    // 1. L3 (SEC-10): hak dari tabel penugasan; scan adalah aksi mahasiswa atas
+    //    dirinya sendiri — userId dari token terverifikasi, bukan body.
+    const access = await requireDataPrincipal(ctx, PERM.attendanceQrScan);
+    if (!access.granted) return access.response;
+    const { tenantId, userId: studentId } = access.principal;
 
     // 2. Parse & Validasi Request Body
     let body: unknown;
@@ -90,7 +96,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { qrPayload, studentLatitude, studentLongitude, isMockLocation } = parseResult.data;
+    const { qrPayload, studentLatitude, studentLongitude, accuracyMeters, isMockLocation } = parseResult.data;
 
     // 3. LAYER 1: Deteksi Anti-Mock GPS
     if (isMockLocation) {
@@ -129,7 +135,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Cek kecocokan Tenant
-    if (decoded.tId !== ctx.tenantId) {
+    if (decoded.tId !== tenantId) {
       return validationFailed(ctx, [
         { field: 'qrPayload', message: 'QR Code ini diterbitkan untuk institusi kampus lain.' },
       ]);
@@ -147,7 +153,13 @@ export async function POST(request: NextRequest) {
       .update(messageToVerify)
       .digest('hex');
 
-    if (decoded.sig !== expectedSignature) {
+    // Perbandingan waktu-konstan dengan cek panjang (`SC-G2-09`, primitif yang sama dengan
+    // `password.service.ts`/`token.service.ts`): `!==` membocorkan posisi byte pertama yang
+    // beda lewat selisih waktu respons.
+    const signatureMatches =
+      decoded.sig.length === expectedSignature.length &&
+      crypto.timingSafeEqual(Buffer.from(decoded.sig), Buffer.from(expectedSignature));
+    if (!signatureMatches) {
       return validationFailed(ctx, [
         {
           field: 'qrPayload',
@@ -156,19 +168,25 @@ export async function POST(request: NextRequest) {
       ]);
     }
 
-    // 6. LAYER 4: Validasi Expiration Time (TTL 30 detik)
+    // 6. LAYER 4: Validasi masa berlaku. Periode rotasi dibaca DARI QR (`exp − iat`) dan
+    //    toleransinya = `attendance.totp_window_steps` × periode — tidak ada lagi angka 30/5
+    //    yang hidup sendiri di dua platform (`SPE-15` butir 2, `AC-PG-4`).
+    const rotationSeconds = Math.max(1, decoded.exp - decoded.iat);
+    const windowSteps = await readParameterNumber(tenantId, 'attendance.totp_window_steps', 1);
+    const graceSeconds = windowSteps * rotationSeconds;
     const now = Math.floor(Date.now() / 1000);
-    // Berikan toleransi grace period 5 detik untuk latency jaringan
-    if (now > decoded.exp + 5) {
+    if (now > decoded.exp + graceSeconds) {
       return validationFailed(ctx, [
         {
           field: 'qrPayload',
-          message: 'QR Code telah kedaluwarsa (berotasi setiap 30 detik). Harap scan QR terbaru di layar dosen.',
+          message: `QR Code telah kedaluwarsa (berotasi setiap ${rotationSeconds} detik). Harap scan QR terbaru di layar dosen.`,
         },
       ]);
     }
 
-    // 7. LAYER 5: Validasi Geofencing Jarak Haversine
+    // 7. LAYER 5: Validasi geofencing. Akurasi GPS ikut memotong vonis (`SC-G2-11`):
+    //    `jarak − akurasi ≤ radius`, bukan `jarak ≤ radius` — lokasi dengan akurasi 150 m
+    //    pada jarak 40 m bukan bukti kehadiran. Akurasi di atas plafon tenant ditolak.
     const distanceMeters = calculateHaversineDistance(
       studentLatitude,
       studentLongitude,
@@ -176,18 +194,29 @@ export async function POST(request: NextRequest) {
       decoded.geo.lng
     );
 
-    const allowedRadius = decoded.geo.rad || 50;
-    if (distanceMeters > allowedRadius) {
+    const maxAccuracy = await readParameterNumber(tenantId, 'attendance.gps_max_accuracy_m', 100);
+    if (accuracyMeters > maxAccuracy) {
+      return validationFailed(ctx, [
+        {
+          field: 'accuracyMeters',
+          message: `Akurasi lokasi Anda ${accuracyMeters} meter melebihi plafon ${maxAccuracy} meter institusi, sehingga tidak dapat menjadi bukti kehadiran.`,
+        },
+      ]);
+    }
+
+    const tenantRadius = await readParameterNumber(tenantId, 'attendance.geofence_default_radius_m', 50);
+    const allowedRadius = Math.min(decoded.geo.rad || tenantRadius, tenantRadius);
+    if (distanceMeters - accuracyMeters > allowedRadius) {
       return validationFailed(ctx, [
         {
           field: 'studentCoordinates',
-          message: `Jarak Anda (${distanceMeters} meter) berada di luar radius presensi ruang kelas yang diizinkan (maksimal ${allowedRadius} meter).`,
+          message: `Jarak Anda (${distanceMeters} meter, akurasi ${accuracyMeters} meter) berada di luar radius presensi ${allowedRadius} meter yang diizinkan.`,
         },
       ]);
     }
 
     // 8. Catat Kehadiran Mahasiswa ke DB (idempoten; cek sesi terbuka + enrollment)
-    const result = await recordAttendance(ctx.tenantId, studentId, {
+    const result = await recordAttendance(tenantId, studentId, {
       sessionId: decoded.sId,
       classId: decoded.cId,
       distanceMeters,

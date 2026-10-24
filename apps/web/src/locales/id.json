@@ -1,35 +1,105 @@
 {
   "auth": {
     "loginTitle": "Masuk ke Portal Akademik",
-    "loginSubtitle": "Silakan masukkan kredensial akun institusi Anda",
-    "tenantLabel": "Kode Subdomain Kampus",
+    "loginSubtitle": "Masukkan data akun kampus Anda untuk melanjutkan",
+    "tenantLabel": "Kode kampus",
     "tenantPlaceholder": "contoh: unpad atau ui",
-    "usernameLabel": "NIM / NIDN / Email",
-    "usernamePlaceholder": "Masukkan identitas Anda",
+    "usernameLabel": "NIM, NIDN, atau email kampus",
+    "usernamePlaceholder": "Masukkan NIM, NIDN, atau email",
     "passwordLabel": "Kata Sandi",
     "passwordPlaceholder": "Minimal 8 karakter",
-    "rememberMe": "Ingat Sesi Saya",
+    "rememberMe": "Ingat saya",
     "forgotPassword": "Lupa kata sandi?",
+    "resetPassword": {
+      "title": "Atur ulang kata sandi",
+      "description": "Masukkan email yang terdaftar di kampus Anda.",
+      "emailLabel": "Email kampus",
+      "emailPlaceholder": "nama@kampus.ac.id",
+      "send": "Kirim",
+      "cancel": "Batal",
+      "close": "Tutup formulir atur ulang kata sandi",
+      "notConnected": "Formulir ini belum terhubung ke layanan pengiriman email. Permintaan belum dikirim."
+    },
     "loginButton": "Masuk Sekarang",
-    "loggingIn": "Memproses verifikasi...",
-    "loginSuccess": "Login berhasil, mengalihkan...",
-    "mfaRequired": "Verifikasi 2-Faktor (MFA) Diperlukan",
-    "mfaInstruction": "Masukkan 6 digit kode OTP dari aplikasi authenticator Anda",
+    "loggingIn": "Sedang memeriksa akun...",
+    "loginSuccess": "Berhasil masuk. Membuka portal...",
+    "mfaRequired": "Perlu verifikasi tambahan",
+    "mfaInstruction": "Masukkan 6 angka dari aplikasi pembuat kode keamanan",
     "otpPlaceholder": "000000",
-    "verifyOtp": "Verifikasi OTP",
-    "verifying": "Memverifikasi...",
-    "invalidCredentials": "Username atau password salah.",
-    "mfaFailed": "Kode OTP tidak valid atau kadaluarsa."
+    "verifyOtp": "Lanjutkan",
+    "verifying": "Sedang memeriksa...",
+    "otpLabel": "Kode keamanan",
+    "backToLogin": "Kembali",
+    "showPassword": "Tampilkan kata sandi",
+    "hidePassword": "Sembunyikan kata sandi",
+    "portalEyebrow": "Portal Akademik",
+    "staleTitle": "Verifikasi ini perlu diulang",
+    "staleBody": "Batas waktu atau batas percobaan untuk layar kode ini sudah terlewati, sehingga kode baru pun tidak akan diterima pada layar ini.",
+    "staleStep1": "Tekan tombol Kembali di bawah, lalu Masuk lagi untuk mendapat verifikasi baru.",
+    "staleStep2": "Siapkan kode keamanan Anda terlebih dahulu agar bisa langsung dimasukkan.",
+    "invalidCredentials": "NIM, NIDN, email, atau kata sandi tidak cocok.",
+    "mfaFailed": "Kode keamanan tidak cocok atau sudah kedaluwarsa.",
+    "scopeEyebrow": "SICA masih dalam pengembangan",
+    "scopeTitle": "Rencana layanan kampus dalam satu tempat.",
+    "scopeDescription": "Daftar ini menunjukkan layanan yang sedang direncanakan, bukan layanan yang sudah siap digunakan.",
+    "scopeModuleCount": "47",
+    "scopeModuleLabel": "layanan kampus yang direncanakan",
+    "scopeAppCount": "1",
+    "scopeAppLabel": "aplikasi ponsel yang direncanakan",
+    "scopeRegistryNote": "Aplikasi ponsel direncanakan untuk menggunakan layanan yang sama dan tidak dihitung sebagai layanan tambahan.",
+    "publicFooter": "© {year} SICA · Masih dalam pengembangan"
   },
   "dashboard": {
     "title": "Dashboard Akademik",
+    "metaTitle": "Dashboard Akademik",
+    "metaDescription": "Ringkasan akademik dan status mahasiswa sesuai data pada database tenant aktif",
     "welcome": "Selamat datang kembali",
     "activePeriod": "Tahun Akademik Aktif",
     "quickActions": "Aksi Cepat",
+    "quickActionsHint": "Pintasan ke layar yang paling sering dipakai.",
+    "cardTenantActive": "Tenant aktif",
+    "cardTenantOnboarding": "Tenant dalam onboarding",
+    "cardTenantSuspended": "Tenant ditangguhkan",
+    "cardTenantTotal": "Total tenant terdaftar",
+    "badgeTenantRegistry": "Registri tenant SaaS",
+    "badgeTenantPending": "Menunggu penyelesaian",
+    "badgeTenantOperator": "Atas keputusan operator",
+    "cardItAccounts": "Akun sivitas aktif",
+    "cardItRequests": "Permintaan hak menunggu",
+    "cardItParameters": "Parameter sistem aktif",
+    "cardItLoginFail": "Gagal login 24 jam",
+    "badgeItTenantScope": "Keanggotaan ACTIVE tenant ini",
+    "badgeItNeedsDecision": "Perlu keputusan Anda",
+    "badgeItQueueEmpty": "Antrean bersih",
+    "badgeItParameters": "Sumber: master_system_parameters",
+    "badgeItLast24h": "24 jam terakhir",
     "krsOnline": "Pengisian KRS",
     "khsTranscript": "KHS & Transkrip",
     "attendance": "Presensi Kuliah",
     "billing": "Status Tagihan UKT",
+    "descKrs": "Pilih matakuliah semester aktif",
+    "descKhs": "Cetak KHS & transkrip nilai",
+    "descAttendance": "Scan QR kehadiran kuliah",
+    "descBilling": "Riwayat pembayaran & invoice UKT",
+    "attentionTitle": "Perlu perhatian",
+    "attentionBody": "{items}. Periksa detailnya sebelum periode ditutup.",
+    "noSummaryTitle": "Ringkasan belum tersedia",
+    "noSummaryBody": "Belum ada data akademik yang bisa ditampilkan untuk peran Anda pada periode ini.",
+    "summaryAria": "Ringkasan akademik",
+    "scheduleActionsAria": "Jadwal dan aksi cepat",
+    "scheduleTitle": "Jadwal Kuliah Hari Ini",
+    "scheduleCount": "{count} sesi terjadwal hari ini",
+    "scheduleNone": "Tidak ada sesi pada kalender hari ini",
+    "scheduleEmptyTitle": "Tidak ada kelas terjadwal hari ini.",
+    "scheduleEmptyBody": "Sesi kuliah akan muncul di sini begitu jadwal pada periode aktif dimulai.",
+    "viewAll": "Lihat Semua",
+    "colTime": "Waktu",
+    "colCourse": "Mata Kuliah",
+    "colLecturer": "Pengajar",
+    "colStatus": "Status",
+    "classDone": "Selesai",
+    "classRunning": "Berlangsung",
+    "classUpcoming": "Mendatang",
     "profile": "Profil Saya",
     "logout": "Keluar"
   },
@@ -38,334 +108,1303 @@
     "academic": "Akademik",
     "krs": "KRS Online",
     "khs": "KHS / Nilai",
+    "dpa": "Approval DPA",
     "schedule": "Jadwal Kuliah",
     "attendance": "Presensi QR",
     "finance": "Keuangan & UKT",
-    "settings": "Pengaturan"
+    "settings": "Pengaturan",
+    "more": "Lainnya",
+    "modules": "Modul & Paket",
+    "audit": "Jejak Audit",
+    "platform": "Platform",
+    "platformTenants": "Institusi & Provisioning",
+    "platformAudit": "Audit Lintas Institusi",
+    "platformSupport": "Dukungan Terawasi",
+    "admin": "Area Admin",
+    "adminUsers": "Pengguna",
+    "adminOrganization": "Organisasi & Prodi",
+    "adminRbac": "Hak Akses",
+    "adminRequests": "Permintaan Hak",
+    "adminParameters": "Parameter Sistem",
+    "soon": "Segera"
+  },
+  "platform": {
+    "eyebrow": "Area Platform",
+    "crumbDashboard": "Dashboard",
+    "crumbPlatform": "Platform",
+    "crumbTenants": "Institusi",
+    "crumbAudit": "Audit Lintas Institusi",
+    "crumbSupport": "Dukungan Terawasi",
+    "tenantsTitle": "Institusi & Provisioning",
+    "tenantsSubtitle": "Daftar agregat lintas tenant tanpa PII per-record. Provisioning, suspensi, dan pemulihan dikerjakan dari satu layar.",
+    "colInstitution": "Institusi",
+    "colSlug": "Slug",
+    "colStatus": "Status",
+    "colCreated": "Terdaftar",
+    "colModules": "Modul aktif",
+    "colRoles": "Peran tersedi",
+    "colSubscription": "Langganan",
+    "colAction": "Aksi",
+    "colOccurred": "Waktu",
+    "colTarget": "Entitas target",
+    "colTargetId": "ID target",
+    "colActor": "Aktor",
+    "colReason": "Alasan",
+    "colHash": "Hash rantai",
+    "colPrevHash": "Hash sebelumnya",
+    "newTenant": "Provisioning institusi",
+    "provisionTitle": "Wizard provisioning tenant",
+    "provisionHint": "Satu transaksi: gagal di tengah jalan berarti nol baris tersisa (AC-PLT-1). Header Idempotency-Key dikirim otomatis dan dipakai ulang sampai permintaan berhasil.",
+    "fSlug": "Slug institusi",
+    "fLegalName": "Nama badan hukum",
+    "fAdminEmail": "Email admin pertama",
+    "fAdminFullName": "Nama admin pertama",
+    "fAdminPassword": "Sandi awal admin",
+    "fMemberCode": "Kode keanggotaan awal",
+    "fModules": "Modul yang diaktivasi",
+    "fReason": "Alasan",
+    "reasonPlaceholder": "Minimal 10 karakter — alasan ini ikut tersimpan di jejak audit.",
+    "slugHint": "hanya huruf kecil, angka, dan tanda sambung",
+    "passwordHint": "minimal 12 karakter (SECURITY §2.1)",
+    "provisionSubmit": "Jalankan provisioning",
+    "provisionBusy": "Provisioning berjalan…",
+    "provisionOk": "Institusi dibuat dengan status ONBOARDING.",
+    "rolesSeeded": "Peran tersedi",
+    "modulesActivated": "Modul aktif",
+    "detailTitle": "Detail institusi",
+    "detailBusy": "Memuat detail…",
+    "detailEmpty": "Pilih satu baris untuk melihat modul, peran, dan langganan.",
+    "suspend": "Suspensi",
+    "reinstate": "Pemulihan",
+    "transitionTitle": "Transisi status institusi",
+    "transitionHint": "Kolom status adalah SERVER_ONLY — ia hanya berubah lewat rute transisi, dengan alasan, dan sesi ber-MFA.",
+    "transitionOk": "Status institusi diperbarui.",
+    "currentStatus": "Status saat ini",
+    "loadError": "Daftar institusi gagal dimuat.",
+    "empty": "Belum ada institusi terdaftar.",
+    "mfaRequired": "Tulis di area platform menuntut sesi MFA. Masuk ulang dan selesaikan tantangan TOTP.",
+    "forbidden": "Permintaan ditolak server (403) — izin untuk aksi ini tidak cukup.",
+    "conflict": "Konflik — slug/email mungkin sudah dipakai, atau Idempotency-Key dipakai ulang dengan isi berbeda.",
+    "auditTitle": "Audit Lintas Institusi",
+    "auditSubtitle": "Membaca jejak tenant lain wajib beralasan, dan pembacaan ini sendiri menjadi baris audit baru di tenant operator.",
+    "fTenant": "Institusi target",
+    "fTenantNone": "Pilih institusi…",
+    "fActionFilter": "Kode aksi (opsional)",
+    "fTargetEntity": "Entitas target (opsional)",
+    "fFrom": "Dari",
+    "fTo": "Sampai",
+    "auditRun": "Ambil jejak audit",
+    "auditBusy": "Mengambil jejak…",
+    "auditIdle": "Belum ada query dijalankan — pilih institusi dan isi alasan.",
+    "auditNoRows": "Tidak ada baris audit pada rentang atau filter ini.",
+    "auditRows": "baris audit",
+    "auditPage": "Halaman",
+    "auditOf": "dari",
+    "chainNote": "Hash dirangkai SHA-256 per tenant. Verifikasi rantai dijalankan dengan `pnpm --filter @sica/web verify:chain`.",
+    "reasonRequiredBadge": "Alasan wajib",
+    "writeOnRead": "Pembacaan ini sendiri telah dicatat sebagai baris audit baru di tenant operator.",
+    "supportTitle": "Dukungan Terawasi",
+    "supportSubtitle": "Grant akses dukungan ber-TTL maksimum 30 menit, wajib MFA, dan tercatat sebagai baris audit di tenant target.",
+    "fTargetSlug": "Slug institusi target",
+    "fTargetId": "ID institusi target (UUID)",
+    "targetTenantHint": "Isi slug ATAU id institusi target — slug diprioritaskan bila keduanya diisi.",
+    "fTargetUser": "ID pengguna target (UUID)",
+    "fScope": "Cakupan grant",
+    "fTtl": "TTL (menit)",
+    "fTicket": "ID tiket (UUID, opsional)",
+    "scopeReadOnly": "Hanya-baca",
+    "scopeRepair": "Perbaikan helpdesk",
+    "grantSubmit": "Minta grant dukungan",
+    "grantBusy": "Mengajukan grant…",
+    "grantOk": "Grant dibuat dan berstatus AKTIF.",
+    "countdown": "Sisa waktu grant",
+    "expired": "Lewat TTL",
+    "revoke": "Cabut grant",
+    "revokeBusy": "Mencabut grant…",
+    "revokeOk": "Grant dicabut (status REVOKED).",
+    "ttlMaxBadge": "TTL maks. 30 menit",
+    "sessionLedgerTitle": "Grant pada sesi browser ini",
+    "ttlHint": "1–30 menit, dipangkas server",
+    "sessionLedger": "Daftar berikut adalah grant yang dibuat pada browser ini. Riwayat penuh per institusi dibaca lewat layar Audit Lintas Institusi pada entitas `impersonation_grants`.",
+    "noGrants": "Belum ada grant pada sesi ini.",
+    "openAudit": "Buka audit institusi ini",
+    "formInvalid": "Periksa kembali kolom yang ditandai.",
+    "optionalLabel": "opsional",
+    "close": "Tutup",
+    "reload": "Muat ulang",
+    "transitionBusy": "Menyimpan transisi…",
+    "save": "Simpan"
   },
   "landing": {
     "nav": {
       "features": "Fitur",
-      "modules": "Modul",
+      "modules": "Layanan",
       "roles": "Peran",
       "security": "Keamanan",
-      "pricing": "Harga",
+      "integrations": "Koneksi",
       "faq": "Tanya Jawab",
       "login": "Masuk Portal",
-      "demo": "Jadwalkan Demo"
+      "demo": "Lihat Layanan"
     },
     "hero": {
-      "titleA": "Sistem Akademik Kampus",
-      "titleHighlight": "Satu Platform, Semua Selesai",
-      "subtitle": "SICA menyatukan penerimaan mahasiswa, KRS, presensi, penilaian, keuangan, dan pelaporan PDDikti dalam satu aplikasi yang aman untuk banyak kampus. Dirancang tetap lancar saat ribuan mahasiswa mengisi KRS secara bersamaan.",
-      "ctaPrimary": "Coba Portal Sekarang",
-      "ctaSecondary": "Lihat Semua Modul",
-      "trust1": "Data tiap kampus terpisah dan aman",
-      "trust2": "Aplikasi web dan mobile sinkron",
-      "trust3": "Siap audit dengan jejak aktivitas lengkap",
-      "previewCaption": "Dasbor mahasiswa — IPK, SKS, presensi, dan jadwal hari ini"
-    },
-    "stats": {
-      "heading": "Dirancang untuk Momen Terpadat Kampus",
-      "items": [
-        { "value": "19", "label": "Modul siap diaktifkan sesuai kebutuhan" },
-        { "value": "1.000+", "label": "Pengguna bersamaan sebagai target desain" },
-        { "value": "30 dtk", "label": "Masa berlaku QR untuk cegah titip absen" },
-        { "value": "2 bahasa", "label": "Dukungan bahasa Indonesia dan Inggris" }
+      "status": "Sedang dalam pengembangan",
+      "titleA": "Sistem Informasi Akademik",
+      "titleHighlight": "untuk Perguruan Tinggi",
+      "subtitle": "SICA sedang dikembangkan untuk membantu mengelola layanan kampus. Halaman ini menjelaskan rencana, bukan layanan yang sudah siap digunakan.",
+      "ctaPrimary": "Lihat Rencana Layanan",
+      "ctaSecondary": "Masuk ke Portal",
+      "areasEyebrow": "Rencana layanan",
+      "areasTitle": "Bagian yang sedang disiapkan",
+      "areas": [
+        {
+          "title": "Perkuliahan & layanan mahasiswa",
+          "desc": "Informasi kuliah, kegiatan belajar, penilaian, dan bantuan untuk mahasiswa."
+        },
+        {
+          "title": "Kegiatan kampus",
+          "desc": "Keuangan, pegawai, fasilitas, dan administrasi perguruan tinggi."
+        },
+        {
+          "title": "Mutu & laporan",
+          "desc": "Persiapan akreditasi, pemantauan mutu, dan laporan perguruan tinggi."
+        },
+        {
+          "title": "Riset & kemitraan",
+          "desc": "Penelitian, pertukaran mahasiswa, karier, penerimaan, dan kegiatan bersama mitra."
+        }
       ]
-    },
-    "strengths": {
-      "eyebrow": "Solusi SICA",
-      "title": "Setiap Masalah Ada Jawaban Otomatisnya",
-      "subtitle": "SICA tidak hanya mencatat — ia memvalidasi, mengunci, dan menghitung secara otomatis, sehingga aturan kampus dijaga sistem, bukan oleh ingatan manusia.",
-      "items": [
-        { "title": "KRS otomatis & aman saat puncak", "desc": "Batas SKS dihitung dari IPS, prasyarat mata kuliah dicek, bentrok jadwal/ruang/dosen dideteksi, dan kursi kelas dikunci per peminat agar tidak melewati kuota." },
-        { "title": "Penilaian cerdas & berkeadilan", "desc": "Angka dikonversi menjadi huruf mutu serta IPK/IPS otomatis mengikuti skala tiap kurikulum; total bobot divalidasi 100%, dan koreksi nilai wajib melalui persetujuan berjejak." },
-        { "title": "Presensi yang jujur", "desc": "QR berlaku 30 detik dengan kode anti-pemalsuan, lokasi diverifikasi, dan percobaan lokasi palsu langsung ditolak. Rekap kehadiran otomatis menjadi syarat ujian." },
-        { "title": "Keuangan yang bergerak sendiri", "desc": "Tagihan dibuat otomatis, pembayaran virtual account/QRIS dicocokkan, dan KRS ditahan hingga lunas — rekonsiliasi tanpa entri manual." },
-        { "title": "Deteksi anomali untuk pimpinan", "desc": "Pola tidak wajar seperti lonjakan nilai mendadak atau kecurigaan presensi ditandai lebih awal, sehingga keputusan diambil dari data yang bersih." },
-        { "title": "Siap PDDikti & audit", "desc": "Kelengkapan dan pemetaan data mengikuti aturan pelaporan nasional, disertai jejak audit untuk setiap perubahan penting." }
-      ]
-    },
-    "problem": {
-      "eyebrow": "Kenapa SIAKAD Lama Terasa Berat",
-      "title": "Masalah Nyata yang Kami Selesaikan",
-      "items": [
-        { "title": "Server lemot saat pengisian KRS", "desc": "Ribuan mahasiswa berebut mengambil kelas di jam yang sama. SICA memisahkan jalur baca dan tulis serta mengunci kursi tiap kelas, sehingga tidak ada pendaftaran ganda atau kelas yang melewati kuota." },
-        { "title": "Titip absen dan rekap manual", "desc": "Kode QR berganti tiap 30 detik dengan pengaman anti-pemalsuan dan verifikasi lokasi, sehingga hanya mahasiswa yang benar-benar hadir yang tercatat. Rekap kehadiran dibuat otomatis." },
-        { "title": "Laporan PDDikti sering ditolak", "desc": "Kelengkapan data mengikuti kebutuhan PDDikti sejak awal, bukan ditambal saat akan melapor." },
-        { "title": "Satu kampus berisiko mengintip kampus lain", "desc": "Data setiap kampus dipisah dan dikunci rapat, sehingga tidak dapat terbaca oleh institusi lain." }
-      ]
-    },
-    "modules": {
-      "eyebrow": "Fleksibel",
-      "title": "Aktifkan Hanya yang Kampus Butuhkan",
-      "subtitle": "Modul inti akademik selalu tersedia. Modul tambahan dapat dinyalakan kapan saja sesuai kebutuhan kampus.",
-      "coreLabel": "Inti",
-      "addonLabel": "Tambahan",
-      "items": []
     },
     "catalog": {
-      "eyebrow": "Katalog 19 Modul",
-      "title": "Seluruh Siklus Akademik, Disusun per Peran",
-      "subtitle": "Sembilan modul inti selalu tersedia. Sepuluh modul tambahan dapat diaktifkan sendiri. Gunakan penyaring peran untuk melihat modul yang relevan bagi Anda.",
-      "allRoles": "Semua peran",
-      "coreTab": "Modul Inti",
-      "addonTab": "Modul Tambahan",
-      "allTab": "Semua",
-      "rolesLabel": "Dipakai oleh",
-      "dependsLabel": "Prasyarat",
-      "licenseLabel": "Model harga",
-      "empty": "Belum ada modul untuk penyaringan ini.",
-      "roles": {
-        "mahasiswa": "Mahasiswa",
-        "dosen": "Dosen",
-        "baak": "BAAK",
-        "pimpinan": "Pimpinan",
-        "ortu": "Orang Tua"
+      "eyebrow": "Rencana Layanan",
+      "title": "47 Layanan yang Direncanakan",
+      "subtitle": "Daftar ini menunjukkan rencana layanan SICA. Belum semua layanan dibuat atau siap digunakan.",
+      "searchLabel": "Cari layanan",
+      "searchPlaceholder": "Cari nama layanan atau kata kunci",
+      "roleFilterLabel": "Peran pengguna",
+      "roleFilterAll": "Semua peran",
+      "packageFilterLabel": "Jenis layanan",
+      "packageFilters": {
+        "all": "Semua layanan",
+        "core": "Paket inti",
+        "addon": "Add-on",
+        "role": "Akses berbasis peran",
+        "unmapped": "Usulan belum dipetakan"
       },
-      "license": {
-        "INCLUDED": "Sudah termasuk paket",
-        "PER_SEAT": "Bayar per pengguna",
-        "FLAT": "Tarif tetap"
+      "audienceLabel": "Untuk",
+      "packageLabels": {
+        "core": "Paket inti",
+        "addon": "Add-on",
+        "role": "Akses berbasis peran",
+        "unmapped": "Usulan belum dipetakan"
+      },
+      "classificationNote": "Label mengikuti rancangan katalog SICA, bukan daftar paket kampus. Layanan berstatus usulan belum memiliki entitlement resmi; harga dan ketersediaan tiap paket belum ditetapkan.",
+      "resultLabel": "layanan ditemukan",
+      "expandAll": "Lihat semua penjelasan",
+      "collapseAll": "Tutup semua penjelasan",
+      "empty": "Layanan yang dicari tidak ditemukan.",
+      "registryNote": "Aplikasi ponsel direncanakan untuk memakai layanan yang sama, bukan sebagai layanan tambahan.",
+      "superApp": {
+        "title": "Aplikasi SICA di ponsel",
+        "desc": "Aplikasi ponsel direncanakan agar mahasiswa dan pegawai dapat mengakses layanan kampus dari ponsel.",
+        "note": "Aplikasi ini masih berupa rencana dan bukan layanan terpisah."
       },
       "items": [
-        { "code": "identity", "name": "Identitas & Hak Akses", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "dosen", "mahasiswa", "pimpinan"], "desc": "Satu akun untuk mahasiswa, dosen, dan staf, lengkap dengan peran serta hak akses di tiap institusi." },
-        { "code": "academic", "name": "Data Induk Akademik", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "pimpinan", "dosen"], "desc": "Pusat data fakultas, program studi, kurikulum, mata kuliah, semester, dan ruang kelas sebagai satu sumber kebenaran." },
-        { "code": "teaching", "name": "Pengajaran & Jadwal", "category": "CORE", "license": "INCLUDED", "roles": ["dosen", "baak"], "desc": "Pengaturan kelas, dosen pengampu, jadwal mingguan, dan sesi kuliah beserta pengecekan bentrok jadwal." },
-        { "code": "enrollment", "name": "KRS & Persetujuan Dosen Wali", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "dosen", "baak"], "desc": "Pengisian KRS dengan batas SKS otomatis dari IPS, pengecekan prasyarat, dan persetujuan dosen pembimbing akademik." },
-        { "code": "attendance", "name": "Presensi & Verifikasi Lokasi", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "dosen", "baak"], "desc": "Presensi lewat QR yang berganti tiap 30 detik dan verifikasi lokasi, dengan rekap kehadiran sebagai syarat ujian." },
-        { "code": "assessment", "name": "Nilai, KHS & Transkrip", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "dosen", "baak", "ortu"], "desc": "Pencatatan nilai per komponen, konversi ke huruf mutu, KHS tiap semester, dan transkrip akhir." },
-        { "code": "finance", "name": "Keuangan & Tagihan", "category": "CORE", "license": "INCLUDED", "roles": ["mahasiswa", "baak", "pimpinan", "ortu"], "desc": "UKT/SPP, tagihan, pembayaran lewat berbagai kanal, dan pembuka KRS otomatis setelah lunas." },
-        { "code": "feeder_pddikti", "name": "Laporan PDDikti", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "pimpinan"], "desc": "Penyiapan data agar pelaporan ke PDDikti lengkap dan tidak ditolak." },
-        { "code": "audit", "name": "Jejak Audit", "category": "CORE", "license": "INCLUDED", "roles": ["baak", "pimpinan"], "desc": "Perekaman setiap perubahan data penting dan aksi administrator untuk keperluan audit." },
-        { "code": "pmb", "name": "Penerimaan Mahasiswa Baru", "category": "ADDON", "license": "FLAT", "roles": ["baak", "pimpinan"], "depends": ["identity", "academic"], "desc": "Penerimaan mahasiswa baru dan ujian seleksi berbasis komputer." },
-        { "code": "cbt", "name": "Ujian Berbasis Komputer", "category": "ADDON", "license": "FLAT", "roles": ["mahasiswa", "dosen", "baak"], "depends": ["identity", "academic"], "desc": "Ujian daring dengan bank soal, jadwal, dan penilaian otomatis." },
-        { "code": "lms", "name": "Pembelajaran Daring (LMS)", "category": "ADDON", "license": "PER_SEAT", "roles": ["mahasiswa", "dosen"], "depends": ["teaching", "enrollment"], "desc": "Materi, tugas, dan diskusi kelas di luar jam tatap muka." },
-        { "code": "mbkm", "name": "MBKM", "category": "ADDON", "license": "FLAT", "roles": ["mahasiswa", "dosen", "baak"], "depends": ["enrollment", "assessment", "academic"], "desc": "Pengelolaan kegiatan belajar di luar program studi beserta konversi nilainya." },
-        { "code": "thesis", "name": "Skripsi & Tugas Akhir", "category": "ADDON", "license": "PER_SEAT", "roles": ["mahasiswa", "dosen", "baak"], "depends": ["enrollment", "assessment"], "desc": "Pembimbingan, ujian, dan dokumentasi skripsi atau tugas akhir." },
-        { "code": "spmi", "name": "Penjaminan Mutu & Akreditasi", "category": "ADDON", "license": "FLAT", "roles": ["pimpinan", "baak", "dosen"], "depends": ["academic", "assessment", "feeder_pddikti"], "desc": "Penjaminan mutu internal dan penyiapan data akreditasi." },
-        { "code": "hr_bkd", "name": "SDM, BKD & SISTER", "category": "ADDON", "license": "PER_SEAT", "roles": ["dosen", "baak", "pimpinan"], "depends": ["identity", "teaching"], "desc": "Beban kerja dosen (BKD), riwayat kepegawaian, dan pelaporan sumber daya manusia." },
-        { "code": "parent_portal", "name": "Portal Orang Tua", "category": "ADDON", "license": "INCLUDED", "roles": ["ortu"], "depends": ["enrollment", "assessment", "finance"], "desc": "Orang tua memantau kehadiran, nilai, dan tagihan secara terbatas dan aman." },
-        { "code": "graduation", "name": "Wisuda, Ijazah & Legalisir", "category": "ADDON", "license": "FLAT", "roles": ["mahasiswa", "baak", "pimpinan"], "depends": ["assessment", "feeder_pddikti"], "desc": "Proses kelulusan, ijazah, SKPI, dan layanan legalisir." },
-        { "code": "tracer_iku", "name": "Tracer Study & IKU", "category": "ADDON", "license": "FLAT", "roles": ["pimpinan", "baak", "mahasiswa"], "depends": ["graduation", "feeder_pddikti"], "desc": "Pelacakan alumni dan perhitungan Indikator Kinerja Utama (IKU) perguruan tinggi." }
+        {
+          "code": "M-01",
+          "packageType": "ROLE",
+          "name": "SaaS Foundation",
+          "displayName": "Pengelolaan Layanan Kampus",
+          "audience": "Pengelola platform",
+          "desc": "Mengatur kampus yang memakai layanan, pilihan paket, dan masa berlangganan."
+        },
+        {
+          "code": "M-02",
+          "packageType": "ROLE",
+          "name": "Master Parameter",
+          "displayName": "Pengaturan Kampus",
+          "audience": "Admin kampus",
+          "desc": "Mengatur pilihan dan aturan kampus, seperti data acuan dan format nomor mahasiswa."
+        },
+        {
+          "code": "M-03",
+          "packageType": "CORE",
+          "name": "Hak Akses & RBAC",
+          "displayName": "Pengaturan Hak Akses",
+          "audience": "Admin kampus",
+          "desc": "Mengatur siapa yang boleh melihat atau mengubah informasi sesuai tugasnya."
+        },
+        {
+          "code": "M-04",
+          "packageType": "ROLE",
+          "name": "IT Helpdesk",
+          "displayName": "Bantuan Pengguna",
+          "audience": "Semua pengguna",
+          "desc": "Mengirim permintaan bantuan dan mencari jawaban atas kendala penggunaan."
+        },
+        {
+          "code": "M-05",
+          "packageType": "CORE",
+          "name": "Keamanan & Audit",
+          "displayName": "Keamanan dan Catatan Perubahan",
+          "audience": "Auditor, Admin kampus",
+          "desc": "Mencatat perubahan penting dan membantu menjaga kerahasiaan serta keutuhan data."
+        },
+        {
+          "code": "M-06",
+          "packageType": "UNMAPPED",
+          "name": "HRIS & Payroll",
+          "displayName": "Kepegawaian dan Penggajian",
+          "audience": "Admin kepegawaian, Pegawai",
+          "desc": "Mengelola data pegawai, cuti, penilaian kerja, gaji, dan pajak."
+        },
+        {
+          "code": "M-07",
+          "packageType": "ADDON",
+          "name": "BKD Dosen",
+          "displayName": "Beban Kerja Dosen",
+          "audience": "Dosen, Ketua program studi, Penilai",
+          "desc": "Mencatat dan merangkum kegiatan mengajar, penelitian, dan pengabdian dosen."
+        },
+        {
+          "code": "M-08",
+          "packageType": "ADDON",
+          "name": "SISTER Sync",
+          "displayName": "Pelaporan Data Dosen",
+          "audience": "Dosen, Admin kepegawaian",
+          "desc": "Membantu menyiapkan dan mengirim data dosen ke SISTER serta melihat hasil pengirimannya."
+        },
+        {
+          "code": "M-09",
+          "packageType": "ADDON",
+          "name": "PMB & OCR",
+          "displayName": "Penerimaan Mahasiswa Baru",
+          "audience": "Petugas penerimaan, Pendaftar",
+          "desc": "Mengelola pendaftaran mahasiswa baru, dokumen, seleksi, dan penerbitan nomor mahasiswa."
+        },
+        {
+          "code": "M-10",
+          "packageType": "CORE",
+          "name": "Keuangan & Billing",
+          "displayName": "Tagihan dan Pembayaran",
+          "audience": "Petugas keuangan, Mahasiswa",
+          "desc": "Mencatat tagihan dan pembayaran mahasiswa."
+        },
+        {
+          "code": "M-11",
+          "packageType": "UNMAPPED",
+          "name": "KIP-K & Beasiswa",
+          "displayName": "Beasiswa",
+          "audience": "Petugas beasiswa, Mahasiswa",
+          "desc": "Mengelola pengajuan beasiswa, penilaian kelayakan, dan pemantauan penerima."
+        },
+        {
+          "code": "M-12",
+          "packageType": "CORE",
+          "name": "Kurikulum OBE",
+          "displayName": "Kurikulum untuk Hasil Belajar",
+          "audience": "Ketua program studi, Dekan",
+          "desc": "Menyusun kurikulum dan memastikan mata kuliah mendukung hasil belajar."
+        },
+        {
+          "code": "M-13",
+          "packageType": "CORE",
+          "name": "KRS Online & Perwalian",
+          "displayName": "Rencana Kuliah dan Perwalian",
+          "audience": "Mahasiswa, Dosen wali, Petugas akademik",
+          "desc": "Membantu mahasiswa memilih mata kuliah dan meminta persetujuan dosen wali."
+        },
+        {
+          "code": "M-14",
+          "packageType": "CORE",
+          "name": "Jadwal & Ruang",
+          "displayName": "Jadwal dan Ruang Kuliah",
+          "audience": "Petugas akademik, Petugas laboratorium",
+          "desc": "Menyusun jadwal kuliah serta mengatur penggunaan ruang dan laboratorium."
+        },
+        {
+          "code": "M-15",
+          "packageType": "CORE",
+          "name": "Moda Perkuliahan",
+          "displayName": "Cara Perkuliahan",
+          "audience": "Petugas akademik, Dosen",
+          "desc": "Mencatat cara kelas berlangsung, misalnya tatap muka atau daring, dan jadwal pertemuan."
+        },
+        {
+          "code": "M-16",
+          "packageType": "ADDON",
+          "name": "LMS Digital",
+          "displayName": "Materi dan Tugas Kuliah",
+          "audience": "Dosen, Mahasiswa",
+          "desc": "Menyediakan materi kuliah, tugas, dan ruang belajar daring."
+        },
+        {
+          "code": "M-17",
+          "packageType": "ADDON",
+          "name": "Ujian & Proctoring",
+          "displayName": "Ujian dan Pengawasan",
+          "audience": "Pengawas ujian, Dosen",
+          "desc": "Mengelola ujian dan kumpulan soal serta membantu menandai kejadian yang perlu diperiksa."
+        },
+        {
+          "code": "M-18",
+          "packageType": "CORE",
+          "name": "Presensi Smart",
+          "displayName": "Kehadiran Kuliah",
+          "audience": "Dosen, Mahasiswa, Petugas akademik",
+          "desc": "Mencatat kehadiran mahasiswa dari berbagai sumber."
+        },
+        {
+          "code": "M-19",
+          "packageType": "CORE",
+          "name": "Nilai & KHS",
+          "displayName": "Nilai dan Hasil Studi",
+          "audience": "Dosen, Ketua program studi, Mahasiswa",
+          "desc": "Menghitung, mengumumkan, dan menyimpan nilai serta hasil studi mahasiswa."
+        },
+        {
+          "code": "M-20",
+          "packageType": "ADDON",
+          "name": "Tugas Akhir & RAMA",
+          "displayName": "Tugas Akhir",
+          "audience": "Mahasiswa, Pembimbing, Penguji",
+          "desc": "Mengelola bimbingan, ujian akhir, dan penyimpanan karya tugas akhir."
+        },
+        {
+          "code": "M-21",
+          "packageType": "UNMAPPED",
+          "name": "Jurnal & OJS",
+          "displayName": "Penerbitan Jurnal",
+          "audience": "Pengelola jurnal",
+          "desc": "Mengelola proses penerbitan jurnal ilmiah."
+        },
+        {
+          "code": "M-22",
+          "packageType": "UNMAPPED",
+          "name": "Inkubator & HAKI",
+          "displayName": "Pengembangan Karya dan Usaha",
+          "audience": "Pengelola karya, Dosen, Mahasiswa",
+          "desc": "Membantu mengelola ide, karya, izin penggunaan, dan usaha rintisan."
+        },
+        {
+          "code": "M-23",
+          "packageType": "ADDON",
+          "name": "Wisuda & Toga",
+          "displayName": "Wisuda",
+          "audience": "Panitia wisuda, Petugas akademik",
+          "desc": "Mengatur acara wisuda, daftar peserta, dan tempat duduk. Keputusan kelulusan tetap melalui proses akademik."
+        },
+        {
+          "code": "M-24",
+          "packageType": "UNMAPPED",
+          "name": "Kemahasiswaan & SKKM",
+          "displayName": "Kegiatan Mahasiswa",
+          "audience": "Petugas kemahasiswaan",
+          "desc": "Mengelola kegiatan, prestasi, poin, dan pelanggaran mahasiswa."
+        },
+        {
+          "code": "M-25",
+          "packageType": "UNMAPPED",
+          "name": "KKN, PKL & Magang",
+          "displayName": "Pengabdian dan Magang",
+          "audience": "Mahasiswa, Pembimbing lapangan, Mitra",
+          "desc": "Mengatur kegiatan pengabdian, magang, dan penempatan mahasiswa di mitra."
+        },
+        {
+          "code": "M-26",
+          "packageType": "CORE",
+          "name": "Simulasi Lulus",
+          "displayName": "Perkiraan Waktu Lulus",
+          "audience": "Mahasiswa, Dosen wali",
+          "desc": "Memberi perkiraan waktu lulus berdasarkan mata kuliah yang masih harus diselesaikan."
+        },
+        {
+          "code": "M-27",
+          "packageType": "ADDON",
+          "name": "Tracer Study",
+          "displayName": "Survei Alumni",
+          "audience": "Petugas alumni, Alumni",
+          "desc": "Mengumpulkan kabar dan masukan dari alumni setelah lulus."
+        },
+        {
+          "code": "M-28",
+          "packageType": "UNMAPPED",
+          "name": "Career Center",
+          "displayName": "Karier Alumni",
+          "audience": "Alumni, Mitra kerja",
+          "desc": "Menghubungkan alumni dengan lowongan kerja, lamaran, dan kegiatan karier."
+        },
+        {
+          "code": "M-29",
+          "packageType": "UNMAPPED",
+          "name": "KUI & Mobilitas",
+          "displayName": "Pertukaran Mahasiswa",
+          "audience": "Petugas kerja sama, Mahasiswa internasional",
+          "desc": "Mengelola pertukaran mahasiswa serta urusan mahasiswa dari luar negeri."
+        },
+        {
+          "code": "M-30",
+          "packageType": "ADDON",
+          "name": "Yudisium & SKPI",
+          "displayName": "Syarat Kelulusan dan Dokumen",
+          "audience": "Petugas akademik, Dekan, Mahasiswa",
+          "desc": "Memeriksa syarat kelulusan dan menyiapkan dokumen pendamping ijazah."
+        },
+        {
+          "code": "M-31",
+          "packageType": "ADDON",
+          "name": "Akreditasi LKPS",
+          "displayName": "Persiapan Akreditasi",
+          "audience": "Ketua program studi, Petugas mutu",
+          "desc": "Mengumpulkan data yang dibutuhkan untuk penilaian akreditasi program studi."
+        },
+        {
+          "code": "M-32",
+          "packageType": "ADDON",
+          "name": "Dashboard IKU",
+          "displayName": "Ringkasan Kinerja Kampus",
+          "audience": "Pimpinan kampus, Petugas mutu",
+          "desc": "Menyajikan ringkasan indikator kinerja perguruan tinggi."
+        },
+        {
+          "code": "M-33",
+          "packageType": "CORE",
+          "name": "Jadwal Darurat",
+          "displayName": "Penyesuaian Jadwal",
+          "audience": "Petugas akademik, Petugas fasilitas",
+          "desc": "Membantu menyusun ulang jadwal saat ruang atau kegiatan mengalami gangguan."
+        },
+        {
+          "code": "M-34",
+          "packageType": "CORE",
+          "name": "Feeder PDDikti",
+          "displayName": "Pelaporan Data ke PDDikti",
+          "audience": "Petugas pelaporan PDDikti",
+          "desc": "Membantu memeriksa dan mengirim data kampus untuk pelaporan ke PDDikti."
+        },
+        {
+          "code": "M-35",
+          "packageType": "ROLE",
+          "name": "PIN & SIVIL",
+          "displayName": "Ijazah dan Pemeriksaan Keaslian",
+          "audience": "Petugas akademik, Masyarakat",
+          "desc": "Mengelola nomor identitas ijazah dan membantu masyarakat memeriksa keaslian dokumen kelulusan."
+        },
+        {
+          "code": "M-36",
+          "packageType": "UNMAPPED",
+          "name": "Portal PPKS",
+          "displayName": "Penanganan Kekerasan Seksual",
+          "audience": "Petugas penanganan, Pelapor",
+          "desc": "Menyediakan jalur pelaporan dan penanganan kekerasan seksual di lingkungan kampus."
+        },
+        {
+          "code": "M-37",
+          "packageType": "ADDON",
+          "name": "SPMI & Quality",
+          "displayName": "Penjaminan Mutu",
+          "audience": "Auditor, Petugas mutu",
+          "desc": "Mengelola standar mutu, pemeriksaan internal, temuan, dan tindak lanjut."
+        },
+        {
+          "code": "M-38",
+          "packageType": "ADDON",
+          "name": "Kampus Merdeka / MBKM",
+          "displayName": "Kegiatan Belajar di Luar Kampus",
+          "audience": "Ketua program studi, Mahasiswa",
+          "desc": "Mencatat kegiatan belajar di luar kampus dan penyetaraannya dengan mata kuliah."
+        },
+        {
+          "code": "M-39",
+          "packageType": "UNMAPPED",
+          "name": "e-Library",
+          "displayName": "Perpustakaan",
+          "audience": "Pustakawan, Mahasiswa",
+          "desc": "Mengelola koleksi perpustakaan, peminjaman, denda, dan status bebas pustaka."
+        },
+        {
+          "code": "M-40",
+          "packageType": "UNMAPPED",
+          "name": "Aset & Inventaris",
+          "displayName": "Aset Kampus",
+          "audience": "Petugas fasilitas, Petugas aset negara",
+          "desc": "Mencatat barang milik kampus, peminjaman, dan kondisi aset."
+        },
+        {
+          "code": "M-41",
+          "packageType": "UNMAPPED",
+          "name": "Klinik Kampus",
+          "displayName": "Klinik dan Konseling",
+          "audience": "Dokter, Konselor, Mahasiswa",
+          "desc": "Mendukung layanan klinik dan konseling dengan perlindungan khusus atas informasi pribadi."
+        },
+        {
+          "code": "M-42",
+          "packageType": "UNMAPPED",
+          "name": "Asrama & Kantin",
+          "displayName": "Asrama dan Kantin",
+          "audience": "Pengelola, Mahasiswa",
+          "desc": "Mengelola asrama, kantin, dan pembayaran layanan kampus."
+        },
+        {
+          "code": "M-43",
+          "packageType": "UNMAPPED",
+          "name": "Humas & Event",
+          "displayName": "Acara Kampus",
+          "audience": "Petugas humas, Peserta",
+          "desc": "Mengelola pendaftaran acara dan mencatat kehadiran peserta."
+        },
+        {
+          "code": "M-44",
+          "packageType": "UNMAPPED",
+          "name": "SIM-LPPM / LITABMAS",
+          "displayName": "Penelitian dan Pengabdian",
+          "audience": "Peneliti, Penilai, Petugas keuangan",
+          "desc": "Mengelola pengajuan dana penelitian dan pengabdian, penilaian, serta hasilnya."
+        },
+        {
+          "code": "M-45",
+          "packageType": "UNMAPPED",
+          "name": "CRM PMB & Marketing",
+          "displayName": "Promosi Penerimaan Mahasiswa",
+          "audience": "Tim penerimaan mahasiswa, Mitra",
+          "desc": "Membantu promosi penerimaan mahasiswa baru dan mencatat calon pendaftar."
+        },
+        {
+          "code": "M-46",
+          "packageType": "UNMAPPED",
+          "name": "E-Procurement PBJ",
+          "displayName": "Pengadaan Barang dan Jasa",
+          "audience": "Panitia pengadaan, Pengelola anggaran, Penyedia",
+          "desc": "Mengelola pengadaan barang dan jasa dari permintaan hingga perjanjian."
+        },
+        {
+          "code": "M-47",
+          "packageType": "UNMAPPED",
+          "name": "Endowment Fund",
+          "displayName": "Dana Abadi Kampus",
+          "audience": "Pengelola dana abadi, Donatur",
+          "desc": "Mengelola donasi, dana abadi, dan penyalurannya untuk beasiswa atau bantuan."
+        }
       ]
-    },
-    "benchmark": {
-      "eyebrow": "Perbandingan",
-      "title": "Mengapa Kampus Memilih SICA",
-      "subtitle": "Bukan sekadar jumlah menu, melainkan seberapa kuat fondasi di bawahnya dibanding sistem akademik biasa.",
-      "columns": ["SIAKAD Konvensional", "SaaS Akademik Umum", "SICA"],
-      "rows": [
-        { "label": "Pemisahan data antar kampus", "cells": ["Server terpisah-pisah", "Satu basis data bersama", "Terkunci per kampus, sangat rapat"] },
-        { "label": "Beli & aktifkan modul sendiri", "cells": ["Tidak", "Terbatas", "Ya, sesuai kebutuhan"] },
-        { "label": "Konsistensi data web & mobile", "cells": ["Dua program terpisah", "Kadang", "Satu sumber data"] },
-        { "label": "Pasang di server kampus sendiri", "cells": ["Ya", "Jarang", "Ya"] },
-        { "label": "Kesiapan saat puncak pengisian KRS", "cells": ["Sering down", "Terbatas", "Antrean + kunci per kelas + anti ganda"] },
-        { "label": "Kelengkapan data PDDikti", "cells": ["Ditambal saat melapor", "Sebagian", "Disiapkan sejak awal"] }
-      ],
-      "sevimaTitle": "Cakupan modul standar pasar",
-      "sevimaNote": "Modul inti siap pakai; modul tambahan menyusul secara bertahap.",
-      "statusReady": "Siap",
-      "statusPartial": "Bertahap",
-      "statusRoadmap": "Rencana",
-      "sevima": [
-        { "label": "Akademik & KRS", "status": "ready" },
-        { "label": "Presensi & Verifikasi Lokasi", "status": "ready" },
-        { "label": "Nilai, KHS & Transkrip", "status": "ready" },
-        { "label": "Keuangan & UKT", "status": "partial" },
-        { "label": "Laporan PDDikti", "status": "partial" },
-        { "label": "Penerimaan Mahasiswa Baru", "status": "roadmap" },
-        { "label": "MBKM", "status": "roadmap" },
-        { "label": "Skripsi & Tugas Akhir", "status": "roadmap" },
-        { "label": "Penjaminan Mutu & Akreditasi", "status": "roadmap" },
-        { "label": "SDM, BKD & SISTER", "status": "roadmap" },
-        { "label": "Portal Orang Tua", "status": "roadmap" },
-        { "label": "Wisuda & Ijazah", "status": "roadmap" },
-        { "label": "Tracer Study & IKU", "status": "roadmap" }
-      ]
-    },
-    "deepdive": {
-      "krs": {
-        "eyebrow": "Alur KRS",
-        "title": "Pengisian KRS yang Tertib dan Otomatis",
-        "steps": [
-          { "title": "Batas SKS otomatis", "desc": "Jumlah SKS yang boleh diambil dihitung dari IPS dan aturan kurikulum, bukan diketik manual." },
-          { "title": "Pilih kelas, cek bentrok", "desc": "Bentrok jadwal, dosen, dan ruang terdeteksi otomatis sebelum pengiriman." },
-          { "title": "Syarat pembayaran", "desc": "Kampus dapat mensyaratkan UKT/SPP lunas sebelum KRS berlaku." },
-          { "title": "Persetujuan dosen wali", "desc": "Dosen pembimbing akademik menyetujui atau menolak beserta alasannya." }
-        ]
-      },
-      "attendance": {
-        "eyebrow": "Alur Presensi",
-        "title": "Kehadiran yang Bisa Dipertanggungjawabkan",
-        "steps": [
-          { "title": "Dosen membuka presensi", "desc": "QR dibuat dengan masa berlaku 30 detik dan kode unik anti-pemalsuan." },
-          { "title": "Mahasiswa memindai di kelas", "desc": "Lokasi GPS dibandingkan dengan titik ruang kelas." },
-          { "title": "Pengecekan berlapis", "desc": "Lokasi palsu, jarak di luar radius, dan QR kedaluwarsa otomatis ditolak." },
-          { "title": "Rekap otomatis", "desc": "Persentase kehadiran menjadi syarat ujian dan bahan audit." }
-        ]
-      }
     },
     "roles": {
-      "eyebrow": "Peran",
-      "title": "Tampilan Berbeda untuk Setiap Kepentingan",
-      "subtitle": "SICA melayani seluruh peran di kampus — dari mahasiswa hingga pimpinan — dengan tampilan dan hak akses yang disesuaikan untuk masing-masing.",
+      "eyebrow": "Untuk Siapa",
+      "title": "Rencana layanan untuk setiap peran",
+      "subtitle": "Contoh berikut menunjukkan kebutuhan yang ingin dibantu. Layanan masih dikembangkan dan belum tentu sudah tersedia.",
+      "scopeLabel": "Contoh kebutuhan",
       "tabs": [
         {
           "key": "mahasiswa",
           "label": "Mahasiswa",
-          "title": "Semua kebutuhan kuliah dalam satu layar",
-          "desc": "IPK dan total SKS dihitung dari nilai yang sudah final, jadwal mengikuti ruang dan pengampu, serta status tagihan terlihat sebelum mengisi KRS.",
-          "points": ["Lihat IPK, SKS, dan jadwal harian", "Isi KRS dengan sisa SKS langsung terlihat", "Cetak KHS dan transkrip", "Pindai presensi QR dari ponsel"]
+          "title": "Informasi kuliah lebih mudah ditemukan",
+          "desc": "Mata kuliah yang diambil, jadwal, nilai akhir, jumlah kredit kuliah, dan tagihan direncanakan dapat dilihat dari satu tempat.",
+          "points": [
+            "Lihat jadwal dan mata kuliah yang diambil",
+            "Ajukan rencana mata kuliah semester (KRS)",
+            "Lihat nilai semester dan transkrip",
+            "Catat kehadiran melalui ponsel"
+          ]
         },
         {
           "key": "dosen",
-          "label": "Dosen Pengampu",
-          "title": "Mengajar dan menilai tanpa spreadsheet",
-          "desc": "Kelas yang diampu dan sesi hari ini tampil lebih dulu, lalu nilai tiap komponen diisi dengan total bobot terkunci 100%.",
-          "points": ["Daftar mahasiswa per kelas yang akurat", "Presensi dan rekap kehadiran", "Input dan kunci nilai per komponen", "Pengingat tenggat pengisian nilai"]
+          "label": "Dosen",
+          "title": "Mengelola kelas dan nilai",
+          "desc": "Dosen direncanakan dapat melihat kelas, jadwal mengajar, kehadiran mahasiswa, dan mengisi nilai.",
+          "points": [
+            "Lihat daftar mahasiswa di setiap kelas",
+            "Catat dan periksa kehadiran",
+            "Masukkan nilai tugas dan ujian",
+            "Lihat batas waktu pengisian nilai"
+          ]
         },
         {
           "key": "dosen-wali",
           "label": "Dosen Wali",
-          "title": "Membimbing banyak mahasiswa tanpa tenggelam kertas",
-          "desc": "Daftar mahasiswa bimbingan dan pengajuan KRS mereka tampil terpusat, sehingga persetujuan cukup beberapa klik dengan alasan yang tercatat.",
-          "points": ["Antrian persetujuan KRS mahasiswa binaan", "Setujui atau tolak beserta alasan", "Pantau progres dan masa studi binaan", "Riwayat bimbingan tersimpan rapi"]
+          "title": "Mendampingi mahasiswa perwalian",
+          "desc": "Dosen wali direncanakan dapat melihat mahasiswa bimbingan, memeriksa rencana mata kuliah, dan mencatat hasil persetujuan.",
+          "points": [
+            "Periksa rencana mata kuliah mahasiswa",
+            "Setujui atau minta perbaikan dengan alasan",
+            "Pantau perkembangan studi",
+            "Lihat catatan bimbingan"
+          ]
         },
         {
           "key": "kaprodi",
-          "label": "Kaprodi",
-          "title": "Kendali penuh atas mutu program studi",
-          "desc": "Menyusun kurikulum dan kelas, menetapkan pengampu, menyetujui koreksi nilai, dan menyiapkan yudisium dalam satu tempat sesuai aturan prodi sendiri.",
-          "points": ["Atur kurikulum, mata kuliah, dan prasyarat", "Tugaskan dosen pengampu dan pembimbing", "Setujui koreksi nilai setelah dikunci", "Kawal syarat dan proses yudisium"]
+          "label": "Ketua Program Studi",
+          "title": "Mengatur kebutuhan program studi",
+          "desc": "Ketua program studi direncanakan dapat mengelola kurikulum, kelas, dosen pengajar, dan persiapan kelulusan.",
+          "points": [
+            "Atur kurikulum dan mata kuliah",
+            "Tentukan dosen pengajar dan pembimbing",
+            "Tinjau permintaan perubahan nilai",
+            "Periksa persyaratan kelulusan"
+          ]
         },
         {
           "key": "admin",
-          "label": "Admin Akademik",
-          "title": "Kendali operasional akademik satu institusi",
-          "desc": "Merapikan data sebelum pelaporan: data induk mata kuliah, kelas paralel, periode aktif, dan pengaktifan modul tambahan dapat dikelola sendiri tanpa menunggu vendor.",
-          "points": ["Rekap mahasiswa, dosen, dan kelas aktif", "Kelola periode dan jadwal paralel", "Cetak dokumen resmi dan transkrip", "Jejak audit aksi administrator"]
+          "label": "Petugas Akademik",
+          "title": "Mengelola data dan kegiatan akademik",
+          "desc": "Petugas akademik direncanakan dapat mengatur data mata kuliah, kelas, jadwal, dan masa perkuliahan.",
+          "points": [
+            "Lihat data mahasiswa, dosen, dan kelas",
+            "Atur masa perkuliahan dan jadwal",
+            "Siapkan dokumen akademik",
+            "Lihat catatan perubahan data"
+          ]
         },
         {
           "key": "keuangan",
-          "label": "Admin Keuangan",
-          "title": "Tagihan tertagih, rekonsiliasi rapi",
-          "desc": "Menetapkan UKT/SPP, menerbitkan tagihan, memantau pembayaran dari berbagai kanal, dan memberi keringanan lewat persetujuan berjejak.",
-          "points": ["Buat tagihan dan jadwal pembayaran", "Cocokkan pembayaran otomatis (VA/QRIS)", "Tahan KRS otomatis bila belum lunas", "Rekap tunggakan dan penerimaan"]
+          "label": "Petugas Keuangan",
+          "title": "Mengelola tagihan kampus",
+          "desc": "Petugas keuangan direncanakan dapat membuat tagihan, mencatat pembayaran, dan memeriksa keringanan biaya.",
+          "points": [
+            "Buat tagihan dan jadwal pembayaran",
+            "Periksa pembayaran dari berbagai cara",
+            "Lihat status pembayaran mahasiswa",
+            "Buat ringkasan pemasukan dan tunggakan"
+          ]
         },
         {
           "key": "feeder",
-          "label": "Operator PDDikti",
-          "title": "Pelaporan PDDikti yang lolos tanpa drama",
-          "desc": "Menyiapkan, memetakan, dan mengirim data ke PDDikti dengan pemeriksaan kelengkapan lebih awal, serta melihat galat per catatan.",
-          "points": ["Kelengkapan data mengikuti aturan Feeder", "Pratinjau sebelum pengiriman", "Catatan galat per mahasiswa/kelas", "Riwayat pengiriman tiap periode"]
+          "label": "Petugas Pelaporan",
+          "title": "Menyiapkan laporan ke PDDikti",
+          "desc": "Petugas direncanakan dapat memeriksa kelengkapan data kampus sebelum mengirim laporan ke PDDikti.",
+          "points": [
+            "Periksa data sebelum dikirim",
+            "Tinjau isi laporan terlebih dahulu",
+            "Lihat data yang perlu diperbaiki",
+            "Periksa riwayat pengiriman laporan"
+          ]
         },
         {
           "key": "pimpinan",
           "label": "Pimpinan",
-          "title": "Angka yang dipakai untuk mengambil keputusan",
-          "desc": "Indeks prestasi, ketuntasan studi, dan kepatuhan pelaporan disajikan konsisten sehingga rapat pimpinan membahas kebijakan, bukan memperdebatkan angka.",
-          "points": ["Indeks kinerja akademik per program studi", "Pemantauan ketuntasan dan masa studi", "Kesiapan data PDDikti", "Ekspor laporan untuk rapat senat"]
+          "title": "Ringkasan untuk membantu mengambil keputusan",
+          "desc": "Pimpinan direncanakan dapat melihat ringkasan perkembangan studi, kinerja program studi, dan kesiapan laporan kampus.",
+          "points": [
+            "Lihat ringkasan tiap program studi",
+            "Pantau kelulusan dan lama studi",
+            "Periksa kesiapan laporan kampus",
+            "Siapkan laporan untuk rapat"
+          ]
         },
         {
           "key": "ortu",
           "label": "Orang Tua",
-          "title": "Menemani kuliah anak dengan informasi yang cukup",
-          "desc": "Orang tua dapat memantau kehadiran, nilai, dan status tagihan secara terbatas dan aman, tanpa akses ke data mahasiswa lain.",
-          "points": ["Pantau kehadiran dan nilai", "Lihat status tagihan dan pembayaran", "Terima notifikasi pengumuman penting", "Akses terbatas dan terlindungi"]
+          "title": "Melihat informasi kuliah anak",
+          "desc": "Orang tua direncanakan dapat melihat informasi tertentu tentang studi anaknya setelah mendapat izin, tanpa membuka data mahasiswa lain.",
+          "points": [
+            "Lihat ringkasan kehadiran dan nilai",
+            "Periksa status tagihan",
+            "Terima kabar penting dari kampus",
+            "Akses hanya untuk informasi yang diizinkan"
+          ]
         },
         {
           "key": "alumni",
           "label": "Alumni",
-          "title": "Layanan pasca-lulus tanpa harus datang",
-          "desc": "Mengajukan legalisir, mengunduh ijazah dan transkrip digital, serta mengisi tracer study langsung dari akun alumni.",
-          "points": ["Ajukan legalisir ijazah dan transkrip", "Unduh dokumen digital dengan QR verifikasi", "Isi tracer study", "Riwayat pengajuan terlacak"]
+          "title": "Mengurus kebutuhan setelah lulus",
+          "desc": "Alumni direncanakan dapat meminta pengesahan dokumen, mengakses dokumen kelulusan, dan mengisi survei alumni.",
+          "points": [
+            "Ajukan pengesahan ijazah atau transkrip",
+            "Akses dokumen kelulusan",
+            "Isi survei setelah lulus",
+            "Periksa status permintaan"
+          ]
         },
         {
           "key": "pendaftar",
-          "label": "Pendaftar Baru",
-          "title": "Dari daftar sampai lolos, satu alur jelas",
-          "desc": "Calon mahasiswa mendaftar, mengunggah berkas, mengikuti seleksi atau ujian, dan melihat hasil tanpa menebak-nebak status.",
-          "points": ["Isi formulir dan unggah berkas", "Bayar biaya seleksi lewat berbagai kanal", "Ikuti ujian berbasis komputer", "Pantau pengumuman kelulusan"]
+          "label": "Calon Mahasiswa",
+          "title": "Mengikuti proses pendaftaran kuliah",
+          "desc": "Calon mahasiswa direncanakan dapat mengisi pendaftaran, mengirim dokumen, mengikuti seleksi, dan melihat pengumuman.",
+          "points": [
+            "Isi formulir dan kirim dokumen",
+            "Periksa informasi biaya pendaftaran",
+            "Ikuti ujian atau seleksi",
+            "Lihat pengumuman hasil seleksi"
+          ]
         }
       ]
     },
     "security": {
-      "eyebrow": "Keamanan & Kepatuhan",
-      "title": "Dibangun dengan Asumsi Data Kampus Akan Dicoba Dibobol",
+      "eyebrow": "Keamanan Data",
+      "title": "Cara SICA direncanakan menjaga data",
       "items": [
-        { "title": "Data tiap kampus dipisah", "desc": "Setiap data ditandai kepemilikan kampusnya dan dikunci di tingkat baris, sehingga hanya kampus pemilik yang dapat membacanya." },
-        { "title": "Sesi login yang aman", "desc": "Token akses bertanda tangan dan berlaku terbatas, dengan pendeteksian bila token dicuri atau dipakai ulang." },
-        { "title": "Kata sandi terenkripsi", "desc": "Kata sandi disimpan dalam bentuk sandi hash dan akun terkunci setelah beberapa kali percobaan gagal." },
-        { "title": "Jejak audit", "desc": "Perubahan nilai, presensi manual, dan aksi administrator tercatat lengkap beserta pelakunya." },
-        { "title": "Hak akses sebatas kebutuhan", "desc": "Menu dan fitur dibatasi sesuai peran, bukan sekadar menyembunyikan tombol." },
-        { "title": "Perlindungan data pribadi", "desc": "Data pribadi mahasiswa hanya dikumpulkan seperlunya sesuai kebutuhan pelaporan." }
-      ]
+        {
+          "title": "Data kampus terpisah",
+          "desc": "Data setiap kampus direncanakan tersimpan terpisah. Pemisahan ini harus diuji sebelum digunakan."
+        },
+        {
+          "title": "Akses sesuai tugas",
+          "desc": "Setiap pengguna hanya boleh melihat dan mengubah informasi yang diperlukan untuk tugasnya. Aturan ini perlu diuji."
+        },
+        {
+          "title": "Keamanan akun",
+          "desc": "Kata sandi dan cara masuk ke akun harus dilindungi sebelum portal digunakan."
+        },
+        {
+          "title": "Catatan perubahan",
+          "desc": "Perubahan penting direncanakan tercatat agar dapat ditinjau kembali."
+        },
+        {
+          "title": "Akses seperlunya",
+          "desc": "Hak pengguna direncanakan mengikuti tanggung jawabnya di kampus dan perlu diperiksa sebelum digunakan."
+        },
+        {
+          "title": "Privasi",
+          "desc": "Data pribadi harus dikumpulkan seperlunya, dijaga, dan disimpan sesuai aturan yang berlaku."
+        }
+      ],
+      "note": "Ini adalah rencana keamanan, bukan sertifikat atau jaminan bahwa semua perlindungan sudah aktif."
     },
     "integrations": {
-      "eyebrow": "Integrasi",
-      "title": "Terhubung dengan Sistem yang Sudah Kampus Pakai",
+      "eyebrow": "Koneksi ke Layanan Lain",
+      "title": "Layanan lain yang direncanakan terhubung",
+      "note": "Koneksi berikut masih berupa rencana. Ketersediaan dan cara kerjanya perlu diperiksa sebelum digunakan.",
       "items": [
-        { "title": "PDDikti (Feeder)", "desc": "Sinkronisasi data akademik untuk pelaporan nasional." },
-        { "title": "Gerbang pembayaran", "desc": "Pembayaran lewat virtual account dan QRIS dengan pencatatan otomatis ke tagihan mahasiswa." },
-        { "title": "Email & WhatsApp", "desc": "Pemberitahuan jadwal, tagihan, dan pengumuman akademik." },
-        { "title": "Login tunggal (SSO)", "desc": "Terhubung dengan akun kampus yang sudah ada." },
-        { "title": "Perangkat presensi", "desc": "Mesin sidik jari atau pemindai kartu dapat menjadi sumber presensi tambahan." },
-        { "title": "LMS & perpustakaan", "desc": "Materi dan status peminjaman terhubung dalam satu akun." }
-      ]
-    },
-    "pricing": {
-      "eyebrow": "Harga",
-      "title": "Harga Indikatif, Disesuaikan Skala Kampus",
-      "subtitle": "Angka di bawah adalah kisaran perencanaan. Penawaran final mengikuti jumlah mahasiswa dan modul yang diaktifkan.",
-      "annualNote": "per mahasiswa per tahun",
-      "plans": [
-        { "name": "Rintis", "price": "Rp 12.000", "desc": "Untuk program studi atau kampus baru yang butuh sistem inti cepat berjalan.", "features": ["Modul akademik inti", "Portal web & mobile", "Dukungan di jam kerja", "1 institusi"], "cta": "Konsultasi", "featured": false },
-        { "name": "Kampus", "price": "Rp 19.000", "desc": "Paket terlengkap untuk universitas dengan banyak fakultas dan program studi.", "features": ["Semua modul inti", "Keuangan & tagihan", "Integrasi PDDikti", "Login tunggal (SSO)", "Dukungan prioritas", "Jaminan ketersediaan 99,9%"], "cta": "Pilih Paket Kampus", "featured": true },
-        { "name": "Enterprise", "price": "Sesuai kebutuhan", "desc": "Untuk kampus dengan kebutuhan server sendiri, audit khusus, dan volume tinggi.", "features": ["Semua fitur paket Kampus", "Pasang di server sendiri", "Audit & uji keamanan", "Pelatihan tim akademik", "Manajer proyek khusus"], "cta": "Hubungi Tim", "featured": false }
-      ]
-    },
-    "testimonials": {
-      "eyebrow": "Testimoni",
-      "title": "Suara dari Lingkungan Akademik",
-      "disclaimer": "Kutipan bersifat ilustratif untuk keperluan demo pemasaran dan akan diganti dengan testimoni klien terverifikasi.",
-      "items": [
-        { "quote": "Yang paling terasa itu saat pengisian KRS. Dulu kami berjaga memantau server, sekarang cukup memantau antrean.", "name": "Kepala Biro Administrasi Akademik", "org": "Universitas Negeri (Jawa Barat)" },
-        { "quote": "Sebagai dosen wali, persetujuan KRS mahasiswa bimbingan tidak perlu lagi mencetak lembar kertas.", "name": "Dosen & Pembimbing Akademik", "org": "Program Studi Teknik Informatika" },
-        { "quote": "Rekap kehadiran untuk syarat ujian akhirnya bisa dipercaya karena tervalidasi lokasi.", "name": "Wakil Rektor Bidang Akademik", "org": "Universitas Swasta (Jawa Timur)" }
+        {
+          "title": "PDDikti",
+          "desc": "Rencana pengiriman dan pemeriksaan data kampus untuk pelaporan pendidikan tinggi."
+        },
+        {
+          "title": "Pembayaran kampus",
+          "desc": "Rencana untuk mencatat pembayaran dari cara yang digunakan kampus. Penyedia layanan belum ditetapkan."
+        },
+        {
+          "title": "Email dan pesan",
+          "desc": "Rencana pengiriman kabar penting kepada pengguna. Layanan pengirimannya belum ditetapkan."
+        },
+        {
+          "title": "Masuk dengan akun kampus",
+          "desc": "Rencana agar pengguna dapat masuk memakai akun kampus. Cara ini perlu disepakati dan diuji."
+        },
+        {
+          "title": "Perangkat presensi",
+          "desc": "Koneksi ke perangkat kampus akan ditentukan setelah perangkat dan cara kerjanya diketahui."
+        },
+        {
+          "title": "Sistem belajar dan perpustakaan",
+          "desc": "Cara bertukar informasi dengan sistem belajar atau perpustakaan masih perlu ditentukan."
+        }
       ]
     },
     "faq": {
       "eyebrow": "Tanya Jawab",
-      "title": "Pertanyaan yang Paling Sering Diajukan",
+      "title": "Pertanyaan yang sering diajukan",
       "items": [
-        { "q": "Apakah SICA menggantikan SIAKAD yang sudah ada?", "a": "SICA dapat dijalankan berdampingan dengan SIAKAD lama lalu menjadi sistem utama. Pemindahan data induk dan riwayat nilai dilakukan bertahap tanpa mengganggu kegiatan akademik." },
-        { "q": "Bagaimana jaminan data satu kampus tidak terbaca kampus lain?", "a": "Setiap data ditandai kepemilikan kampusnya dan dikunci di tingkat baris. Bahkan bila ada kode yang lupa menyaring, data kampus lain tidak akan ikut terbaca." },
-        { "q": "Apakah siap untuk ribuan mahasiswa mengakses bersamaan?", "a": "Target desainnya 1.000+ pengguna bersamaan: pemisahan jalur baca dan tulis, pengelolaan koneksi yang efisien, penguncian kursi per kelas, serta antrean untuk penyelesaian pendaftaran." },
-        { "q": "Berapa lama implementasi sampai bisa dipakai?", "a": "Modul inti umumnya dapat dipakai dalam hitungan minggu untuk satu institusi, tergantung kelengkapan data awal dan modul tambahan yang dipilih." },
-        { "q": "Apakah bisa dipasang di server kampus sendiri?", "a": "Bisa. SICA mendukung pemasangan di server kampus sendiri maupun cloud, dengan pembaruan yang dapat dinyalakan bertahap tanpa henti layanan." },
-        { "q": "Apakah tersedia aplikasi mobile?", "a": "Ya. Portal web dan aplikasi mobile memakai data yang sama sehingga fitur utamanya setara, termasuk memindai presensi dari ponsel." }
+        {
+          "q": "Apakah SICA sudah bisa digunakan kampus?",
+          "a": "Belum. SICA masih dikembangkan. Kesiapan setiap layanan perlu diperiksa sebelum digunakan."
+        },
+        {
+          "q": "Apakah semua layanan di daftar ini sudah tersedia?",
+          "a": "Belum. Daftar ini menunjukkan rencana pengembangan, bukan layanan yang sudah selesai."
+        },
+        {
+          "q": "Apakah keamanan SICA sudah disertifikasi?",
+          "a": "Halaman ini tidak menyatakan bahwa SICA sudah memiliki sertifikat keamanan. Perlindungan yang direncanakan masih harus diperiksa dan diuji."
+        },
+        {
+          "q": "Apakah SICA sudah terhubung ke PDDikti dan layanan pembayaran?",
+          "a": "Belum dapat dipastikan. Koneksi tersebut masih perlu dibuat dan diuji."
+        },
+        {
+          "q": "Apakah harga dan jadwal peluncuran sudah ditetapkan?",
+          "a": "Belum ada harga atau jadwal yang diumumkan. Informasi ini perlu dikonfirmasi melalui pihak SICA."
+        },
+        {
+          "q": "Bagaimana cara masuk ke portal?",
+          "a": "Pilih tombol Masuk Portal. Portal hanya dapat digunakan oleh orang yang sudah memiliki akun kampus."
+        }
       ]
     },
     "cta": {
-      "title": "Siap Melihat SICA dengan Data Kampus Anda?",
-      "subtitle": "Kami dapat menyiapkan akun uji berisi contoh program studi, mata kuliah, dan satu siklus KRS agar demo terasa seperti kegiatan operasional nyata.",
-      "primary": "Jadwalkan Demo",
-      "secondary": "Masuk Portal Demo"
+      "title": "Kenali rencana layanan SICA",
+      "subtitle": "SICA masih dikembangkan. Contoh pada halaman ini belum tentu sudah tersedia untuk digunakan.",
+      "primary": "Lihat daftar layanan",
+      "secondary": "Masuk Portal"
     },
     "footer": {
-      "tagline": "Platform akademik serba ada untuk perguruan tinggi Indonesia.",
-      "product": "Produk",
-      "company": "Perusahaan",
-      "resources": "Sumber Daya",
-      "legal": "Legal",
-      "productLinks": ["Modul Akademik", "Presensi & Verifikasi Lokasi", "Keuangan Kampus", "Aplikasi Mobile"],
-      "companyLinks": ["Tentang Kami", "Karier", "Mitra", "Kontak"],
-      "resourceLinks": ["Dokumentasi", "Status Layanan", "Riwayat Perubahan", "Pusat Bantuan"],
-      "legalLinks": ["Kebijakan Privasi", "Syarat Layanan", "Keamanan Data"],
-      "copyright": "Hak Cipta Dilindungi Undang-Undang.",
-      "contactNote": "Untuk institusi: konsultasi implementasi dan pemindahan data tersedia."
+      "tagline": "Rencana layanan untuk membantu kegiatan perguruan tinggi.",
+      "navigation": "Tautan halaman",
+      "copyright": "Informasi dapat berubah selama pengembangan."
+    }
+  },
+  "admin": {
+    "crumbDashboard": "Dasbor",
+    "crumbAdmin": "Area Admin",
+    "crumbUsers": "Pengguna",
+    "crumbRbac": "Hak Akses",
+    "crumbRequests": "Permintaan Hak",
+    "usersTitle": "Pengguna Kampus",
+    "usersSubtitle": "Akun, keanggotaan, dan peran efektif yang dibaca dari penugasan — bukan label login.",
+    "newUser": "Buat akun",
+    "createHint": "Akun baru sengaja tidak memegang hak apa pun sampai seorang penyetuju mengesahkan grant.",
+    "fFullName": "Nama lengkap",
+    "fEmail": "Email kampus",
+    "fMemberCode": "Kode anggota",
+    "memberCodeHint": "NIM / NIDN / NIP — unik di institusi ini",
+    "fCarrier": "Peran carrier",
+    "carrierHint": "Hanya menentukan arah login & routeset, bukan hak akses",
+    "fInitialPassword": "Sandi awal",
+    "passwordHint": "Minimal 12 karakter; hanya ditampilkan sekali dan tidak pernah masuk log",
+    "fReason": "Alasan",
+    "reasonHint": "Minimal 10 karakter — alasan tersimpan sebagai bukti, bukan formalitas",
+    "fRole": "Peran yang diajukan",
+    "roleHint": "Peran sistem tetap dapat dipilih tetapi komposisinya terkunci",
+    "fValidTo": "Berlaku sampai",
+    "validToHint": "Kosongkan bila tanpa batas waktu",
+    "formInvalid": "Perbaiki isian yang ditandai",
+    "userCreated": "Akun dibuat",
+    "userCreatedBody": "akun aktif tanpa hak; ajukan peran lewat tab Hak Akses",
+    "userDeactivated": "Akun dinonaktifkan",
+    "deactivate": "Nonaktifkan",
+    "deactivateTitle": "Nonaktif = tutup, bukan hapus",
+    "deactivateBody": "Status akun ditutup, seluruh penugasan diberi valid_to, dan sesi aktif dicabut. Baris pengguna tetap ada agar riwayat akademik terbaca kembali.",
+    "askRole": "Ajukan peran",
+    "submitRequest": "Ajukan permintaan",
+    "requestQueued": "Permintaan tercatat (PENDING)",
+    "requestQueuedBody": "Hak belum berlaku — seorang penyetuju lain harus mengesahkan lewat area Permintaan Hak",
+    "grantPendingNote": "Empat-mata: Anda tidak dapat menyetujui pengajuan sendiri, dan penyetuju tidak dapat menyetujui grant untuk dirinya sendiri.",
+    "noRoles": "Belum ada peran",
+    "holders": "pemegang",
+    "rbacTitle": "Hak Akses & Peran",
+    "rbacSubtitle": "Matriks peran × izin × penugasan; setiap perubahan hak melewati dua orang.",
+    "tabRoles": "Peran & izin",
+    "tabAssignments": "Penugasan",
+    "colPerson": "Anggota",
+    "colMemberCode": "Kode",
+    "colEffectiveRoles": "Peran efektif",
+    "colAccountStatus": "Status akun",
+    "colActive": "Penugasan aktif",
+    "colState": "Keadaan",
+    "colRole": "Peran",
+    "colScope": "Lingkup",
+    "colKind": "Jenis",
+    "colHolders": "Pemegang",
+    "colPermissions": "Izin",
+    "colOrigin": "Asal",
+    "colValidFrom": "Berlaku sejak",
+    "colValidTo": "Berlaku sampai",
+    "colReason": "Alasan",
+    "colRequestedAt": "Diajukan",
+    "colStatus": "Status",
+    "colDecisionReason": "Alasan keputusan",
+    "systemLocked": "Peran sistem — terkunci",
+    "systemLockedBody": "Komposisi izin peran sistem tidak dapat disunting; buat peran kostum bila kebutuhan kampus berbeda.",
+    "customRole": "Peran kostum",
+    "openPermissions": "Izin peran",
+    "searchPermission": "Cari izin katalog",
+    "searchPermissionHint": "Ketik minimal 2 huruf, mis. finance.invoice",
+    "noSearchResults": "Tidak ada izin baru yang cocok dengan pencarian.",
+    "effectivePermissions": "Izin yang berlaku",
+    "previewNote": "Daftar ini pratinjau permintaan. Jumlah izin di tabel peran belum berubah sampai orang kedua menyetujui.",
+    "pendingAdd": "diajukan +",
+    "pendingRemove": "diajukan −",
+    "remove": "Cabut",
+    "revoke": "Cabut penugasan",
+    "revokeQueuedBody": "Penugasan belum dicabut; permintaan REVOKE menunggu keputusan penyetuju kedua. Baris tidak pernah dihapus.",
+    "deltaQueuedBody": "Delta izin belum berlaku; role_permissions hanya berubah setelah persetujuan.",
+    "noEnd": "tanpa batas",
+    "requestsTitle": "Antrean Permintaan Hak",
+    "requestsSubtitle": "GRANT · REVOKE · ROLE_PERMISSION_CHANGE dalam satu antrean keputusan empat-mata.",
+    "approve": "Setujui",
+    "reject": "Tolak",
+    "approved": "Disetujui — hak baru berlaku pada permintaan berikutnya",
+    "rejected": "Ditolak",
+    "decisionHint": "Keputusan bersifat terminal dan tercatat di rantai audit bersama identitas penyetuju.",
+    "rejectHint": "Wajib ≥ 10 karakter: penolakan tanpa sebab tidak dapat diaudit",
+    "reload": "Muat ulang",
+    "save": "Simpan",
+    "close": "Tutup",
+    "empty": "Belum ada data",
+    "busy": "Memproses…",
+    "loadingList": "Memuat daftar…",
+    "loadFailed": "Daftar tidak dapat dimuat: {message}",
+    "fourEyesTitle": "Empat-mata, bukan dua tombol",
+    "fourEyesBody": "Persetujuan menolak bila penyetuju adalah pemohon atau target grant, menuntut sesi ber-MFA, dan menolak lingkup yang lebih luas dari penugasan penyetuju.",
+    "org": {
+      "title": "Organisasi & Program Studi",
+      "subtitle": "Tanah tempat lingkup penugasan berpijak: fakultas, departemen, unit, dan program studi beserta angka akademiknya.",
+      "tabOrg": "Organisasi",
+      "tabProdi": "Program studi",
+      "colName": "Nama",
+      "colCode": "Kode",
+      "colKind": "Kelas",
+      "colParent": "Indukan",
+      "colChildren": "Anak",
+      "colPrograms": "Prodi",
+      "colLevel": "Jenjang",
+      "colSks": "SKS minimum",
+      "colNominal": "Masa studi normal",
+      "colMax": "Masa studi maksimum",
+      "colIpk": "Ambang IPK",
+      "colAccreditation": "Akreditasi",
+      "colPddikti": "Kode PDDikti",
+      "createOrg": "Tambah organisasi",
+      "editOrg": "Ubah organisasi",
+      "createProdi": "Tambah program studi",
+      "editProdi": "Ubah program studi",
+      "fName": "Nama",
+      "fCode": "Kode institusi",
+      "fKind": "Kelas organisasi",
+      "fParent": "Indukan",
+      "fNoParent": "— tanpa indukan (puncak) —",
+      "fLevel": "Jenjang",
+      "fPddikti": "Kode PDDikti",
+      "fMinSks": "Beban SKS minimum",
+      "fNominal": "Masa studi normal (semester)",
+      "fMax": "Masa studi maksimum (semester)",
+      "fIpk": "Ambang IPK kelulusan",
+      "fAccreditation": "Status akreditasi",
+      "fReason": "Alasan",
+      "hintCode": "Boleh kosong; bila diisi, unik dalam institusi ini",
+      "hintPddikti": "Dipakai jalur kirim Feeder; kosong berarti prodi ini tidak ikut kirim",
+      "hintNumbers": "Angka akademik ini yang menentukan beban studi dan syarat kelulusan — perubahannya tercatat beralasan.",
+      "noParentOption": "Puncak hierarki",
+      "saved": "Perubahan tersimpan dan tercatat di jejak audit.",
+      "noOrgs": "Belum ada organisasi. Tambahkan puncak hierarki lebih dulu (mis. rektorat atau sekolah pascasarjana).",
+      "noProdis": "Belum ada program studi. Prodi harus menunjuk organisasi tempat ia bernaung.",
+      "kindHQ": "Kantor pusat",
+      "kindFACULTY": "Fakultas",
+      "kindDEPARTMENT": "Departemen",
+      "kindUNIT": "Unit",
+      "kindLIBRARY": "Perpustakaan",
+      "cycleBlocked": "Hierarki tidak boleh melingkar — indukan baru berada di bawah simpul ini sendiri.",
+      "note": "Tidak ada tombol hapus. Organisasi dan prodi adalah titik rujukan lingkup serta laporan historis; menghapusnya memutus jejak yang sudah terbit."
+    },
+    "statusFilterNote": "Baris yang sudah diputus tetap tampil: keputusan terminal adalah bukti, bukan sampah antrean.",
+    "onlyPending": "Hanya menunggu",
+    "allStatuses": "Semua status",
+    "param": {
+      "list": {
+        "title": "Parameter Sistem",
+        "description": "Ambang, batas, flag, dan pola yang dibaca mesin — satu rumah untuk seluruh institusi.",
+        "colKey": "Kunci",
+        "colModule": "Modul",
+        "colValue": "Nilai berjalan",
+        "colDefault": "Baku",
+        "colRange": "Rentang & nilai sah",
+        "colRisk": "Kelas risiko",
+        "colScope": "Berlaku & cakupan",
+        "colVersion": "Versi",
+        "colStatus": "Status",
+        "colDescription": "Deskripsi"
+      },
+      "filter": {
+        "module": "Modul",
+        "riskClass": "Kelas risiko",
+        "q": "Cari kunci atau deskripsi",
+        "includeInactive": "Sertakan non-aktif",
+        "editableOnly": "Hanya yang bisa disunting",
+        "at": "Keadaan pada tanggal"
+      },
+      "risk": {
+        "TECHNICAL": "TEKNIS",
+        "OPS": "OPERASIONAL",
+        "ACADEMIC": "AKADEMIK",
+        "FINANCIAL": "KEUANGAN",
+        "REGULATORY": "REGULASI",
+        "SECURITY": "KEAMANAN"
+      },
+      "status": {
+        "active": "Aktif",
+        "inactive": "Non-aktif",
+        "hiddenModule": "Modul tidak tampil",
+        "expired": "Kedaluwarsa",
+        "pointerIndex": "Indeks penemuan",
+        "unboundedRange": "tanpa batas"
+      },
+      "disabled": {
+        "notParamSource": "Nilai sebenarnya tinggal di rumah lain dan dirawat di layar sana.",
+        "noEditGrant": "Anda tidak memegang izin tulis kelas ini.",
+        "checkLocked": "Dibatasi CHECK basis data — tidak dapat dinegosiasi dari layar mana pun.",
+        "moduleInactive": "Modul pemilik kunci belum aktif untuk institusi ini."
+      },
+      "editor": {
+        "title": "Ubah nilai",
+        "reasonLabel": "Alasan perubahan",
+        "reasonCounter": "{n}/500 karakter, minimal 10",
+        "appliesTo": "Cakupan (kosong = warisi nilai tenant)",
+        "inheritedScope": "Seluruh tenant",
+        "impactLine": "Dibaca oleh {count} konsumen terdaftar.",
+        "effectiveNow": "Nilai efektif saat ini",
+        "proposedValue": "Nilai yang diajukan",
+        "diffTitle": "Perubahan",
+        "save": "Simpan nilai",
+        "submit": "Ajukan ke penyetuju kedua",
+        "close": "Tutup"
+      },
+      "range": {
+        "between": "Sah: {min}–{max}{unit}",
+        "allowedValues": " · sah: {values}",
+        "unitSuffix": " {unit}",
+        "noLimit": "tanpa batas",
+        "pctHint": "Plafon 100% ditegakkan di transport dan basis data.",
+        "bpHint": "= {pct}% (basis poin; 10.000 = 100%)",
+        "cronPreview": "Pratinjau jadwal hanya tersedia setelah scheduler membaca kunci ini.",
+        "cronPreviewUnavailable": "Pratinjau jadwal belum tersedia; nilai tetap divalidasi server."
+      },
+      "riskCopy": {
+        "totpRotate": "Semakin pendek periode rotasi, semakin sempit jendela penyalinan token. Nilai di bawah 5 detik ditolak basis data dan tidak dapat disimpan dari layar mana pun.",
+        "geofenceRadius": "Radius yang lebih longgar mengurangi penolakan sah, tetapi memperbesar peluang mahasiswa tercatat hadir di luar ruang. Batas per ruang tetap rooms.allowed_radius_m.",
+        "gpsAccuracy": "Ambang akurasi yang lebih ketat akan menolak lebih banyak pembacaan sah di dalam gedung.",
+        "clockSkew": "Selisih jam yang lebih longgar memperbesar penerimaan peristiwa yang bukan berasal dari waktu sekarang.",
+        "onlineMinJoin": "Menurunkan rasio berarti sebagian_join dihitung sebagai hadir penuh.",
+        "multiSourcePolicy": "Kebijakan ini menentukan bukti mana yang menang saat luring dan daring berbeda; satu baris presensi tetap milik (sesi, mahasiswa)."
+      },
+      "pending": {
+        "submitted": "Menunggu penyetuju kedua",
+        "effective": "Yang berlaku masih nilai lama sampai permintaan ini disahkan.",
+        "approvers": "Pemegang hak berikutnya",
+        "selfApprovalNotice": "Anda tidak dapat menyetujui permintaan Anda sendiri (SELF_APPROVAL_FORBIDDEN)."
+      },
+      "error": {
+        "outOfRange": "Nilai di luar rentang sah. Kirim ulang angka di antara batas bawah dan batas atas yang tertera.",
+        "readOnly": "Kunci ini hanya indeks penemuan. Buka layar rumah nilai sebenarnya untuk mengubah.",
+        "invalidType": "Tipe nilai tidak cocok dengan data_type kunci. Bentuk yang diminta tertera di label kontrol.",
+        "enumUnknown": "Nilai bukan anggota kamus pada tanggal itu. Tambahkan item kamus lebih dulu, jangan paksakan angkanya.",
+        "secretForbidden": "Parameter tidak pernah menyimpan rahasia. Pindahkan kredensial ke ENV/vault.",
+        "restartRequired": "Kunci ini memerlukan pelepasan ulang. Nilai tidak ditulis karena jalur rilis belum terpasang.",
+        "approvalRequired": "Nilai tersimpan sebagai draf dan belum berlaku. Ajukan ke penyetuju kedua.",
+        "patternInvalid": "Pola grant tidak sah. Periksa bentuk parameterPattern dan kelengkapan catatan.",
+        "permissionUnknown": "Kode izin tidak ada di katalog. Nama izin tidak dapat diciptakan dari layar.",
+        "conflictVersion": "Baris sudah berubah sejak dibaca. Muat ulang keadaan sebelum menyimpan.",
+        "selfApproval": "Empat-mata: penyetuju harus orang kedua. Minta pemegang izin kelas ini memutuskan.",
+        "alreadyDecided": "Permintaan sudah berada pada keadaan terminal. Lihat riwayat kunci ini.",
+        "notFound": "Kunci tidak ditemukan dalam institusi ini."
+      },
+      "mfa": {
+        "gate": "Perubahan kelas {riskClass} menuntut sesi bermulti-faktor. Isian Anda tetap ada di layar ini sampai verifikasi selesai."
+      },
+      "sod": {
+        "grantHolder": "Tombol simpan disembunyikan karena hak Anda tidak mencakup kelas ini — mengajukan tetap mungkin.",
+        "securityClass": "Anda memegang izin atas objek yang dijaga ambang ini. Perubahan harus diajukan admin lain dan disahkan penyetuju kedua (SoD G-19)."
+      },
+      "stale": {
+        "title": "Keadaan versi berubah",
+        "reload": "Muat ulang",
+        "cancel": "Batalkan",
+        "detail": "Versi baris bukan {version} lagi. Simpan akan menimpa suntingan orang lain bila diteruskan."
+      },
+      "mode": {
+        "readonlyReconstruct": "Mode hanya-baca: keadaan direkonstruksi dari riwayat pada tanggal {at}. Tidak ada nilai yang dapat diubah.",
+        "clientNotice": "Angka di layar ini adalah proyeksi server. Klien tidak pernah memutuskan dari angka yang dapat disunting."
+      },
+      "history": {
+        "title": "Riwayat perubahan",
+        "empty": "Belum ada perubahan tercatat pada rentang ini.",
+        "rangeFrom": "Dari tanggal",
+        "rangeTo": "Sampai tanggal",
+        "source": "Sumber",
+        "approver": "Penyetuju",
+        "redactedNotice": "Identitas lengkap dan alamat IP hanya ditampilkan ke pemegang izin riwayat.",
+        "replicaLag": "Riwayat dibaca dari salinan baca; entri terbaru dapat tertinggal sesaat.",
+        "revert": "Kembalikan ke versi ini",
+        "revertConfirm": "Nilai {from} akan diganti {to}. Ini entri baru, bukan penghapusan jejak.",
+        "revertReason": "Revert ke v{version}: ",
+        "revertDefault": "kembali ke nilai baku"
+      },
+      "impact": {
+        "title": "Dampak",
+        "empty": "Belum ada baris registri untuk kunci ini — ia tidak dibaca siapa pun.",
+        "orphan": "Kunci tanpa konsumen terdaftar (tunggakan CI, bukan fitur).",
+        "ciDebt": "Tunggakan registri",
+        "groupMenu": "Layar",
+        "groupService": "Proses/server",
+        "groupDictionary": "Kamus",
+        "groupPattern": "Pola grant",
+        "openingLine": "Yang berubah bila angka ini dimuaikan: pembaca di bawah melihat nilai baru pada permintaan berikutnya."
+      },
+      "register": {
+        "title": "Daftarkan kunci baru",
+        "consumerHint": "Call site yang sudah ada di branch (file:symbol), dipisah koma. Tanpa konsumen, registrasi ditolak.",
+        "consumerMissing": "Konsumen tidak terbukti: {missing}",
+        "dataTypeUnit": "Tipe menentukan kontrol; satuan tampil di nilai berjalan.",
+        "riskClassHint": "Kelas REGULATORY/SECURITY tidak dapat didaftarkan dari layar: CHECK menuntut penyetuju kedua yang nyata.",
+        "submit": "Daftarkan kunci"
+      },
+      "tabs": {
+        "catalog": "Katalog",
+        "queue": "Antrean persetujuan",
+        "value": "Nilai",
+        "history": "Riwayat",
+        "impact": "Dampak"
+      },
+      "queue": {
+        "title": "Antrean persetujuan",
+        "colKey": "Kunci",
+        "colProposed": "Diajukan",
+        "colCurrent": "Masih berlaku",
+        "colRequested": "Diajukan oleh",
+        "colState": "Keadaan",
+        "approve": "Sahkan",
+        "reject": "Tolak",
+        "empty": "Tidak ada draf yang menunggu.",
+        "reasonRequired": "Penolakan wajib disertai alasan 10–500 karakter."
+      },
+      "versionLine": "Versi parameter {hash} · {count} kunci terproyeksi",
+      "reload": "Muat ulang"
+    },
+    "crumbParameters": "Parameter Sistem"
+  },
+  "krs": {
+    "metaTitle": "Kartu Rencana Studi (KRS)",
+    "metaDescription": "Susun rencana studi semester ini dari daftar kelas nyata: plafon SKS berbasis IPS, kapasitas kursi, dan bentrok jadwal.",
+    "title": "Kartu Rencana Studi (KRS)",
+    "description": "Susun rencana studi semester ini: perhatikan plafon SKS berbasis IPS, kapasitas kursi, dan bentrok jadwal sebelum dikirim ke dosen pembimbing akademik.",
+    "crumbHome": "Beranda",
+    "crumbAcademic": "Akademik",
+    "crumbKrs": "KRS",
+    "requiredPermission": "Izin yang dituntut layar",
+    "loadFailedTitle": "Gagal memuat data KRS",
+    "noStudentTitle": "Akun ini tidak tertaut profil mahasiswa",
+    "noStudentBody": "Daftar kelas dan plafon SKS dihitung dari baris mahasiswa pada institusi ini. Hubungi BAAK untuk menautkan akun; layar ini tidak menampilkan kelas perkiraan.",
+    "noPeriodTitle": "Belum ada periode akademik",
+    "noPeriodBody": "Institusi ini belum memiliki periode akademik, sehingga tidak ada kelas terbuka yang dapat ditampilkan.",
+    "notYourAreaTitle": "Layar ini bukan wilayah Anda",
+    "notYourAreaBody": "Mengambil kursi dan mengirim KRS hanya dipegang peran dengan izin enrollment.krs.submit. Anda tidak memegangnya, jadi tidak ada satu pun tombol aksi pada layar ini.",
+    "noDataNoAction": "Belum ada periode atau profil mahasiswa terbaca, jadi tidak ada kelas yang dapat ditampilkan dan tidak ada aksi yang ditawarkan.",
+    "periodUnknown": "Periode belum terbaca",
+    "plafonTitle": "Plafon SKS Semester Ini",
+    "plafonHint": "Dihitung dari IPS periode sebelumnya dan batas prodi (BR-A2)",
+    "takenTitle": "SKS Sudah Diambil",
+    "takenHint": "{count} kelas aktif pada periode ini",
+    "remainingTitle": "Sisa Kuota SKS",
+    "remainingHint": "Batas {max} SKS · terpakai {used} SKS",
+    "remainingUnknown": "Kuota belum dapat dihitung",
+    "sksUnit": "SKS",
+    "days": ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    "enrolledTitle": "Kelas yang sudah diambil",
+    "enrolledSubtitle": "Baris enrollment nyata pada periode aktif. Melepas kursi bukan aksi layar ini (izin enrollment.krs.withdraw).",
+    "enrolledHint": "Tidak dapat dilepas dari layar ini",
+    "quotaBlockedTitle": "Pengisian KRS ditahan validator",
+    "degradedTitle": "Daftar kelas tidak lengkap",
+    "degradedBody": "Layar ini memuat {shown} dari {total} kelas terbuka pada periode ini. Perkecil filter atau buka lewat API untuk melihat sisanya.",
+    "gridTitle": "Pilih Kelas untuk KRS",
+    "gridSubtitle": "Kapasitas kursi dihitung dari enrollment aktif. Kelas penuh atau bentrok tidak dapat diambil.",
+    "eyebrow": "Penawaran kelas · {period}",
+    "searchPlaceholder": "Cari kode, mata kuliah, kelas, atau dosen...",
+    "filterStatusLabel": "Status rencana studi",
+    "filterAllStatuses": "Semua status",
+    "statusNotTaken": "Belum diambil",
+    "statusSubmitted": "Terkirim ke DPA",
+    "statusApproved": "Disetujui",
+    "statusEffective": "Berlaku",
+    "colCode": "Kode",
+    "colCourse": "Mata Kuliah & Pengampu",
+    "colSks": "SKS",
+    "colSchedule": "Jadwal & Ruang",
+    "colSeats": "Kursi",
+    "colStatus": "Status",
+    "colAction": "Aksi",
+    "noSchedule": "Jadwal belum ditetapkan",
+    "noRoom": "Ruang belum ditetapkan",
+    "noLecturer": "Pengampu belum ditetapkan",
+    "moreSchedules": "+{n} jadwal lain",
+    "seatsFull": "penuh",
+    "seatsRemaining": "sisa {n}",
+    "seatProgressAria": "Kursi terisi {pct} persen",
+    "takenAlready": "Sudah diambil",
+    "reasonTaken": "Kursi sudah menjadi enrollment Anda pada periode ini.",
+    "reasonPeriodClosed": "Periode {period} berstatus {status} — pengisian ditutup.",
+    "reasonClassClosed": "Kelas sudah ditutup prodi.",
+    "reasonClassCancelled": "Kelas dibatalkan.",
+    "reasonFull": "Kelas penuh.",
+    "reasonConflict": "Jadwal bentrok dengan kelas Anda: {detail}",
+    "reasonQuota": "Mengambil kelas ini melewati plafon {max} SKS.",
+    "reasonMaxClasses": "Maksimal {max} kelas per pengajuan.",
+    "periodClosedHint": "Periode pengisian KRS ditutup",
+    "quotaAlertTitle": "Plafon SKS terlampaui",
+    "quotaAlertBody": "Total rencana Anda {total} SKS, plafon semester ini {max} SKS. Kurangi {over} SKS dengan melepas salah satu kelas.",
+    "conflictAlertTitle": "Jadwal {count} pasangan kelas bertabrakan",
+    "conflictRow": "{day}: {a} bertumpuk dengan {b}.",
+    "conflictBlocked": "{count} pasangan kelas bertabrakan jadwalnya. Lepas salah satu kelas yang bentrok sebelum mengirim.",
+    "take": "Ambil",
+    "release": "Lepas",
+    "takeSeat": "Ambil kursi",
+    "releaseSeat": "Lepas kursi",
+    "takeHint": "Ambil kursi kelas ini",
+    "releaseHint": "Lepas kursi dari rencana studi",
+    "takeAria": "Ambil kursi {code}",
+    "releaseAria": "Lepas kursi {code}",
+    "detailHint": "Lihat detail kelas",
+    "detailAria": "Lihat detail {code}",
+    "rowAria": "Lihat detail {course}, kelas {class}",
+    "selectionLabel": "Pilih kelas untuk rencana studi",
+    "pickedPrefix": "SKS dipilih · plafon {max} SKS",
+    "clearSelection": "Bersihkan pilihan",
+    "submit": "Kirim KRS",
+    "submitting": "Mengirim…",
+    "sentTitle": "Pengajuan terkirim",
+    "sentBody": "{count} kelas dikirim ke Dosen Pembimbing Akademik (DPA) dan menunggu penyahan.",
+    "sentAlready": "{count} kelas sudah ada dalam rencana studi Anda (idempoten).",
+    "statusUntilDpa": "Status enrollment Anda",
+    "blockedTitle": "Pengajuan ditahan",
+    "requestFailed": "Server menolak pengajuan (HTTP {status}).",
+    "networkFailed": "Pengajuan tidak terkirim karena jaringan bermasalah. Muat ulang lalu kirim kembali.",
+    "readOnlyTitle": "Hanya-baca: Anda tidak memegang aksi kirim KRS",
+    "readOnlyBody": "Daftar di bawah adalah penawaran kelas nyata periode ini, ditampilkan tanpa affordance pengambilan kursi karena aksi itu milik pemegang izin enrollment.krs.submit.",
+    "emptyTitle": "Belum ada kelas terbuka pada periode ini",
+    "emptyBody": "Prodi belum menerbitkan kelas berstatus OPEN untuk periode terpilih, atau kelas terbuka lain berada di program studi yang berbeda.",
+    "emptyAction": "Muat ulang daftar kelas",
+    "reload": "Muat ulang",
+    "retryLoad": "Muat ulang data KRS",
+    "reloadAria": "Muat ulang data KRS dari server",
+    "reloadHint": "Ambil ulang kelas, kuota, dan enrollment dari basis data",
+    "detailTitle": "Detail kelas",
+    "detailClose": "Tutup",
+    "detailSeatTitle": "Kapasitas kursi",
+    "seatsFullNote": "Kelas penuh — kursi hanya terbuka bila ada mahasiswa yang menarik diri.",
+    "seatsRemainingNote": "Sisa {n} kursi.",
+    "serverConflictTitle": "Bentrok tercatat server",
+    "detailLecturer": "Dosen pengampu",
+    "detailSchedule": "Jadwal",
+    "detailRoom": "Ruang",
+    "detailSks": "Bobot SKS",
+    "detailAfterLoad": "Beban setelah diambil",
+    "detailHowTitle": "Cara kerja pengajuan",
+    "detailHowBody": "Kursi diambil saat pengajuan dikirim, lalu disahkan DPA. Status, kuota SKS, dan bentrok jadwal divalidasi ulang di server — layar ini hanya memberi peringatan awal.",
+    "periodLabel": "Periode {period}"
+  },
+  "app": {
+    "footerCopyright": "SICA — Sistem Informasi Kampus All-in-One",
+    "footerStatus": "Lingkungan pengembangan. Informasi dapat berubah.",
+    "menuAria": "Navigasi utama",
+    "topbarAria": "Bilah atas: merek, pencarian dan akun",
+    "brandHome": "Ke beranda aplikasi",
+    "searchPlaceholder": "Cari matakuliah, dosen, atau NIM…",
+    "searchLabel": "Pencarian",
+    "toggleMenu": "Buka menu navigasi",
+    "langLabel": "Ganti bahasa",
+    "modulesLabel": "Modul aplikasi",
+    "fullscreenLabel": "Layar penuh",
+    "themeLabel": "Tampilan",
+    "modeLight": "Alih ke mode terang",
+    "modeDark": "Alih ke mode gelap",
+    "notificationsLabel": "Notifikasi",
+    "profileLabel": "Profil akun",
+    "designPanel": {
+      "open": "Buka panel tampilan",
+      "title": "Panel tampilan",
+      "description": "Sama seperti panel kustomiser tema: mengubah tata letak dan warna layar ini.",
+      "close": "Tutup panel tampilan",
+      "sectionMode": "Mode warna",
+      "sectionTopbar": "Baris atas",
+      "sectionStyle": "Gaya latar",
+      "sectionWidth": "Lebar halaman",
+      "optionLight": "Terang",
+      "optionDark": "Gelap",
+      "optionTopbarFollow": "Ikut tema",
+      "optionTopbarDark": "Gelap",
+      "optionStyleDefault": "Bawaan",
+      "optionStyleGradient": "Gradien",
+      "optionStyleSeparated": "Terpisah",
+      "optionWidthFluid": "Lebar penuh",
+      "optionWidthBoxed": "Kotak",
+      "verticalNote": "Tata letak vertikal (sidebar) belum tersedia: menunya masih dibangun dari kode, bukan dari data hak akses.",
+      "publicNote": "Pada halaman ini hanya mode warna yang berlaku; gaya latar dan lebar halaman dipakai di dalam portal."
     }
   }
 }

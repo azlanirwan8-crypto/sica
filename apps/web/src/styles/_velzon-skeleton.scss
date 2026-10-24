@@ -1,0 +1,558 @@
+/**
+ * Kerangka Velzon yang TIDAK ada di Bootstrap (§2.6 "Kerangka wajib rute aplikasi").
+ *
+ * Kelas yang sudah dipunyai `app/globals.css` (`.main-content`, `.page-content`,
+ * `.card`, `.dropdown-menu`/`.dropdown-item`, `.velzon-input`) sengaja TIDAK
+ * didefinisikan ulang di sini — dua sumber kebenaran untuk satu kelas adalah pola
+ * `RD-32` yang kita perangi. Berkas ini memuat simpul kerangka dan chrome
+ * `.topnav` yang sebelumnya hidup sebagai `style={{…}}` inline di `top-nav.tsx`
+ * (temuan `RD-168`: 54 elemen inline pada satu layar).
+ */
+
+/* Kanvas & `--sica-canvas-paint` sudah dicat `body` (globals.css:352-358);
+   simpul kerangka tidak mengecat ulang — dua lapis cat = gradien berganda. */
+#layout-wrapper {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.topnav {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* `.navbar-header` (tinggi, glass) tetap didefinisikan globals.css; yang pindah ke mari
+   hanyalah tata letak dua baris: baris 1 = header, baris 2 = `.navbar-nav-main`. */
+.topnav > .navbar-header {
+  flex-wrap: nowrap;
+  gap: var(--sica-space-3);
+  padding-inline: var(--sica-space-4);
+}
+
+/* Baris menu kerja — padanan `.navbar-nav-main` Velzon horizontal. Garis pemisah hidup di
+   baris ini, bukan di header, supaya hierarki visual membaca "identitas / navigasi". */
+.topnav > .navbar-nav-main {
+  display: flex;
+  align-items: center;
+  min-height: var(--sica-menu-row-height);
+  padding-block: 0;
+  padding-inline: var(--sica-space-4);
+  border-top: 1px solid var(--sica-border-color);
+}
+
+.topnav .navbar-brand {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Menu utama: kelas struktural Bootstrap, warna dari token SICA ───────── */
+.topnav .app-menu {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sica-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Nama kelompok kerja panjang ("Konfigurasi Tenant, Branding & Active Add-ons") dan
+   Admin IT punya sembilan item. Yang boleh terjadi adalah barisnya membungkus ke dua
+   baris pada layar sempit — bukan `overflow-x`, karena setiap kontainer gulir membuat
+   konteks kliping yang memotong `.dropdown-menu` (posisinya absolut di dalam `li`),
+   dan bukan memendekkan label. */
+.topnav .app-menu {
+  flex-wrap: wrap;
+}
+
+.topnav .nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sica-space-2);
+  padding: 8px 12px;
+  border-radius: var(--sica-radius-md);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--sica-text-body);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color var(--sica-transition-fast), background-color var(--sica-transition-fast);
+}
+
+.topnav .nav-link:hover {
+  color: var(--sica-primary-hover);
+  background-color: var(--sica-surface-hover);
+}
+
+/* Penanda aktif ala Velzon horizontal: teks primer + garis penuh di bawah item. */
+.topnav .app-menu > .nav-item > .nav-link.active {
+  color: var(--sica-primary-ink);
+  font-weight: 600;
+}
+
+.topnav .app-menu > .nav-item {
+  position: relative;
+  display: flex;
+}
+
+.topnav .app-menu > .nav-item > .nav-link.active::after {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background-color: var(--sica-primary);
+  content: '';
+}
+
+.topnav .nav-item.dropdown > .nav-link::before {
+  width: 0.35em;
+  height: 0.35em;
+  margin-inline-start: 2px;
+  border-inline-end: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate3d(0, -2px, 0);
+  content: '';
+}
+
+/* Label daun §12 verbatim (mis. "Manajemen Akun Sivitas Akademika (Import/Export/Disable
+   Staf BAAK, BAUK, HRD, Keuangan, Dosen, Mahasiswa)") panjang dan itu memang permintaan
+   pemilik 2026-10-24 ("tanpa ada yang dikurangi atau disingkat"). Karena itu dropdown menu
+   utama lebih lebar dari `.dropdown-menu` umum dan membiarkan teks membungkus — memendekkan
+   label dengan ellipsis akan sama saja dengan memalsukan register. */
+.topnav .app-menu .dropdown-menu {
+  top: calc(100% - 2px);
+  left: 0;
+  min-width: 340px;
+  max-width: 460px;
+}
+
+.topnav .app-menu .dropdown-item {
+  white-space: normal;
+  line-height: 1.35;
+  padding-block: 7px;
+}
+
+/* ── Rantai kanan: pencarian, utilitas, profil ───────────────────────────── */
+.topnav .navbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sica-space-2);
+  margin-inline-start: auto;
+}
+
+.topnav .navbar-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding-inline: 14px;
+  border: 1px solid transparent;
+  border-radius: var(--sica-radius-md);
+  background-color: var(--sica-surface-canvas);
+  color: var(--sica-text-muted);
+  transition: border-color var(--sica-transition-fast), background-color var(--sica-transition-fast);
+}
+
+.topnav .navbar-search:focus-within {
+  border-color: var(--sica-primary);
+  background-color: var(--sica-surface-card);
+  box-shadow: var(--sica-shadow-focus);
+}
+
+.topnav .navbar-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.84375rem;
+  color: var(--sica-text-body);
+}
+
+/* Tombol ikon utility — sama rata dengan `.nav-link` tetapi kotak 38px. */
+.topnav .navbar-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: var(--sica-radius-md);
+  background-color: transparent;
+  color: var(--sica-text-muted);
+  cursor: pointer;
+  transition: background-color var(--sica-transition-fast), color var(--sica-transition-fast);
+}
+
+.topnav .navbar-btn:hover {
+  background-color: var(--sica-surface-hover);
+  color: var(--sica-primary);
+}
+
+.topnav .navbar-btn-badge {
+  position: absolute;
+  top: 4px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding-inline: 4px;
+  border-radius: var(--sica-radius-full);
+  background-color: var(--bs-danger);
+  color: var(--sica-text-inverse);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.topnav .navbar-profile {
+  display: flex;
+  align-items: center;
+}
+
+.topnav .navbar-profile > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px 6px 6px;
+  border: 0;
+  border-radius: var(--sica-radius-md);
+  background-color: var(--sica-surface-canvas);
+  cursor: pointer;
+  font: inherit;
+  transition: background-color var(--sica-transition-fast);
+}
+
+.topnav .navbar-profile > button:hover {
+  background-color: var(--sica-surface-hover);
+}
+
+/* `.navbar-profile-text` WAJIB flex baris. Sebagai `display: block` biasa, anak
+   keduannya (span nama+peran yang berisi dua span `display:block`) memaksa
+   garis baru, sehingga avatar, nama, dan caret menumpuk vertikal di pojok kanan
+   alih-alih sebaris — terukur pada tangkapan layar pemilik 2026-10-24. */
+.topnav .navbar-profile-text {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--sica-space-2);
+  min-width: 0;
+  text-align: start;
+}
+
+.topnav .navbar-profile-text > span {
+  min-width: 0;
+}
+
+.topnav .navbar-profile-name {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--sica-text-heading);
+}
+
+.topnav .navbar-profile-role {
+  display: block;
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  color: var(--sica-text-muted);
+}
+
+.topnav .navbar-profile-caret {
+  color: var(--sica-text-muted);
+}
+
+/* Item "segera" di dalam dropdown: memakai kosakata subtle Velzon. */
+.topnav .dropdown-item[aria-disabled='true'] {
+  color: var(--sica-text-muted);
+  cursor: not-allowed;
+}
+
+.topnav .dropdown-item[aria-disabled='true']::after {
+  padding: 2px 7px;
+  border-radius: var(--sica-radius-full);
+  background-color: var(--bs-warning-bg-subtle);
+  color: var(--bs-warning-text-emphasis);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  content: attr(data-soon);
+}
+
+/* ── Responsif: satu baris Velzon, menu runtuh ke toggler di bawah `lg` ──── */
+.topnav .navbar-toggler {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--sica-border-color);
+  border-radius: var(--sica-radius-md);
+  background-color: var(--sica-surface-card);
+  color: var(--sica-text-body);
+  cursor: pointer;
+}
+
+@media (max-width: 1279.98px) {
+  .topnav .navbar-search {
+    display: none;
+  }
+}
+
+@media (max-width: 991.98px) {
+  .topnav .navbar-toggler {
+    display: inline-flex;
+  }
+
+  /* Di layar kecil baris menu TIDAK ada — isinya pindah ke panel `.navbar-collapse` di
+     bawah. Tanpa nol-tinggi ini, strip 46px kosong bergaris akan menggantung di bawah
+     header sebelum pengguna membuka hamburger. */
+  .topnav > .navbar-nav-main {
+    min-height: 0;
+    padding: 0;
+    border-top: 0;
+  }
+
+  .topnav .navbar-collapse {
+    position: absolute;
+    inset-inline: 0;
+    top: 100%;
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sica-space-3);
+    padding: var(--sica-space-4);
+    border-block-start: 1px solid var(--sica-border-color);
+    background-color: var(--sica-surface-card);
+    box-shadow: var(--sica-shadow-raised);
+  }
+
+  .topnav .navbar-collapse.show {
+    display: flex;
+  }
+
+  .topnav .app-menu {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .topnav .app-menu .dropdown-menu {
+    position: static;
+    min-width: 0;
+    border: 0;
+    box-shadow: none;
+    padding-inline-start: var(--sica-space-4);
+  }
+
+  .topnav .navbar-actions {
+    margin-inline-start: 0;
+  }
+}
+
+/* Profil tetap ada di layar kecil (gerbang keluar tidak boleh hilang), hanya
+   teksnya yang dipangkas menjadi avatar. */
+@media (max-width: 640px) {
+  .topnav .navbar-profile-text {
+    display: none;
+  }
+}
+
+/* ── Panel kustomiser Velzon ("design panel") ─────────────────────────────── */
+/* Velzon memasang tombol melayang + laci kanan di SEMUA halaman template.
+   Knob yang sama dipakai `ThemeProvider`; panel ini hanya permukaan keduanya,
+   jadi tidak ada status kedua yang bisa berbeda dari `localStorage`. */
+.customizer-toggle {
+  position: fixed;
+  inset-inline-end: 20px;
+  inset-block-end: 20px;
+  z-index: 1050;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: var(--sica-radius-md);
+  background-color: var(--sica-primary-solid);
+  color: var(--sica-on-primary);
+  box-shadow: var(--sica-shadow-raised);
+  cursor: pointer;
+  transition: background-color var(--sica-transition-fast), transform var(--sica-transition-fast);
+}
+
+.customizer-toggle:hover {
+  background-color: var(--sica-primary-solid-hover);
+}
+
+.customizer-toggle i {
+  font-size: 20px;
+}
+
+.customizer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1051;
+  background-color: var(--sica-backdrop);
+}
+
+.customizer-panel {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-end: 0;
+  z-index: 1052;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sica-space-5);
+  width: min(320px, 92vw);
+  padding: var(--sica-space-6);
+  overflow-y: auto;
+  background-color: var(--sica-surface-card);
+  border-inline-start: 1px solid var(--sica-border-color);
+  box-shadow: var(--sica-shadow-modal);
+  animation: customizer-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes customizer-in {
+  from { transform: translate3d(24px, 0, 0); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .customizer-panel {
+    animation: none;
+  }
+}
+
+.customizer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sica-space-3);
+}
+
+.customizer-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--sica-text-heading);
+}
+
+.customizer-description {
+  margin-block-start: 2px;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: var(--sica-text-muted);
+}
+
+.customizer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--sica-radius-md);
+  background: none;
+  color: var(--sica-text-muted);
+  cursor: pointer;
+}
+
+.customizer-close:hover {
+  background-color: var(--sica-surface-hover);
+  color: var(--sica-text-heading);
+}
+
+.customizer-section-label {
+  margin-block-end: var(--sica-space-2);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: var(--sica-tracking-wide);
+  text-transform: uppercase;
+  color: var(--sica-text-subtle);
+}
+
+/* Pilihan gaya sebagai pil radio (Velzon memakai `form-check` bergaya pil). */
+.customizer-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sica-space-2);
+}
+
+.customizer-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--sica-border-color);
+  border-radius: var(--sica-radius-full);
+  background-color: var(--sica-surface-card);
+  color: var(--sica-text-body);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--sica-transition-fast), background-color var(--sica-transition-fast),
+    color var(--sica-transition-fast);
+}
+
+.customizer-option:hover {
+  border-color: rgb(var(--sica-rgb-primary) / 0.4);
+}
+
+.customizer-option[aria-checked='true'] {
+  border-color: var(--sica-primary);
+  background-color: var(--sica-primary-soft);
+  color: var(--sica-primary-ink);
+}
+
+.customizer-option:disabled {
+  color: var(--sica-text-subtle);
+  background-color: var(--sica-surface-inset);
+  cursor: not-allowed;
+  border-style: dashed;
+}
+
+.customizer-hint {
+  font-size: 0.6875rem;
+  line-height: 1.55;
+  color: var(--sica-text-subtle);
+}
+
+/* ── Footer kerangka ─────────────────────────────────────────────────────── */
+.footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sica-space-2);
+  padding: var(--sica-space-4) var(--sica-space-6);
+  border-block-start: 1px solid var(--sica-border-color);
+  color: var(--sica-text-subtle);
+  font-size: 0.8125rem;
+}
+
+.footer a {
+  color: var(--sica-text-muted);
+  text-decoration: none;
+}
+
+.footer a:hover {
+  color: var(--sica-primary);
+}
+
+@media (max-width: 640px) {
+  .footer {
+    padding-inline: var(--sica-space-4);
+  }
+}

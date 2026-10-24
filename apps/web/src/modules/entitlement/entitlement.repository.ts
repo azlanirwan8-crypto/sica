@@ -131,9 +131,9 @@ export function createDrizzleEntitlementRepository(): EntitlementRepository {
         .where(eq(moduleDependencies.isRequired, true));
       const edges: ModuleEdge[] = [];
       for (const d of depRows) {
-        const module = codeById.get(d.moduleId);
+        const moduleCode = codeById.get(d.moduleId);
         const dependsOn = codeById.get(d.dependsOnModuleId);
-        if (module && dependsOn) edges.push({ module, dependsOn, required: d.required });
+        if (moduleCode && dependsOn) edges.push({ module: moduleCode, dependsOn, required: d.required });
       }
       return edges;
     },

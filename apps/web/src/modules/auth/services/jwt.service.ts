@@ -14,6 +14,7 @@ export interface JwtClaims {
   readonly tid: string; // tenant id
   readonly sid: string; // session id
   readonly role: string; // role context (scoped)
+  readonly amr?: readonly string[]; // authentication methods (SEC-01: 'pwd' | 'mfa')
   readonly iss: string;
   readonly aud: string;
   readonly iat: number;
@@ -27,6 +28,7 @@ interface JwtPayloadInput {
   readonly tid: string;
   readonly sid: string;
   readonly role: string;
+  readonly amr?: readonly string[];
 }
 
 interface JwtHeader {
