@@ -1,10 +1,11 @@
 /**
  * Pengunci register §12 (`MENU-LOCK-1`) — membuktikan bahwa daun menu yang dijanjikan
- * pemilik produk BENAR-BENAR ada sebagai baris `menu_items`, dengan label verbatim, grant
- * yang menunjuk katalog izin, dan kunci rute yang dikenal — bukan sebagai teks di dokumen.
+ * pemilik produk BENAR-BENAR ada sebagai baris `menu_items`, dengan keterangannya verbatim
+ * (`description ?? label`, sejak F-1/`0096`), grant yang menunjuk katalog izin, dan kunci
+ * rute yang dikenal — bukan sebagai teks di dokumen.
  *
  * Lima pertanyaan yang dijawab, semuanya terukur:
- *  1. 39 daun `BLUEPRINT_ROLE_BY_ROLE §12` (14 R-1 + 25 R-2) ada di DB dengan label persis?
+ *  1. 39 daun `BLUEPRINT_ROLE_BY_ROLE §12` (14 R-1 + 25 R-2) ada di DB dengan keterangan persis?
  *  2. Setiap `permission_code` grant anggota katalog `permissions` (222+ kode)?
  *  3. Setiap `route_key` yang terisi anggota registri `route-keys.ts`
  *     (`registry.unknownRouteKeys` wajib kosong — gerbang CI §4.17.1)?
@@ -61,7 +62,7 @@ async function main() {
   }
 
   const register = readRegister(path.resolve(process.cwd(), '../../docs/BLUEPRINT_ROLE_BY_ROLE.md'));
-  const lockedLeaves: Array<{ surface: 'R-1' | 'R-2'; ref: string; code: string; label: string; visible: boolean; routeKey: string | null }> = [];
+  const lockedLeaves: Array<{ surface: 'R-1' | 'R-2'; ref: string; code: string; spec: string; visible: boolean; routeKey: string | null }> = [];
   const collect = (nodes: readonly MenuSeedNode[], surface: 'R-1' | 'R-2'): void => {
     for (const node of nodes) {
       if (node.lock) {
@@ -72,7 +73,11 @@ async function main() {
           surface,
           ref: node.lock,
           code: node.code,
-          label: node.label,
+          // Yang dibandingkan ke §12 adalah **keterangan**, bukan nama nav: F-1 memindahkan
+          // kalimat spesifikasi ke `description` dan meninggalkan nama pendek di `label`
+          // (`DATA_MODEL §21.7` butir 4, `BLUEPRINT §12.7`). `description ?? label` membuat
+          // daun bernama pendek tetap terverifikasi terhadap teksnya sendiri.
+          spec: node.description ?? node.label,
           visible: hasGrant,
           routeKey: node.routeKey ?? null,
         });
@@ -95,8 +100,8 @@ async function main() {
     const docLabel = register.get(`${leaf.surface} ${leaf.ref}`);
     if (docLabel === undefined) {
       problems.push(`${leaf.surface} ${leaf.ref} (${leaf.code}) tidak ada di tabel §12 dokumen.`);
-    } else if (docLabel !== leaf.label) {
-      problems.push(`${leaf.surface} ${leaf.ref} label tidak verbatim:\n    dokumen: ${docLabel}\n    kode   : ${leaf.label}`);
+    } else if (docLabel !== leaf.spec) {
+      problems.push(`${leaf.surface} ${leaf.ref} keterangan tidak verbatim dengan §12:\n    dokumen: ${docLabel}\n    kode   : ${leaf.spec}`);
     }
   }
 
@@ -126,6 +131,7 @@ async function main() {
           id: menuItems.id,
           code: menuItems.code,
           label: menuItems.label,
+          description: menuItems.description,
           routeKey: menuItems.routeKey,
           isVisible: menuItems.isVisible,
           layer: menuItems.layer,
@@ -157,7 +163,7 @@ async function main() {
     }
 
     let present = 0;
-    let labelMatch = 0;
+    let specMatch = 0;
     for (const leaf of expected) {
       const row = rows.items.find((r) => r.code === leaf.code);
       if (!row) {
@@ -165,8 +171,8 @@ async function main() {
         continue;
       }
       present += 1;
-      if (row.label === leaf.label) labelMatch += 1;
-      else problems.push(`${surface} ${leaf.ref}: label DB ≠ definisi kode (${slug}).`);
+      if ((row.description ?? row.label) === leaf.spec) specMatch += 1;
+      else problems.push(`${surface} ${leaf.ref}: keterangan DB ≠ definisi kode (${slug}) — periksa \`description\` lalu \`label\`.`);
 
       const codes = grantByMenu.get(row.id) ?? [];
       if (leaf.visible && codes.length === 0) problems.push(`${surface} ${leaf.ref}: seharusnya terlihat tetapi tanpa grant.`);
@@ -180,7 +186,7 @@ async function main() {
         problems.push(`${surface} ${leaf.ref}: route_key "${row.routeKey}" tidak ada di registri (registry.unknownRouteKeys wajib kosong).`);
       }
     }
-    console.log(`${surface} (${slug}): ${present}/${expected.length} daun §12 ada di DB, ${labelMatch} label verbatim, ${rows.items.length} baris menu, ${rows.grants.length} grant`);
+    console.log(`${surface} (${slug}): ${present}/${expected.length} daun §12 ada di DB, ${specMatch} keterangan verbatim (description ?? label), ${rows.items.length} baris menu, ${rows.grants.length} grant`);
   }
 
   // 4: pohon yang benar-benar dikirim, per akun dev.

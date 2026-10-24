@@ -15,6 +15,8 @@ function row(partial: Partial<MenuRowProjection> & Pick<MenuRowProjection, 'id' 
     parentId: null,
     label: partial.code,
     labelEn: null,
+    description: null,
+    descriptionEn: null,
     routeKey: null,
     moduleCode: null,
     icon: null,

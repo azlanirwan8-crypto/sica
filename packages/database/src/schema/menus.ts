@@ -1,6 +1,6 @@
 /**
- * Peta menu → izin (`DATA_MODEL §21.7`, migrasi `0050_menu_parameter_permissions.sql`)
- * dan konsumsi pohonnya di `API_SPEC §4.17`.
+ * Peta menu → izin (`DATA_MODEL §21.7`, migrasi `0050_menu_parameter_permissions.sql` +
+ * `0096_menu_description.sql`) dan konsumsi pohonnya di `API_SPEC §4.17`.
  *
  * Mirror ini dijaga tetap cocok dengan DDL; `CHECK (layer IN …)`, `CHECK (effect IN …)`,
  * `CHECK (scope_kind IN …)`, `CHECK (parent_id <> id)`, `CHECK (effective_to > effective_from)`,
@@ -42,6 +42,9 @@ export const menuItems = pgTable(
     parentId: uuid('parent_id').references((): AnyPgColumn => menuItems.id),
     label: text('label').notNull(),
     labelEn: text('label_en'),
+    /** Keterangan spesifikasi (`0096`); `null` = "nama = keterangan". Tidak pernah dirender sebagai nama nav. */
+    description: text('description'),
+    descriptionEn: text('description_en'),
     /** Kunci registri rute statis — bukan path mentah; `null` sah untuk header/pemisah non-klik. */
     routeKey: text('route_key'),
     layer: text('layer').notNull().default('WEB'),

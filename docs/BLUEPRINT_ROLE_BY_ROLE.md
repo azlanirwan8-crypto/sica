@@ -990,3 +990,59 @@ Pemilik menunjukkan tangkapan layar Velzon dan daftar menu-submenu yang ia kunci
 
 **Batas yang tidak dilanggar.** Promosi grup menjadi item tingkat pertama adalah **aturan render**, bukan perubahan pohon: `menu_items.parent_id`, `code`, `layer`, grant dan `route_key` tidak disentuh, sehingga `verify:menu` tetap membuktikan 39 daun + label verbatim (terukur `R-1 14/14`, `R-2 25/25`, `0 selisih` grant) dan `audit:menu` tetap hijau dengan angka yang sama seperti §5.85 (8 daun platform / 18 daun kampus). Yang **tidak** ikut berubah: daun `admin.parameters.import` dan `platform.master.lookup` tetap `is_visible = false` (izinnya `usulan`), dan `akademik.studentstatus` tetap berada di akar `akademik` karena itu letak baris `RBAC §6.2`-nya — memindahkannya ke kelompok Admin berarti mengarang hierarki yang tidak didokumenkan.
 
+**Ralat satu klausa (siklus 13, lihat §12.7).** Kalimat "39 daun + **label** verbatim" di atas masih benar secara isi, tetapi tidak lagi secara kolom: sejak F-1 yang dibandingkan `verify:menu` adalah `description ?? label`. Terukur sesudah `0096` + seed: `R-1 14/14` dan `R-2 25/25` **keterangan verbatim**, `21 baris / 8 grant` dan `49 baris / 32 grant` tidak berubah, `0 selisih` katalog.
+
+### 12.7 Nama navigasi ↔ teks spesifikasi — ralat pemilik siklus 12 (2026-10-24, keputusan F-1)
+
+**Apa yang diputus.** Instruksi 2026-10-24 "gunakan seluruh menu tanpa ada yang dikurangi atau disingkat" dikunci menjadi `label` verbatim, dan akibatnya terukur: **38 dari 56 daun** dua pohon memiliki nama lebih panjang dari 30 karakter, terpanjang `platform.licensing.addons` **138 karakter** — polanya seragam `Nama (Daftar, Isian, Panjang)`. Angka ini mengganti hitungan "24 dari 55" yang tercetak di `UI_UX §2.7` butir F-1; yang salah adalah ambang yang saya pakai di sana, bukan daftarnya (ralat tercatat di `PROGRESS_REPORT §5.89`). Pemilik kemudian menyetujui bentuk Velzon/Sevima: **nav menampilkan nama, keterangan tetap ada**.
+
+**Aturannya (satu kalimat, karena ini kontrak).** Daun dengan `label` > 30 karakter **wajib** punya nama nav pendek (≤ 30 karakter) dan memindahkan teks lamanya ke `description`; `description NULL` berarti "nama = keterangan" dan itu keadaan sah. Kolom `label`/`label_en` = yang dirender; `description`/`description_en` = yang dibaca penjaga dokumen dan yang tampil sebagai `title`/subjudul. Tabel §12.1/§12.2 di atas **tidak saya sunting**: kolom "Daun menu (verbatim pemilik)" tetap teks spesifikasi dan kini menjadi sumber nilai `description`. Ini bukan duplikasi fisik (pola `RD-32`) karena keduanya kolom berbeda pada satu tabel yang sama — tapi ia **adalah** dua register untuk dua hal berbeda, jadi pemiliknya dipisah tegas: §12.1/§12.2 memiliki *keterangan*, §12.7 memiliki *nama nav*.
+
+**Konsekuensi pada penjaga (dan ini yang membuatnya aman).** `verify:menu` dan `menu-tree.test.ts` tidak lagi membandingkan teks §12 terhadap `label`; keduanya membandingkan terhadap **`description ?? label`**. Tanpa perubahan itu, memperpendek nama menu akan terbaca sebagai penyimpangan spesifikasi — dan penjaga yang menolak perbaikan lebih buruk daripada tidak ada penjaga. Assertion "nol daun ber-`lock` membawa `labelKey`" tetap utuh, begitu pula semua grant, `code`, `layer`, `route_key` dan `is_visible`.
+
+| # | `code` daun | Nama nav (`label`) | `description` = teks §12 yang sudah ada |
+|---|---|---|---|
+| R-1.1.1 | `platform.monitoring.resource` | Monitor Sumber Daya | Live Resource Monitor (CPU, RAM, DB Connection Pool, Redis Cluster Global) |
+| R-1.1.2 | `platform.monitoring.gis` | Sebaran Pengguna | Peta Sebaran User GIS Real-Time (GeoIP2 / W3C Geolocation) |
+| R-1.1.3 | `platform.monitoring.security_log` | Log Keamanan | Log Keamanan Platform & Isolation Forest Anomaly Alert |
+| R-1.2.1 | `platform.licensing.directory` | Direktori Perguruan Tinggi | Direktori Perguruan Tinggi & Status Langganan |
+| R-1.2.2 | `platform.licensing.addons` | Add-on & Lisensi | Management Add-on Entitlement (PMB OCR, Multi-VA, LMS Teams Vicon, HRIS BKD, E-Procurement, e-Library, Klinik, AI Retention, Multi-Branch) |
+| R-1.2.3 | `platform.licensing.quotas` | Kuota & Masa Berlaku | Pengaturan Expiry Date Lisensi & Limit Kuota (Max Active Students, Max Storage) |
+| R-1.2.4 | `platform.licensing.billing` | Tagihan Langganan | Global Subscription Billing & Invoicing |
+| R-1.3.1 | `platform.master.lookup` | Kamus Baku Dikti | Master Lookup Baku Dikti (Agama, Status Marital, Disabilitas, Transportasi, Pembiayaan) |
+| R-1.3.2 | `platform.master.region` | Wilayah BPS & Kemendagri | Data Wilayah BPS & Kemendagri (Provinsi, Kota/Kab, Kecamatan, Kode Pos) |
+| R-1.3.3 | `platform.master.core_rules` | Aturan Inti Sistem | Kamus Kode System & Core System Rules |
+| R-1.4.1 | `platform.governance.chain` | Rantai Audit Global | Audit Trail SHA-256 Global (Merkle Tree Hash Chaining) |
+| R-1.4.2 | `platform.governance.pii` | Aturan PII & Privasi | Konfigurasi Global PII Masking & Privacy Rules (UU PDP 27/2022) |
+| R-1.4.3 | `platform.governance.gateway` | API Gateway & Rate Limiter | Global API Gateway & Rate Limiter Configuration |
+| R-1.4.4 | `platform.governance.support` | Dukungan Terawasi | Dukungan Terawasi (Impersonation) |
+| R-2.1.1 | `admin.monitoring.health` | Kesehatan Server | Pemantau Local Server & Database Health |
+| R-2.1.2 | `admin.monitoring.gis` | Sebaran Pengguna | Peta Sebaran User Aktif Kampus (Geospatial GIS Map) |
+| R-2.1.3 | `admin.monitoring.login_alert` | Alert Sesi Login | Alert Anomali Sesi Login & Security Warnings |
+| R-2.2.1 | `admin.institution.profile` | Profil Instansi | Profil Instansi & Cabang Kampus |
+| R-2.2.2 | `admin.institution.catalog` | Katalog Modul | Katalog Modul Aktif & Status Lisensi Add-ons Kampus |
+| R-2.2.3 | `admin.institution.flags` | Toggle Operasional | Feature Toggles Operasional Lokal |
+| R-2.2.4 | `admin.institution.saas_billing` | Tagihan SaaS | Status Lisensi & Tagihan SaaS Kampus |
+| R-2.3.1 | `admin.parameters.reference` | Referensi Operasional | Parameter Referensi Operasional Lokal (Atribut Fisik Almamater, Toga, Ukuran Kaos, Gedung/Ruang, Ormawa, Poin SKKM) |
+| R-2.3.2 | `admin.parameters.system` | Ambang SKS & Presensi | Batas Maksimal SKS & Threshold Presensi Minimum (75%) |
+| R-2.3.3 | `admin.parameters.gateway` | Gateway Notifikasi | Notification Gateway (WhatsApp Gateway, Email SMTP, SMS OTP) |
+| R-2.3.4 | `admin.parameters.meta` | Meta Form & Laporan | Meta Konfigurasi Form & Laporan |
+| R-2.4.1 | `admin.identity.accounts` | Akun Sivitas | Manajemen Akun Sivitas Akademika (Import/Export/Disable Staf BAAK, BAUK, HRD, Keuangan, Dosen, Mahasiswa) |
+| R-2.4.2 | `admin.identity.rbac` | Matriks Hak Akses | Matriks Hak Akses RBAC Granular (CREATE, READ, UPDATE, DELETE, APPROVE, EXPORT per Role) |
+| R-2.4.3 | `admin.identity.sso` | Single Sign-On | Integrasi Single Sign On (Google Workspace, Microsoft 365, LDAP Local) |
+| R-2.4.4 | `admin.identity.dsar` | Konsol Privasi | Konsol Privasi Data & Permohonan Hak Subjek Data UU PDP |
+| R-2.4.5 | `admin.identity.audit` | Log Aktivitas | Log Audit Trail Aktivitas Pengguna Lokal |
+| R-2.5.1 | `admin.integrations.feeder` | Feeder PDDikti | Server Connection PDDikti Feeder Lokal |
+| R-2.5.2 | `admin.integrations.sister` | Binding SISTER | API Binding SISTER 2.0 Local Tenant |
+| R-2.5.3 | `admin.integrations.vicon` | Kanal Teams / Zoom | Auth Provider & Webhook MS Teams / Zoom |
+| R-2.5.4 | `admin.integrations.sivil` | PIN SIVIL | Pengaturan Verifikasi PIN SIVIL |
+| R-2.6.1 | `admin.operations.backup` | Cadangan Data | Backup & Restore Basis Data Lokal |
+| R-2.6.2 | `admin.operations.cache` | Pemantau Cache | Cache Flusher & Redis In-Memory Monitor (KRS War Health) |
+| R-2.6.3 | `admin.operations.queue` | Monitor Antrean | Job Queue & Background Worker Monitor (BullMQ) |
+| R-2.6.4 | `admin.operations.feeder_queue` | Antrean Feeder | Staging Feeder Queue & Error Viewer Log |
+
+**Tiga puluh delapan baris, tidak satu pun daun baru.** Yang di luar tabel ini memang sudah bernama pendek dan tidak disentuh: `admin.institution.domain` (tepat 30 karakter, di bawah ambang), `admin.parameters.nim_pattern`, `admin.parameters.approvals`, `admin.parameters.customattr`, `admin.parameters.import`, `admin.identity.requests`, `admin.identity.menu`, seluruh daun `akademik`/`keuangan`/`more`, dan **sepuluh nama kelompok §12.6** — nama kelompok adalah judul yang pemilik kunci verbatim dan ia **tidak pernah** dipangkas, meskipun `Konfigurasi Tenant, Branding & Active Add-ons` panjangnya 45.
+
+**Bahasa Inggris ikut pindah, bukan ikut diterjemahkan ulang.** `label_en` menjadi nama nav dan `label_en` lama menjadi `description_en`; `verify:menu` hanya membandingkan bahasa Indonesia (register §12 ditulis dalam satu bahasa), jadi `description_en` tidak punya penjaga dan itu dinyatakan apa adanya, bukan disembunyikan di balik kata "i18n lengkap".
+
+

@@ -42,6 +42,8 @@ function toRows(nodes: readonly MenuSeedNode[], out: MenuRowProjection[] = [], p
       parentId: parent,
       label: node.label,
       labelEn: node.labelEn,
+      description: node.description ?? null,
+      descriptionEn: node.descriptionEn ?? null,
       routeKey: node.routeKey ?? null,
       moduleCode: children.length > 0 ? null : (node.module === undefined ? null : node.module),
       icon: node.icon ?? null,

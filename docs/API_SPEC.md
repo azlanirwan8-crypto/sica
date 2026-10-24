@@ -3264,10 +3264,11 @@ export const MeMenuQuerySchema = z.object({
       { "code": "akademik", "routeKey": "academic.root", "labelKey": "navigation.academic", "label": "Akademik",
         "icon": "ri-graduation-cap-line", "sortOrder": 20, "moduleCode": "academic", "requiresMfa": false, "disabled": false,
         "children": [
-          { "code": "akademik.krs", "routeKey": "academic.krs", "labelKey": "navigation.krs", "label": "KRS Online",
+          { "code": "akademik.krs", "routeKey": "academic.krs", "labelKey": "navigation.krs", "label": "KRS Online", "description": null,
             "icon": "ri-draft-line", "sortOrder": 10, "moduleCode": "academic", "requiresMfa": false,
             "disabled": false, "blockedBy": [], "children": [] },
           { "code": "akademik.nilai", "routeKey": "academic.grading", "labelKey": "navigation.khs", "label": "KHS / Nilai",
+            "description": "Kartu Hasil Studi dan rincian nilai per mata kuliah",
             "sortOrder": 20, "disabled": true,
             "blockedBy": [ { "code": "PERIOD_CLOSED", "reason": "Periode 2025/2026 Ganjil sedang LOCKED.", "remedyHref": null } ],
             "children": [] }
@@ -3284,6 +3285,7 @@ export const MeMenuQuerySchema = z.object({
 |---|---|
 | **`routeKey` adalah kunci registri statis** | Path dibangun dari registri rute aplikasi (`route_keys.ts`, target — hari ini `grep route_key apps/web/src` = 0 hasil). Klien **tidak** merakit URL dari `label`, `code`, atau segmen bebas. `route_key` tak dikenal di tulis admin → `422 MENU_ROUTE_KEY_UNKNOWN` (118); munculnya di respons → `registry.unknownRouteKeys[]` **wajib** kosong, dan itu gerbang CI, bukan hiasan. |
 | **Label dua sumber, satu aturan** | `labelKey` menunjuk kunci i18n statis (`navigation.*` di `id.json`/`en.json`) bila ada; `label`/`label_en` DB dipakai bila menu dirawat kampus (`AGENTS §3.5`: string UI di file terpisah — menu custom adalah **data**, bukan string yang di-hardcode di komponen). Klien mendahulukan `labelKey`, fallback `label`. |
+| **`description` = keterangan, bukan nama** (`0096`, lahir dari `UI_UX §2.7` F-1) | `description`/`description_en` memuat teks spesifikasi panjang daun (register `BLUEPRINT §12.1`/`§12.2`) dan **tidak pernah** dirender sebagai teks navigasi: gunanya `title` pada item menu dan subjudul/baris dua pada layar. `label` = nama nav yang tampil. Aturan render: **`labelKey ?? label` untuk nama, `description` untuk keterangan** — `description` TIDAK boleh menimpa `labelKey`, karena daun ber-kunci i18n sudah punya nama pendek di katalog. `description NULL` berarti "nama = keterangan" dan itu keadaan sah; kolomnya nullable justru supaya daun bernama pendek tidak dipaksa mengarang kalimat. Konsekuensi penjaga: `verify:menu` dan `menu-tree.test.ts` membandingkan teks §12 terhadap **`description ?? label`** (`BLUEPRINT §12.7`). |
 | **`prunedCounts`** | Jumlah cabang yang dipotong per tahap — **angka agregat, tanpa nama**. Berguna untuk review RBAC ("kenapa layar saya tinggal 3 menu?") tanpa membocorkan apa yang dipotong. |
 | **Urutan deterministik** | `ORDER BY sort_order, code` (sama seperti kamus §4.14.1): `id` UUIDv7 akan mengacak ulang pohon setiap menu baru dibuat, dan menu yang "bergeser" tiap login adalah bug yang terasa di jari pengguna. |
 | **Cache** | `Cache-Control: private, no-store` + `Vary: Accept-Language`: pohon adalah turunan (izin × entitlement × state) yang berubah saat penugasan/periode berubah — men-cache-nya 60 dtk berarti menampilkan tombol yang sudah dicabut. Invalidasi event-driven saat `user_role_assignments`/`tenant_modules` berubah (sudah dinormakan `RBAC_MATRIX §4.5` soal cache izin TTL 5 menit; **tree menu tidak boleh memakai TTL itu**). **Ralat implementasi 2026-10-24 (`RD-176`):** `Cache-Control: private, no-store` dan `ETag` TERPASANG, tetapi `Vary: Accept-Language` sengaja TIDAK dikirim — server tidak membaca bahasa sama sekali; respons memuat `labelKey` + `label` + `label_en` sekaligus (baris "Label dua sumber" di atas), sehingga pengalihan bahasa terjadi di klien tanpa refetch. Ini deviasi yang dinyatakan, bukan kelalaian: baris `Vary` tidak berlaku pada objek yang tidak divariasikan. |
@@ -3297,7 +3299,7 @@ export const MeMenuQuerySchema = z.object({
 GET    /api/v1/admin/platform/menus?layer=WEB&module=academic&q=nilai   → 200  list §2.4 (seluruh cabang, termasuk tersembunyi)
 POST   /api/v1/admin/platform/menus                                     → 201  cabang baru (DRAFT-ish: is_visible=false s/d grant pertama)
 GET    /api/v1/admin/platform/menus/{id}                                → 200  detail + grant aktif
-PATCH  /api/v1/admin/platform/menus/{id}                                → 200  label/icon/sortOrder/layer/routeKey/isVisible
+PATCH  /api/v1/admin/platform/menus/{id}                                → 200  label/description/icon/sortOrder/layer/routeKey/isVisible
 DELETE /api/v1/admin/platform/menus/{id}                                → 204  hanya bila tidak punya anak & tidak dirujuk grant
 PUT    /api/v1/admin/platform/menus/{id}/permissions                    → 200  tulis **seluruh** set grant (allowlist + DENY)
 GET    /api/v1/admin/platform/menus/{id}/permissions                    → 200  grant saat ini + peran tersintesis

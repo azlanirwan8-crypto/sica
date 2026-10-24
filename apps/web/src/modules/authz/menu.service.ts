@@ -46,6 +46,8 @@ const MENU_PROJECTION = {
   parentId: menuItems.parentId,
   label: menuItems.label,
   labelEn: menuItems.labelEn,
+  description: menuItems.description,
+  descriptionEn: menuItems.descriptionEn,
   routeKey: menuItems.routeKey,
   moduleCode: menuItems.moduleCode,
   icon: menuItems.icon,

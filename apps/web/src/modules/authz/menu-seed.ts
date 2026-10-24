@@ -35,6 +35,8 @@ interface MenuRow {
   readonly parentId: string | null;
   readonly label: string;
   readonly labelEn: string | null;
+  readonly description: string | null;
+  readonly descriptionEn: string | null;
   readonly routeKey: string | null;
   readonly moduleCode: string | null;
   readonly icon: string | null;
@@ -60,6 +62,8 @@ const PROJECTION = {
   parentId: menuItems.parentId,
   label: menuItems.label,
   labelEn: menuItems.labelEn,
+  description: menuItems.description,
+  descriptionEn: menuItems.descriptionEn,
   routeKey: menuItems.routeKey,
   moduleCode: menuItems.moduleCode,
   icon: menuItems.icon,
@@ -92,6 +96,9 @@ async function upsertNode(
     parentId: parentCode ? (byCode.get(parentCode)?.id ?? null) : null,
     label: node.label,
     labelEn: node.labelEn,
+    // `description` = teks spesifikasi §12; `null` berarti "nama = keterangan" (§21.7 butir 4).
+    description: node.description ?? null,
+    descriptionEn: node.descriptionEn ?? null,
     routeKey: node.routeKey ?? null,
     // Grup tidak pernah dilangganan modul: visibilitasnya diturunkan dari anak.
     moduleCode: isGroup ? null : (node.module ?? null),
@@ -113,6 +120,8 @@ async function upsertNode(
       found.parentId !== values.parentId ||
       found.label !== values.label ||
       found.labelEn !== values.labelEn ||
+      found.description !== values.description ||
+      found.descriptionEn !== values.descriptionEn ||
       found.routeKey !== values.routeKey ||
       found.moduleCode !== values.moduleCode ||
       found.icon !== values.icon ||

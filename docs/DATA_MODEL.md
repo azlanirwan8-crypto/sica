@@ -2464,6 +2464,17 @@ CREATE INDEX idx_feeder_findings_open ON pddikti_validation_findings(tenant_id, 
 
 Nomor historis yang disebut "masih bebas" di paragraf bertanggal sebelumnya **bukan izin penggunaan nomor**. Periksa seluruh register ini, rincian §22.9–§26 dan berkas migrasi nyata sebelum reservasi berikutnya. Nomor urut tidak membuktikan dependensi sudah dieksekusi.
 
+**Tambahan penomoran siklus 2026-10-24 (diukur dari filesystem, bukan dari tebakan).** `ls packages/database/migrations/` hari ini berisi `0001`–`0007`, `0010`–`0012`, `0047`–`0050`, `0082`–`0090`, lalu tiga nomor yang lahir di siklus audit role × menu dan **belum pernah ditulis ke register ini** — itu pelanggaran prosedur, jadi dicatat sekarang, bukan dibiarkan:
+
+| Nomor | Nama berkas | Isi | Jenis | Register |
+|---|---|---|---|---|
+| `0093` | `0093_rbac_revoke_it_business_grants.sql` | cabut 81 grant bisnis `TENANT_ADMIN` + 2 grant antrean hak `COMPLIANCE_OFFICER` | data-only (`DELETE role_permissions`), tanpa DDL | RBAC §6.8, `RD-179` |
+| `0094` | `0094_rbac_expand_role_boundary.sql` | perluasan katalog + grant untuk batas peran R-1/R-2 | data-only | RBAC §2.2/§4 |
+| `0095` | `0095_rbac_revoke_record_level_reads.sql` | cabut 5 kode baca per-record `LEADER` + 2 `STUDENT` | data-only | RBAC §5 (kelas **A** = agregat), `RD-179` |
+| `0096` | `0096_menu_description.sql` | `ALTER TABLE menu_items ADD COLUMN description text, ADD COLUMN description_en text` | **expand** (nol backfill paksa; `NULL` = sah) | §21.7 butir 4, UI_UX §2.7.1, BLUEPRINT §12.7 |
+
+`0096` adalah **expand-only** dan tidak membawa contracting: kolom lama tidak diubah tipenya, `label` tetap `NOT NULL`, dan seed (`menu-seed.ts`) yang menulis kedua kolom pada siklus berikutnya. Urutan: `0050` (kelahiran `menu_items`) → `0096`; tidak ada dependensi lain. Setelah `0096` diterapkan, `seed:dev` ulang wajib dijalankan agar `description` terisi dari register §12 — itu sebabnya migrasi ini tidak boleh diklaim "selesai" hanya karena kolomnya ada.
+
 ### 14.8 ⚠ Nama objek yang dirujuk di dokumen lain tetapi tidak punya DDL
 Tabel ini ada supaya pembaca tidak membuat tabel kedua untuk fakta yang sama (`RD-32`). Satu nama **menang**; nama lain adalah alias yang harus dihapus dari dokumen pemiliknya pada siklus berikutnya. Kolom terakhir menyebut di mana objek pemenang didaftarkan.
 
@@ -5644,6 +5655,7 @@ CREATE TABLE menu_items (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   code text NOT NULL, parent_id uuid REFERENCES menu_items(id),
   label text NOT NULL, label_en text, route_key text,      -- 'admin.master.periode' → path dibangun dari route_key, bukan string bebas
+  description text, description_en text,                   -- `0096`: keterangan panjang dari register menu; label = nama navigasi pendek
   layer text NOT NULL DEFAULT 'WEB' CHECK (layer IN ('WEB','MOBILE','BOTH')),
   module_code text,                                        -- gerbang entitlement (ADR-13)
   icon text, sort_order int NOT NULL DEFAULT 100,
@@ -5684,11 +5696,12 @@ CREATE TABLE parameter_permissions (
 );
 ```
 
-**Tiga keputusan desain yang harus dipahami sebelum ada yang menuntut bentuk lain.**
+**Empat keputusan desain yang harus dipahami sebelum ada yang menuntut bentuk lain.**
 
 1. **`parameter_permissions` memakai pola, bukan satu baris per (peran × parameter).** Katalog 222 izin + 145 titik aksi akan meledak menjadi ribuan baris bila setiap parameter punya izin sendiri, dan yang lebih buruk: kode izin baru akan terus diciptakan tanpa review. Evaluasinya deterministik: **DENY menang atas ALLOW**, lalu pola paling spesifik menang (jumlah segmen literal terbanyak), lalu `parameter_permissions` kalah dari keputusan servis untuk kelas `SECURITY` (mis. ambang rotasi TOTP tidak dapat dilonggarkan oleh pola apa pun di bawah batas `CHECK`).
 2. **Menu yang tidak tercantum = tidak terlihat, bukan terlihat.** `menu_permissions` bersifat *allowlist* per peran; penyaringan menu **bukan** kontrol akses (AGENTS §3.8) — gerbang servis `L1–L6` tetap wajib di setiap rute, dan rute yang tersesuai modul non-`ACTIVE` tetap `404 MODULE_NOT_AVAILABLE`.
 3. **Tombol = izin, bukan gaya CSS.** Kisi "sub-detail" yang diminta (per modul → sub-modul → menu → sub-menu → parameter) dilayani tiga tabel ini + `FIELD_RULES` untuk tingkat kolom; aksi `LOCK`/`UNLOCK`/`EXPORT`/`PARAM_EDIT` **sudah dipetakan** ke enam verba kanonik di RBAC_MATRIX §4 (tidak ada verba baru): `PARAM_EDIT` = `UPDATE` pada `resource='settings'` dengan pola parameter, `LOCK`/`UNLOCK` = `OTHER` terdaftar, `APPROVE`/`REJECT` = dua hasil dari satu verba `VALIDATE`.
+4. **`label` adalah nama navigasi; `description` adalah keterangannya (`0096`, lahir dari audit UI_UX §2.7 butir F-1).** Baris register [BLUEPRINT_ROLE_BY_ROLE §12](file:///c:/SICA/docs/BLUEPRINT_ROLE_BY_ROLE.md) menulis satu kalimat per daun ("Matriks hak akses per peran ber-scope") karena ia adalah **spesifikasi**, dan spesifikasi tidak boleh dipotong — tapi kalimat itu tidak boleh menjadi teks yang di-render di dropdown: Velzon/Sevima menampilkan 1–2 kata per daun, dan nama kalimat panjang menghancurkan ritme baris menu (terukur 24 dari 55 daun memakai bentuk kalimat). Karena itu satu baris membawa dua hal: `label`/`label_en` = **nama pendek yang tampil**, `description`/`description_en` = **keterangan lengkap** (tooltip `title`, baris sekunder pada layar, dan pembanding verbatim bagi penjaga dokumen). Daun yang keterangannya memang singkat cukup punya `label`; `description NULL` berarti "nama = keterangan", dan itu keadaan sah, bukan lubang migrasi. Konsekuensi yang harus diterima: penjaga §12 (`verify:menu` dan `menu-tree.test.ts`) membandingkan teks dokumen terhadap **`description ?? label`**, bukan terhadap `label` — kalau tidak, memperpendek nama menu akan dibaca sebagai penyimpangan spesifikasi.
 
 ### 21.8 Query verifikasi CI §21
 

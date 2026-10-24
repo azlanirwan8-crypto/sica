@@ -44,6 +44,13 @@ export interface MeMenuItem {
   readonly label: string;
   /** Label Inggris dari DB — dipakai saat bahasa tampilan `en` dan `labelKey` tidak ada. */
   readonly labelEn: string | null;
+  /**
+   * Keterangan spesifikasi daun (`menu_items.description`, `0096`). Teks panjang register
+   * `BLUEPRINT §12` tinggal di sini, bukan di `label`; dipakai untuk `title`/subjudul dan
+   * untuk membandingkan dokumen terhadap DB. `null` = "nama = keterangan" (DATA_MODEL §21.7 butir 4).
+   */
+  readonly description: string | null;
+  readonly descriptionEn: string | null;
   readonly icon: string | null;
   readonly sortOrder: number;
   readonly moduleCode: string | null;
@@ -74,6 +81,8 @@ export interface MenuRowProjection {
   readonly parentId: string | null;
   readonly label: string;
   readonly labelEn: string | null;
+  readonly description: string | null;
+  readonly descriptionEn: string | null;
   readonly routeKey: string | null;
   readonly moduleCode: string | null;
   readonly icon: string | null;

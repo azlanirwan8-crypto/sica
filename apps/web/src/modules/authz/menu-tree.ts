@@ -24,6 +24,12 @@
  * tidak punya SKU). `labelKey` hanya ada untuk daun yang sudah punya kunci i18n statis;
  * sisanya memakai `label`/`label_en` dari kolom DB (`AGENTS §3.5` tetap terpenuhi karena
  * string itu data yang dapat dirawat kampus, bukan string yang di-hardcode di komponen).
+ *
+ * Aturan nama vs keterangan (`BLUEPRINT §12.7`, `DATA_MODEL §21.7` butir 4, keputusan F-1):
+ * `label` adalah **nama navigasi** (satu–dua kata, ≤ 30 karakter) dan `description` adalah
+ * **teks spesifikasi** register §12 yang utuh. 38 daun dari 56 memakai bentuk itu; yang lain
+ * `description`-nya kosong berarti "nama = keterangan". Nama kelompok (§12.6) tidak pernah
+ * dipangkas, walaupun lebih panjang dari ambang daun — itu judul yang pemilik kunci.
  */
 import type { ModuleCode, PermissionCode } from '@sica/contracts';
 
@@ -31,8 +37,16 @@ export interface MenuSeedNode {
   readonly code: string;
   /** Nomor baris register `BLUEPRINT_ROLE_BY_ROLE §12` (`1.1`…`6.4`) yang dikunci daun ini. */
   readonly lock?: string;
+  /** Nama navigasi yang tampil di baris menu — satu–dua kata (`BLUEPRINT §12.7`). */
   readonly label: string;
   readonly labelEn: string;
+  /**
+   * Keterangan spesifikasi daun (`menu_items.description`, `0096`): teks register §12 yang
+   * utuh. Dirender sebagai `title`, **tidak pernah** sebagai nama nav. `descriptionEn` ikut
+   * pindah supaya bahasa `en` tidak kehilangan keterangannya.
+   */
+  readonly description?: string;
+  readonly descriptionEn?: string;
   /** Kunci statis `navigation.*` di `src/locales`; diprioritaskan di atas `label` DB. */
   readonly labelKey?: string;
   /** Kunci registri rute (`route-keys.ts`); kosong = header/grup atau layar belum ada. */
@@ -121,8 +135,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.monitoring.resource',
             lock: '1.1',
-            label: 'Live Resource Monitor (CPU, RAM, DB Connection Pool, Redis Cluster Global)',
-            labelEn: 'Live Resource Monitor (CPU, RAM, DB pool, global Redis cluster)',
+            label: 'Monitor Sumber Daya',
+            labelEn: 'Resource Monitor',
+            description: 'Live Resource Monitor (CPU, RAM, DB Connection Pool, Redis Cluster Global)',
+            descriptionEn: 'Live Resource Monitor (CPU, RAM, DB pool, global Redis cluster)',
             icon: 'ri-server-line',
             sortOrder: 10,
           },
@@ -130,8 +146,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.monitoring.gis',
             lock: '1.2',
-            label: 'Peta Sebaran User GIS Real-Time (GeoIP2 / W3C Geolocation)',
-            labelEn: 'Real-time user distribution GIS map',
+            label: 'Sebaran Pengguna',
+            labelEn: 'User Distribution',
+            description: 'Peta Sebaran User GIS Real-Time (GeoIP2 / W3C Geolocation)',
+            descriptionEn: 'Real-time user distribution GIS map',
             icon: 'ri-map-2-line',
             sortOrder: 20,
           },
@@ -139,8 +157,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.monitoring.security_log',
             lock: '1.3',
-            label: 'Log Keamanan Platform & Isolation Forest Anomaly Alert',
-            labelEn: 'Platform security log & anomaly alerts',
+            label: 'Log Keamanan',
+            labelEn: 'Security Log',
+            description: 'Log Keamanan Platform & Isolation Forest Anomaly Alert',
+            descriptionEn: 'Platform security log & anomaly alerts',
             routeKey: 'platform.audit',
             module: 'audit',
             permission: 'audit.log.view',
@@ -160,8 +180,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.licensing.directory',
             lock: '2.1',
-            label: 'Direktori Perguruan Tinggi & Status Langganan',
-            labelEn: 'Institution directory & subscription status',
+            label: 'Direktori Perguruan Tinggi',
+            labelEn: 'Institution Directory',
+            description: 'Direktori Perguruan Tinggi & Status Langganan',
+            descriptionEn: 'Institution directory & subscription status',
             routeKey: 'platform.tenants',
             module: null,
             permission: 'platform.tenant.view',
@@ -173,9 +195,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.licensing.addons',
             lock: '2.2',
-            label:
-              'Management Add-on Entitlement (PMB OCR, Multi-VA, LMS Teams Vicon, HRIS BKD, E-Procurement, e-Library, Klinik, AI Retention, Multi-Branch)',
-            labelEn: 'Add-on entitlement management',
+            label: 'Add-on & Lisensi',
+            labelEn: 'Add-ons & Licences',
+            description: 'Management Add-on Entitlement (PMB OCR, Multi-VA, LMS Teams Vicon, HRIS BKD, E-Procurement, e-Library, Klinik, AI Retention, Multi-Branch)',
+            descriptionEn: 'Add-on entitlement management',
             module: null,
             permission: 'entitlement.module.activate',
             icon: 'ri-box-3-line',
@@ -186,8 +209,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.licensing.quotas',
             lock: '2.3',
-            label: 'Pengaturan Expiry Date Lisensi & Limit Kuota (Max Active Students, Max Storage)',
-            labelEn: 'Licence expiry & quota limits',
+            label: 'Kuota & Masa Berlaku',
+            labelEn: 'Quotas & Expiry',
+            description: 'Pengaturan Expiry Date Lisensi & Limit Kuota (Max Active Students, Max Storage)',
+            descriptionEn: 'Licence expiry & quota limits',
             module: null,
             permission: 'platform.quota.manage',
             icon: 'ri-dashboard-3-line',
@@ -198,8 +223,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.licensing.billing',
             lock: '2.4',
-            label: 'Global Subscription Billing & Invoicing',
-            labelEn: 'Global subscription billing & invoicing',
+            label: 'Tagihan Langganan',
+            labelEn: 'Subscription Billing',
+            description: 'Global Subscription Billing & Invoicing',
+            descriptionEn: 'Global subscription billing & invoicing',
             icon: 'ri-bank-line',
             sortOrder: 40,
           },
@@ -232,8 +259,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.master.lookup',
             lock: '3.1',
-            label: 'Master Lookup Baku Dikti (Agama, Status Marital, Disabilitas, Transportasi, Pembiayaan)',
-            labelEn: 'National master lookup (religion, marital status, disability, transport, funding)',
+            label: 'Kamus Baku Dikti',
+            labelEn: 'National Dictionary',
+            description: 'Master Lookup Baku Dikti (Agama, Status Marital, Disabilitas, Transportasi, Pembiayaan)',
+            descriptionEn: 'National master lookup (religion, marital status, disability, transport, funding)',
             icon: 'ri-book-open-line',
             sortOrder: 10,
           },
@@ -241,8 +270,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.master.region',
             lock: '3.2',
-            label: 'Data Wilayah BPS & Kemendagri (Provinsi, Kota/Kab, Kecamatan, Kode Pos)',
-            labelEn: 'National region dictionary (BPS / Kemendagri)',
+            label: 'Wilayah BPS & Kemendagri',
+            labelEn: 'Region Dictionary',
+            description: 'Data Wilayah BPS & Kemendagri (Provinsi, Kota/Kab, Kecamatan, Kode Pos)',
+            descriptionEn: 'National region dictionary (BPS / Kemendagri)',
             icon: 'ri-earth-line',
             sortOrder: 20,
           },
@@ -250,8 +281,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.master.core_rules',
             lock: '3.3',
-            label: 'Kamus Kode System & Core System Rules',
-            labelEn: 'System code dictionary & core rules',
+            label: 'Aturan Inti Sistem',
+            labelEn: 'Core System Rules',
+            description: 'Kamus Kode System & Core System Rules',
+            descriptionEn: 'System code dictionary & core rules',
             icon: 'ri-code-s-slash-line',
             sortOrder: 30,
           },
@@ -268,8 +301,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.governance.chain',
             lock: '4.1',
-            label: 'Audit Trail SHA-256 Global (Merkle Tree Hash Chaining)',
-            labelEn: 'Global SHA-256 audit trail (hash chaining)',
+            label: 'Rantai Audit Global',
+            labelEn: 'Global Audit Chain',
+            description: 'Audit Trail SHA-256 Global (Merkle Tree Hash Chaining)',
+            descriptionEn: 'Global SHA-256 audit trail (hash chaining)',
             module: 'audit',
             permission: 'audit.chain.verify',
             icon: 'ri-links-line',
@@ -279,8 +314,10 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.governance.pii',
             lock: '4.2',
-            label: 'Konfigurasi Global PII Masking & Privacy Rules (UU PDP 27/2022)',
-            labelEn: 'Global PII masking & privacy rules',
+            label: 'Aturan PII & Privasi',
+            labelEn: 'PII & Privacy Rules',
+            description: 'Konfigurasi Global PII Masking & Privacy Rules (UU PDP 27/2022)',
+            descriptionEn: 'Global PII masking & privacy rules',
             icon: 'ri-eye-off-line',
             sortOrder: 20,
           },
@@ -288,16 +325,20 @@ export const PLATFORM_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'platform.governance.gateway',
             lock: '4.3',
-            label: 'Global API Gateway & Rate Limiter Configuration',
-            labelEn: 'Global API gateway & rate limiter',
+            label: 'API Gateway & Rate Limiter',
+            labelEn: 'API Gateway & Rate Limiter',
+            description: 'Global API Gateway & Rate Limiter Configuration',
+            descriptionEn: 'Global API gateway & rate limiter',
             icon: 'ri-route-line',
             sortOrder: 30,
           },
           // Daun operasi yang sudah berjalan (di luar 14 daun §12, tetap dijaga supaya tidak hilang).
           {
             code: 'platform.governance.support',
-            label: 'Dukungan Terawasi (Impersonation)',
-            labelEn: 'Supervised support (impersonation)',
+            label: 'Dukungan Terawasi',
+            labelEn: 'Supervised Support',
+            description: 'Dukungan Terawasi (Impersonation)',
+            descriptionEn: 'Supervised support (impersonation)',
             labelKey: 'platformSupport',
             routeKey: 'platform.support',
             module: 'identity',
@@ -424,8 +465,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.monitoring.health',
             lock: '1.1',
-            label: 'Pemantau Local Server & Database Health',
-            labelEn: 'Local server & database health monitor',
+            label: 'Kesehatan Server',
+            labelEn: 'Server Health',
+            description: 'Pemantau Local Server & Database Health',
+            descriptionEn: 'Local server & database health monitor',
             icon: 'ri-server-line',
             sortOrder: 10,
           },
@@ -433,8 +476,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.monitoring.gis',
             lock: '1.2',
-            label: 'Peta Sebaran User Aktif Kampus (Geospatial GIS Map)',
-            labelEn: 'Campus active-user distribution map',
+            label: 'Sebaran Pengguna',
+            labelEn: 'User Distribution',
+            description: 'Peta Sebaran User Aktif Kampus (Geospatial GIS Map)',
+            descriptionEn: 'Campus active-user distribution map',
             icon: 'ri-map-2-line',
             sortOrder: 20,
           },
@@ -442,8 +487,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.monitoring.login_alert',
             lock: '1.3',
-            label: 'Alert Anomali Sesi Login & Security Warnings',
-            labelEn: 'Login anomaly & security warnings',
+            label: 'Alert Sesi Login',
+            labelEn: 'Login Alerts',
+            description: 'Alert Anomali Sesi Login & Security Warnings',
+            descriptionEn: 'Login anomaly & security warnings',
             module: 'identity',
             permission: 'identity.loginstats.view',
             icon: 'ri-alarm-warning-line',
@@ -462,8 +509,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.institution.profile',
             lock: '2.1',
-            label: 'Profil Instansi & Cabang Kampus',
-            labelEn: 'Institution profile & campuses',
+            label: 'Profil Instansi',
+            labelEn: 'Institution Profile',
+            description: 'Profil Instansi & Cabang Kampus',
+            descriptionEn: 'Institution profile & campuses',
             routeKey: 'admin.organization',
             module: 'academic',
             permission: 'academic.organization.view',
@@ -483,8 +532,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.institution.catalog',
             lock: '2.3',
-            label: 'Katalog Modul Aktif & Status Lisensi Add-ons Kampus',
-            labelEn: 'Active module catalogue & add-on licence status',
+            label: 'Katalog Modul',
+            labelEn: 'Module Catalogue',
+            description: 'Katalog Modul Aktif & Status Lisensi Add-ons Kampus',
+            descriptionEn: 'Active module catalogue & add-on licence status',
             module: null,
             permission: 'entitlement.catalog.view',
             icon: 'ri-apps-2-line',
@@ -494,8 +545,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.institution.flags',
             lock: '2.4',
-            label: 'Feature Toggles Operasional Lokal',
-            labelEn: 'Local operational feature toggles',
+            label: 'Toggle Operasional',
+            labelEn: 'Local Toggles',
+            description: 'Feature Toggles Operasional Lokal',
+            descriptionEn: 'Local operational feature toggles',
             icon: 'ri-toggle-line',
             sortOrder: 40,
           },
@@ -503,8 +556,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.institution.saas_billing',
             lock: '2.5',
-            label: 'Status Lisensi & Tagihan SaaS Kampus',
-            labelEn: 'Campus SaaS licence & billing status',
+            label: 'Tagihan SaaS',
+            labelEn: 'SaaS Billing Status',
+            description: 'Status Lisensi & Tagihan SaaS Kampus',
+            descriptionEn: 'Campus SaaS licence & billing status',
             icon: 'ri-bank-line',
             sortOrder: 50,
           },
@@ -521,9 +576,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.parameters.reference',
             lock: '3.1',
-            label:
-              'Parameter Referensi Operasional Lokal (Atribut Fisik Almamater, Toga, Ukuran Kaos, Gedung/Ruang, Ormawa, Poin SKKM)',
-            labelEn: 'Local reference parameters (attributes, gowns, rooms, SKKM points)',
+            label: 'Referensi Operasional',
+            labelEn: 'Operational References',
+            description: 'Parameter Referensi Operasional Lokal (Atribut Fisik Almamater, Toga, Ukuran Kaos, Gedung/Ruang, Ormawa, Poin SKKM)',
+            descriptionEn: 'Local reference parameters (attributes, gowns, rooms, SKKM points)',
             module: null,
             permission: 'master.item.view',
             icon: 'ri-bookmark-line',
@@ -542,8 +598,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.parameters.system',
             lock: '3.3',
-            label: 'Batas Maksimal SKS & Threshold Presensi Minimum (75%)',
-            labelEn: 'Max SKS & minimum attendance threshold',
+            label: 'Ambang SKS & Presensi',
+            labelEn: 'SKS & Attendance Limits',
+            description: 'Batas Maksimal SKS & Threshold Presensi Minimum (75%)',
+            descriptionEn: 'Max SKS & minimum attendance threshold',
             routeKey: 'admin.parameters',
             module: null,
             permission: 'settings.param.view.technical',
@@ -575,8 +633,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.parameters.gateway',
             lock: '3.4',
-            label: 'Notification Gateway (WhatsApp Gateway, Email SMTP, SMS OTP)',
-            labelEn: 'Notification gateway (WhatsApp, SMTP, SMS OTP)',
+            label: 'Gateway Notifikasi',
+            labelEn: 'Notification Gateway',
+            description: 'Notification Gateway (WhatsApp Gateway, Email SMTP, SMS OTP)',
+            descriptionEn: 'Notification gateway (WhatsApp, SMTP, SMS OTP)',
             icon: 'ri-send-plane-line',
             sortOrder: 50,
           },
@@ -593,8 +653,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           // §6.2 baris 1522 — meta konfigurasi form, laporan, dan blok tanda tangan.
           {
             code: 'admin.parameters.meta',
-            label: 'Meta Konfigurasi Form & Laporan',
-            labelEn: 'Form & report meta-configuration',
+            label: 'Meta Form & Laporan',
+            labelEn: 'Form & Report Meta',
+            description: 'Meta Konfigurasi Form & Laporan',
+            descriptionEn: 'Form & report meta-configuration',
             module: null,
             permission: 'settings.meta.view',
             icon: 'ri-file-copy-line',
@@ -623,8 +685,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.identity.accounts',
             lock: '4.1',
-            label: 'Manajemen Akun Sivitas Akademika (Import/Export/Disable Staf BAAK, BAUK, HRD, Keuangan, Dosen, Mahasiswa)',
-            labelEn: 'Academic account management (import/export/disable)',
+            label: 'Akun Sivitas',
+            labelEn: 'Academic Accounts',
+            description: 'Manajemen Akun Sivitas Akademika (Import/Export/Disable Staf BAAK, BAUK, HRD, Keuangan, Dosen, Mahasiswa)',
+            descriptionEn: 'Academic account management (import/export/disable)',
             routeKey: 'admin.users',
             module: 'identity',
             permission: 'identity.user.view',
@@ -636,8 +700,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.identity.rbac',
             lock: '4.2',
-            label: 'Matriks Hak Akses RBAC Granular (CREATE, READ, UPDATE, DELETE, APPROVE, EXPORT per Role)',
-            labelEn: 'Granular RBAC matrix per role',
+            label: 'Matriks Hak Akses',
+            labelEn: 'Access Matrix',
+            description: 'Matriks Hak Akses RBAC Granular (CREATE, READ, UPDATE, DELETE, APPROVE, EXPORT per Role)',
+            descriptionEn: 'Granular RBAC matrix per role',
             routeKey: 'admin.rbac',
             module: 'identity',
             permission: 'identity.role.view',
@@ -649,8 +715,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.identity.sso',
             lock: '4.3',
-            label: 'Integrasi Single Sign On (Google Workspace, Microsoft 365, LDAP Local)',
-            labelEn: 'Single sign-on integration',
+            label: 'Single Sign-On',
+            labelEn: 'Single Sign-On',
+            description: 'Integrasi Single Sign On (Google Workspace, Microsoft 365, LDAP Local)',
+            descriptionEn: 'Single sign-on integration',
             icon: 'ri-passport-line',
             sortOrder: 30,
           },
@@ -658,8 +726,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.identity.dsar',
             lock: '4.4',
-            label: 'Konsol Privasi Data & Permohonan Hak Subjek Data UU PDP',
-            labelEn: 'Data privacy console & subject requests',
+            label: 'Konsol Privasi',
+            labelEn: 'Privacy Console',
+            description: 'Konsol Privasi Data & Permohonan Hak Subjek Data UU PDP',
+            descriptionEn: 'Data privacy console & subject requests',
             icon: 'ri-file-user-line',
             sortOrder: 40,
           },
@@ -667,8 +737,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.identity.audit',
             lock: '4.5',
-            label: 'Log Audit Trail Aktivitas Pengguna Lokal',
-            labelEn: 'Local user activity audit trail',
+            label: 'Log Aktivitas',
+            labelEn: 'Activity Log',
+            description: 'Log Audit Trail Aktivitas Pengguna Lokal',
+            descriptionEn: 'Local user activity audit trail',
             module: 'audit',
             permission: 'audit.log.view',
             icon: 'ri-history-line',
@@ -713,8 +785,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.integrations.feeder',
             lock: '5.1',
-            label: 'Server Connection PDDikti Feeder Lokal',
-            labelEn: 'Local PDDikti feeder connection',
+            label: 'Feeder PDDikti',
+            labelEn: 'PDDikti Feeder',
+            description: 'Server Connection PDDikti Feeder Lokal',
+            descriptionEn: 'Local PDDikti feeder connection',
             module: 'feeder_pddikti',
             permission: 'feeder.credential.manage',
             icon: 'ri-database-2-line',
@@ -725,8 +799,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.integrations.sister',
             lock: '5.2',
-            label: 'API Binding SISTER 2.0 Local Tenant',
-            labelEn: 'SISTER 2.0 API binding',
+            label: 'Binding SISTER',
+            labelEn: 'SISTER Binding',
+            description: 'API Binding SISTER 2.0 Local Tenant',
+            descriptionEn: 'SISTER 2.0 API binding',
             icon: 'ri-user-star-line',
             sortOrder: 20,
           },
@@ -734,8 +810,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.integrations.vicon',
             lock: '5.3',
-            label: 'Auth Provider & Webhook MS Teams / Zoom',
-            labelEn: 'Teams / Zoom auth provider & webhook',
+            label: 'Kanal Teams / Zoom',
+            labelEn: 'Teams / Zoom Channel',
+            description: 'Auth Provider & Webhook MS Teams / Zoom',
+            descriptionEn: 'Teams / Zoom auth provider & webhook',
             icon: 'ri-vidicon-line',
             sortOrder: 30,
           },
@@ -743,8 +821,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.integrations.sivil',
             lock: '5.4',
-            label: 'Pengaturan Verifikasi PIN SIVIL',
-            labelEn: 'SIVIL PIN verification settings',
+            label: 'PIN SIVIL',
+            labelEn: 'SIVIL PIN',
+            description: 'Pengaturan Verifikasi PIN SIVIL',
+            descriptionEn: 'SIVIL PIN verification settings',
             icon: 'ri-award-line',
             sortOrder: 40,
           },
@@ -761,8 +841,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.operations.backup',
             lock: '6.1',
-            label: 'Backup & Restore Basis Data Lokal',
-            labelEn: 'Local database backup & restore',
+            label: 'Cadangan Data',
+            labelEn: 'Backup & Restore',
+            description: 'Backup & Restore Basis Data Lokal',
+            descriptionEn: 'Local database backup & restore',
             icon: 'ri-download-2-line',
             sortOrder: 10,
           },
@@ -770,8 +852,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.operations.cache',
             lock: '6.2',
-            label: 'Cache Flusher & Redis In-Memory Monitor (KRS War Health)',
-            labelEn: 'Cache flusher & Redis monitor',
+            label: 'Pemantau Cache',
+            labelEn: 'Cache Monitor',
+            description: 'Cache Flusher & Redis In-Memory Monitor (KRS War Health)',
+            descriptionEn: 'Cache flusher & Redis monitor',
             icon: 'ri-flashlight-line',
             sortOrder: 20,
           },
@@ -779,8 +863,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.operations.queue',
             lock: '6.3',
-            label: 'Job Queue & Background Worker Monitor (BullMQ)',
-            labelEn: 'Job queue & worker monitor',
+            label: 'Monitor Antrean',
+            labelEn: 'Queue Monitor',
+            description: 'Job Queue & Background Worker Monitor (BullMQ)',
+            descriptionEn: 'Job queue & worker monitor',
             icon: 'ri-stack-line',
             sortOrder: 30,
           },
@@ -788,8 +874,10 @@ export const CAMPUS_MENU_TREE: readonly MenuSeedNode[] = [
           {
             code: 'admin.operations.feeder_queue',
             lock: '6.4',
-            label: 'Staging Feeder Queue & Error Viewer Log',
-            labelEn: 'Staging feeder queue & error log viewer',
+            label: 'Antrean Feeder',
+            labelEn: 'Feeder Queue',
+            description: 'Staging Feeder Queue & Error Viewer Log',
+            descriptionEn: 'Staging feeder queue & error log viewer',
             module: 'feeder_pddikti',
             permission: 'feeder.sync.view',
             icon: 'ri-bug-line',

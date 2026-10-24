@@ -58,9 +58,12 @@ describe('Register §12 — daun terkunci', () => {
 
   /**
    * Ini uji yang membuat instruksi "tanpa ada yang dikurangi atau disingkat" menjadi
-   * terukur: label definisi harus SAMA PERSIS dengan sel tabel dokumen pemilik.
+   * terukur: teks definisi harus SAMA PERSIS dengan sel tabel dokumen pemilik. Sejak F-1
+   * (`0096`, `BLUEPRINT §12.7`) tempatnya berpindah: kalimat spesifikasi hidup di
+   * `description`, dan `label` hanyalah nama navigasi pendek — maka pembandingnya
+   * `description ?? label`, bukan `label`.
    */
-  it('label setiap daun terkunci verbatim dengan tabel §12 dokumen', () => {
+  it('keterangan setiap daun terkunci verbatim dengan tabel §12 dokumen', () => {
     const doc = fs.readFileSync(path.resolve(process.cwd(), '../../docs/BLUEPRINT_ROLE_BY_ROLE.md'), 'utf8');
     const register = new Map<string, string>();
     let section: string | null = null;
@@ -82,8 +85,9 @@ describe('Register §12 — daun terkunci', () => {
     for (const leaf of LOCKED) {
       const key = `${leaf.surface} ${leaf.node.lock}`;
       const docLabel = register.get(key);
+      const spec = leaf.node.description ?? leaf.node.label;
       if (docLabel === undefined) mismatched.push(`${key}: tidak ada di dokumen`);
-      else if (docLabel !== leaf.node.label) mismatched.push(`${key}:\n    dokumen: ${docLabel}\n    kode   : ${leaf.node.label}`);
+      else if (docLabel !== spec) mismatched.push(`${key}:\n    dokumen: ${docLabel}\n    kode   : ${spec}`);
     }
     expect(mismatched, mismatched.join('\n')).toEqual([]);
   });
@@ -230,7 +234,11 @@ describe('Kontrak data daun', () => {
     // Predikat yang sama dengan `top-nav.tsx`: akar tanpa rute yang SELURUH anaknya grup.
     // `akademik`/`more` sengaja tidak ikut: anaknya daun langsung, jadi ia tetap satu dropdown.
     const containerRoots = ALL.filter(
-      (l) => l.depth === 1 && !l.node.href && (l.node.children?.length ?? 0) > 0 && l.node.children!.every((c) => (c.children?.length ?? 0) > 0)
+      (l) =>
+        l.depth === 1 &&
+        !l.node.routeKey &&
+        (l.node.children?.length ?? 0) > 0 &&
+        l.node.children!.every((c) => (c.children?.length ?? 0) > 0)
     );
     expect(containerRoots.map((r) => r.node.code).sort()).toEqual(['admin', 'platform']);
     for (const root of containerRoots) {
@@ -267,5 +275,34 @@ describe('Kontrak data daun', () => {
       expect(g.node.labelEn, `${g.node.code} kehilangan label_en`).toBeTruthy();
     }
     expect(Object.keys(expected).every((code) => GROUPS.some((g) => g.node.code === code))).toBe(true);
+  });
+
+  /**
+   * Penjaga `F-1` (`BLUEPRINT §12.7`, `DATA_MODEL §21.7` butir 4, migrasi `0096`).
+   * Dua hal yang dilarang sejak nama nav dipisah dari keterangan:
+   *  (a) daun bernama kalimat — `label` wajib ≤ 30 karakter, karena yang panjang adalah
+   *      `description` dan itu bukan teks navigasi (Velzon/Sevima satu–dua kata);
+   *  (b) `description` tanpa `description_en`, atau `description` yang actually pendek —
+   *      itu tanda teksnya tidak dipindah tetapi disalin ulang, dan dua sumber kebenaran
+   *      untuk satu kalimat adalah pola `RD-32`.
+   * Kelompok (GROUPS) sengaja tidak diuji: namanya adalah judul yang pemilik kunci verbatim
+   * di §12.6 dan ada yang 45 karakter.
+   */
+  it('nama nav daun pendek dan keterangannya hanya ada bila memang teks panjang (F-1)', () => {
+    const tooLong = LEAVES.filter((l) => l.node.label.length > 30).map((l) => `${l.node.code} (${l.node.label.length})`);
+    expect(tooLong, `daun dengan nama nav > 30 karakter: ${tooLong.join(', ')}`).toEqual([]);
+
+    const described = LEAVES.filter((l) => l.node.description !== undefined);
+    expect(described.length, 'jumlah daun bere-desc harus 38 seperti §12.7').toBe(38);
+    for (const l of described) {
+      expect(l.node.description!.length, `${l.node.code}: description lebih pendek dari ambang = bukan teks spesifikasi`).toBeGreaterThan(30);
+      expect(l.node.descriptionEn, `${l.node.code}: description tanpa description_en`).toBeTruthy();
+      expect(l.node.label, `${l.node.code}: label = description berarti F-1 tidak terjadi`).not.toBe(l.node.description);
+    }
+    // `description ?? label` adalah pembanding §12; daun TANPA description wajib berupa nama
+    // yang memang sudah lengkap, sehingga ia tidak diam-diam kehilangan keterangan.
+    for (const l of LEAVES.filter((x) => x.node.description === undefined)) {
+      expect(l.node.label.length, `${l.node.code} tanpa description padahal namanya panjang`).toBeLessThanOrEqual(30);
+    }
   });
 });

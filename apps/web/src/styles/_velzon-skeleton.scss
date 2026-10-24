@@ -83,23 +83,27 @@
   transition: color var(--sica-transition-fast), background-color var(--sica-transition-fast);
 }
 
+/* Velzon horizontal TIDAK memberi pil pada item baris menu: yang berubah hanya warna
+   teks. Pil adalah kosakata `.dropdown-item`, dan memakainya di baris atas membuat menu
+   "sedang dibuka" terlihat seperti tombol yang ditekan — keluhan "kaku" 2026-10-24. */
 .topnav .nav-link:hover {
   color: var(--sica-primary-hover);
-  background-color: var(--sica-surface-hover);
+  background-color: transparent;
 }
 
 /* Penanda aktif ala Velzon horizontal: teks primer + garis penuh di bawah item. */
-.topnav .app-menu > .nav-item > .nav-link.active {
-  color: var(--sica-primary-ink);
-  font-weight: 600;
-}
-
 .topnav .app-menu > .nav-item {
   position: relative;
   display: flex;
 }
 
-.topnav .app-menu > .nav-item > .nav-link.active::after {
+.topnav .app-menu > .nav-item > .nav-link.active {
+  color: var(--sica-primary-ink);
+  font-weight: 600;
+}
+
+.topnav .app-menu > .nav-item > .nav-link.active::after,
+.topnav .app-menu > .nav-item > .nav-link[aria-expanded='true']::after {
   position: absolute;
   left: 12px;
   right: 12px;
@@ -133,9 +137,34 @@
 }
 
 .topnav .app-menu .dropdown-item {
+  align-items: flex-start;
+  gap: var(--sica-space-2);
+  padding-block: 8px;
+  /* Bootstrap menetapkan `white-space: nowrap` pada `.dropdown-item`; label register
+     panjang, jadi item menu utama adalah pengecualian yang disengaja. */
   white-space: normal;
+}
+
+/* Label panjang menyusut dulu, meta tidak pernah ikut terdorong. */
+.topnav .menu-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
   line-height: 1.35;
-  padding-block: 7px;
+}
+
+.topnav .menu-item-meta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-top: 2px;
+  color: var(--sica-text-muted);
+}
+
+/* Item aktif memakai kosakata Velzon: permukaan soft + teks primer, bukan pil terpisah. */
+.topnav .app-menu .dropdown-item.active {
+  background-color: var(--sica-primary-soft);
+  color: var(--sica-primary-hover);
+  font-weight: 600;
 }
 
 /* ── Rantai kanan: pencarian, utilitas, profil ───────────────────────────── */
@@ -279,6 +308,8 @@
 }
 
 .topnav .dropdown-item[aria-disabled='true']::after {
+  flex: 0 0 auto;
+  margin-top: 2px;
   padding: 2px 7px;
   border-radius: var(--sica-radius-full);
   background-color: var(--bs-warning-bg-subtle);

@@ -281,12 +281,22 @@ export function TopNav({ comingSoonLabel = 'Segera' }: { comingSoonLabel?: strin
 
                 const renderItem = (leaf: MeMenuItem) => {
                   const text = menuLabel(leaf, dict.navigation);
+                  // `description` adalah teks spesifikasi register §12, bukan nama nav
+                  // (`BLUEPRINT §12.7`): ia boleh dibaca lewat tooltip, tidak pernah tampil
+                  // sebagai label — itulah isi F-1.
+                  const hint = leaf.description;
+                  const withHint = (state: string) => (hint ? (state ? `${hint} — ${state}` : hint) : state);
                   const lock = leaf.requiresMfa ? <i className="ri-lock-2-line menu-item-lock" aria-hidden title="Aksi tulis pada layar ini menuntut MFA" /> : null;
+                  // Teks dibungkus, bukan telanjang: `.dropdown-item` adalah flex container,
+                  // dan string tanpa elemen menjadi anonymous item yang tidak bisa disusutkan
+                  // — sebabnya label panjang mendorong gembok & lencana ke tengah blok.
+                  const body = <span className="menu-item-label">{text}</span>;
+                  const meta = lock ? <span className="menu-item-meta">{lock}</span> : null;
                   if (leaf.disabled) {
                     return (
-                      <span key={leaf.code} className="dropdown-item" aria-disabled="true" data-locked={leaf.blockedBy[0]?.reason ?? ''} title={leaf.blockedBy[0]?.reason ?? ''}>
-                        {text}
-                        {lock}
+                      <span key={leaf.code} className="dropdown-item" aria-disabled="true" data-locked={leaf.blockedBy[0]?.reason ?? ''} title={withHint(leaf.blockedBy[0]?.reason ?? '')}>
+                        {body}
+                        {meta}
                       </span>
                     );
                   }
@@ -295,17 +305,18 @@ export function TopNav({ comingSoonLabel = 'Segera' }: { comingSoonLabel?: strin
                       <Link
                         key={leaf.code}
                         href={leaf.href}
-                        className={cn('dropdown-item', pathname?.startsWith(leaf.href) && 'bg-primary-soft text-primary-hover')}
+                        title={hint ?? undefined}
+                        className={cn('dropdown-item', pathname?.startsWith(leaf.href) && 'active')}
                       >
-                        {text}
-                        {lock}
+                        {body}
+                        {meta}
                       </Link>
                     );
                   }
                   return (
-                    <span key={leaf.code} className="dropdown-item" aria-disabled="true" data-soon={comingSoonLabel} title={comingSoonLabel}>
-                      {text}
-                      {lock}
+                    <span key={leaf.code} className="dropdown-item" aria-disabled="true" data-soon={comingSoonLabel} title={withHint(comingSoonLabel)}>
+                      {body}
+                      {meta}
                     </span>
                   );
                 };

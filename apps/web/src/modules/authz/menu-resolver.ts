@@ -138,6 +138,8 @@ export function resolveMenu(input: ResolveMenuInput): ResolvedMenu {
       labelKey,
       label: row.label,
       labelEn: row.labelEn,
+      description: row.description,
+      descriptionEn: row.descriptionEn,
       icon: row.icon,
       sortOrder: row.sortOrder,
       moduleCode: row.moduleCode,
